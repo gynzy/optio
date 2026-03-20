@@ -262,7 +262,8 @@ export function startTaskWorker() {
             .where(eq(tasks.id, taskId));
         }
 
-        if (result.prUrl) {
+        if (result.prUrl && !isReviewTask) {
+          // Only coding tasks transition to pr_opened (reviews complete directly)
           await taskService.updateTaskPr(taskId, result.prUrl);
           await taskService.transitionTask(
             taskId,
@@ -271,7 +272,7 @@ export function startTaskWorker() {
             result.prUrl,
           );
           log.info({ prUrl: result.prUrl }, "PR opened");
-        } else if (result.success) {
+        } else if (result.success || isReviewTask) {
           await taskService.transitionTask(
             taskId,
             TaskState.COMPLETED,

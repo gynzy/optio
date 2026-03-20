@@ -30,7 +30,13 @@ export function startPrWatcherWorker() {
     "pr-watcher",
     async () => {
       // Find all tasks with open PRs
-      const openPrTasks = await db.select().from(tasks).where(eq(tasks.state, "pr_opened"));
+      // Only watch coding tasks, NOT review subtasks (avoid recursive reviews)
+      const openPrTasks = await db
+        .select()
+        .from(tasks)
+        .where(
+          sql`${tasks.state} = 'pr_opened' AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+        );
 
       if (openPrTasks.length === 0) return;
 
