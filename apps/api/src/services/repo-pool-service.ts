@@ -175,17 +175,19 @@ export async function execTaskInRepoPod(
     .where(eq(repoPods.id, pod.id));
 
   // Build the exec command: create worktree, set up env, run agent
-  // Write env vars to a temp file and source it (handles multi-line values safely)
-  const envFileLines = Object.entries(env).map(([k, v]) => {
-    // Use heredoc-style for values that contain newlines or special chars
-    const safe = v.replace(/'/g, "'\\''");
-    return `export ${k}='${safe}'`;
-  });
+  // Encode env as base64 JSON, decode in the script to handle multi-line values safely
+  const envJson = JSON.stringify({ ...env, OPTIO_TASK_ID: taskId });
+  const envB64 = Buffer.from(envJson).toString("base64");
 
   const script = [
     "set -e",
-    ...envFileLines,
-    `export OPTIO_TASK_ID='${taskId}'`,
+    // Decode env vars from base64 JSON and export them
+    `eval $(echo '${envB64}' | base64 -d | python3 -c "`,
+    `import json, sys, shlex`,
+    `env = json.load(sys.stdin)`,
+    `for k, v in env.items():`,
+    `    print(f'export {k}={shlex.quote(v)}')`,
+    `")`,
     // Wait for the repo-init script to finish cloning
     `echo "[optio] Waiting for repo to be ready..."`,
     `for i in $(seq 1 120); do [ -f /workspace/.ready ] && break; sleep 1; done`,
