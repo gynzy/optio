@@ -25,6 +25,16 @@ If this is the first task on this repo, you may need to install project dependen
 and build tools. Check if they're available before installing. Once installed, tools
 persist for future tasks on this repo.
 
+## Scope
+
+You are task {{TASK_ID}} working on branch {{BRANCH_NAME}}. Other tasks may be running
+concurrently on this same repository — each on its own branch. You MUST stay in scope:
+
+- Do NOT look at, review, or interact with other PRs or branches.
+- Do NOT run \`gh pr list\` to browse PRs. You only need to create YOUR PR.
+- If you see references to other branches named \`optio/task-*\`, ignore them — those belong to other agents.
+- Your working directory is your worktree. Do not navigate outside it.
+
 ## Guidelines
 
 - Work only on what the task file describes. Do not refactor unrelated code.
