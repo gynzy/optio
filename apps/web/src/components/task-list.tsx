@@ -68,11 +68,23 @@ export function TaskList() {
     }
   }
 
+  // Determine if a pr_opened task has subtasks still in progress (bot working, not human-blocked)
+  const hasActiveSubtasks = (taskId: string) => {
+    const subs = reviewMap.get(taskId) ?? [];
+    return subs.some((s) => ["queued", "running", "provisioning", "pending"].includes(s.state));
+  };
+
   // Split into clear sections
-  const running = topLevelTasks.filter((t) => ["running", "provisioning"].includes(t.state));
+  // "Running" includes actively executing + pr_opened with bot reviews still running
+  const running = topLevelTasks.filter(
+    (t) =>
+      ["running", "provisioning"].includes(t.state) ||
+      (t.state === "pr_opened" && hasActiveSubtasks(t.id)),
+  );
   const queued = topLevelTasks.filter((t) => ["queued", "pending"].includes(t.state));
-  const awaitingAction = topLevelTasks.filter((t) =>
-    ["pr_opened", "needs_attention"].includes(t.state),
+  // "Awaiting Action" = only tasks that genuinely need human input
+  const awaitingAction = topLevelTasks.filter(
+    (t) => t.state === "needs_attention" || (t.state === "pr_opened" && !hasActiveSubtasks(t.id)),
   );
   const done = topLevelTasks.filter((t) => ["completed", "failed", "cancelled"].includes(t.state));
 
@@ -164,11 +176,11 @@ export function TaskList() {
             </Section>
           )}
 
-          {/* Awaiting action (PR opened, needs attention) */}
+          {/* Needs human input */}
           {awaitingAction.length > 0 && (
             <Section
               icon={AlertTriangle}
-              label="Awaiting Action"
+              label="Needs Your Input"
               count={awaitingAction.length}
               color="text-warning"
             >

@@ -232,12 +232,11 @@ export function startTaskWorker() {
                 entry.metadata,
               );
 
-              // Check for PR URL in text/info entries
-              if (entry.type === "text" || entry.type === "info") {
-                const prMatch = entry.content.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
-                if (prMatch) {
-                  await taskService.updateTaskPr(taskId, prMatch[0]);
-                }
+              // Check for PR URL in any entry type
+              const prMatch = entry.content.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
+              if (prMatch) {
+                await taskService.updateTaskPr(taskId, prMatch[0]);
+                log.info({ prUrl: prMatch[0] }, "PR URL detected in logs");
               }
             }
           }
