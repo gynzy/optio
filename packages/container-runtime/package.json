@@ -1,0 +1,22 @@
+{
+  "name": "@optio/container-runtime",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.1.2",
+    "@optio/shared": "workspace:*",
+    "dockerode": "^4.0.7"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.38",
+    "typescript": "^5.7.0"
+  }
+}
