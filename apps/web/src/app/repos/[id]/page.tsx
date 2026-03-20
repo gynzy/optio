@@ -30,6 +30,8 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
   const [claudeContextWindow, setClaudeContextWindow] = useState("1m");
   const [claudeThinking, setClaudeThinking] = useState(true);
   const [claudeEffort, setClaudeEffort] = useState("high");
+  const [maxTurnsCoding, setMaxTurnsCoding] = useState(250);
+  const [maxTurnsReview, setMaxTurnsReview] = useState(10);
   const [autoResumeOnReview, setAutoResumeOnReview] = useState(false);
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(2);
   const [reviewEnabled, setReviewEnabled] = useState(false);
@@ -58,6 +60,8 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         setClaudeContextWindow(r.claudeContextWindow ?? "1m");
         setClaudeThinking(r.claudeThinking ?? true);
         setClaudeEffort(r.claudeEffort ?? "high");
+        setMaxTurnsCoding(r.maxTurnsCoding ?? 250);
+        setMaxTurnsReview(r.maxTurnsReview ?? 10);
         setReviewEnabled(r.reviewEnabled ?? false);
         setReviewTrigger(r.reviewTrigger ?? "on_ci_pass");
         setTestCommand(r.testCommand ?? "");
@@ -90,6 +94,8 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         claudeContextWindow,
         claudeThinking,
         claudeEffort,
+        maxTurnsCoding,
+        maxTurnsReview,
         reviewEnabled,
         reviewTrigger,
         testCommand,
@@ -245,6 +251,32 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
               />
               <span className="text-sm">Extended Thinking</span>
             </label>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Max Turns (Coding)</label>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={maxTurnsCoding}
+              onChange={(e) => setMaxTurnsCoding(parseInt(e.target.value, 10) || 250)}
+              placeholder="250"
+              className="w-full px-3 py-2 rounded-md bg-bg border border-border text-sm focus:outline-none focus:border-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Max Turns (Review)</label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={maxTurnsReview}
+              onChange={(e) => setMaxTurnsReview(parseInt(e.target.value, 10) || 10)}
+              placeholder="10"
+              className="w-full px-3 py-2 rounded-md bg-bg border border-border text-sm focus:outline-none focus:border-primary"
+            />
           </div>
         </div>
       </section>

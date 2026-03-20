@@ -21,6 +21,8 @@ const updateRepoSchema = z.object({
   claudeContextWindow: z.string().optional(),
   claudeThinking: z.boolean().optional(),
   claudeEffort: z.string().optional(),
+  maxTurnsCoding: z.number().int().min(1).max(1000).optional(),
+  maxTurnsReview: z.number().int().min(1).max(100).optional(),
   autoResumeOnReview: z.boolean().optional(),
   maxConcurrentTasks: z.number().int().min(1).max(50).optional(),
   reviewEnabled: z.boolean().optional(),

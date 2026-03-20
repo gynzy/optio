@@ -119,6 +119,8 @@ export const repos = pgTable("repos", {
   claudeContextWindow: text("claude_context_window").default("1m"), // "200k" or "1m"
   claudeThinking: boolean("claude_thinking").notNull().default(true),
   claudeEffort: text("claude_effort").default("high"), // "low", "medium", "high"
+  maxTurnsCoding: integer("max_turns_coding"), // null = use global default (250)
+  maxTurnsReview: integer("max_turns_review"), // null = use global default (10)
   autoResumeOnReview: boolean("auto_resume_on_review").notNull().default(false),
   maxConcurrentTasks: integer("max_concurrent_tasks").notNull().default(2),
   reviewEnabled: boolean("review_enabled").notNull().default(false),

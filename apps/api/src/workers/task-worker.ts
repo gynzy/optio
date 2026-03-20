@@ -5,6 +5,8 @@ import {
   renderPromptTemplate,
   renderTaskFile,
   TASK_FILE_PATH,
+  DEFAULT_MAX_TURNS_CODING,
+  DEFAULT_MAX_TURNS_REVIEW,
 } from "@optio/shared";
 import { getAdapter } from "@optio/agent-adapters";
 import { parseClaudeEvent } from "../services/agent-event-parser.js";
@@ -202,6 +204,8 @@ export function startTaskWorker() {
           resumeSessionId,
           resumePrompt,
           isReview: isReviewTask,
+          maxTurnsCoding: repoConfig?.maxTurnsCoding ?? undefined,
+          maxTurnsReview: repoConfig?.maxTurnsReview ?? undefined,
         });
 
         // Execute the task in the repo pod via worktree
@@ -329,10 +333,18 @@ export function startTaskWorker() {
 function buildAgentCommand(
   agentType: string,
   env: Record<string, string>,
-  opts?: { resumeSessionId?: string; resumePrompt?: string; isReview?: boolean },
+  opts?: {
+    resumeSessionId?: string;
+    resumePrompt?: string;
+    isReview?: boolean;
+    maxTurnsCoding?: number;
+    maxTurnsReview?: number;
+  },
 ): string[] {
   const prompt = opts?.resumePrompt ?? env.OPTIO_PROMPT;
-  const maxTurns = opts?.isReview ? 10 : 50;
+  const maxTurns = opts?.isReview
+    ? (opts.maxTurnsReview ?? DEFAULT_MAX_TURNS_REVIEW)
+    : (opts?.maxTurnsCoding ?? DEFAULT_MAX_TURNS_CODING);
 
   switch (agentType) {
     case "claude-code": {

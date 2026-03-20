@@ -18,6 +18,8 @@ export interface RepoRecord {
   claudeContextWindow: string | null;
   claudeThinking: boolean;
   claudeEffort: string | null;
+  maxTurnsCoding: number | null;
+  maxTurnsReview: number | null;
   autoResumeOnReview: boolean;
   maxConcurrentTasks: number;
   reviewEnabled: boolean;
@@ -84,6 +86,8 @@ export async function updateRepo(
     claudeContextWindow?: string;
     claudeThinking?: boolean;
     claudeEffort?: string;
+    maxTurnsCoding?: number;
+    maxTurnsReview?: number;
     autoResumeOnReview?: boolean;
     maxConcurrentTasks?: number;
     reviewEnabled?: boolean;
