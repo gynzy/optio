@@ -60,26 +60,26 @@ docker build -t optio-agent:latest -f Dockerfile.agent .
 ### System Components
 
 ```
-┌─────────────┐     ┌───────────────────┐     ┌─────────────────────────┐
-│   Web UI    │────→│    API Server     │────→│     Kubernetes          │
-│  Next.js    │     │     Fastify       │     │                         │
-│  :3000      │     │                   │     │  ┌─── Repo Pod A ────┐  │
-│             │←ws──│  Workers:         │     │  │ clone + sleep     │  │
-│ - Dashboard │     │  ├─ Task Queue    │     │  │ ├─ worktree 1  ⚡ │  │
-│ - Tasks     │     │  ├─ PR Watcher    │     │  │ ├─ worktree 2  ⚡ │  │
-│ - Repos     │     │  ├─ Health Mon    │     │  │ └─ worktree N  ⚡ │  │
-│ - Cluster   │     │  └─ Ticket Sync   │     │  └──────────────────┘  │
-│ - Issues    │     │                   │     │  ┌─── Repo Pod B ────┐  │
-│ - Settings  │     │  Services:        │     │  │ clone + sleep     │  │
-│             │     │  ├─ Repo Pool     │     │  │ └─ worktree 1  ⚡ │  │
-│             │     │  ├─ Review Agent  │     │  └──────────────────┘  │
-│             │     │  └─ Auth/Secrets  │     │                         │
-└─────────────┘     └────────┬──────────┘     └─────────────────────────┘
-                             │                   ⚡ = Claude Code / Codex
-                      ┌──────┴──────┐
-                      │  Postgres   │  Tasks, logs, events, secrets, repos
-                      │  Redis      │  Job queue, pub/sub, live streaming
-                      └─────────────┘
+┌──────────────┐     ┌────────────────────┐     ┌──────────────────────────┐
+│   Web UI     │────→│    API Server      │────→│      Kubernetes          │
+│   Next.js    │     │    Fastify         │     │                          │
+│   :3000      │     │                    │     │  ┌── Repo Pod A ──────┐  │
+│              │←ws──│  Workers:          │     │  │ clone + sleep      │  │
+│  - Dashboard │     │  ├─ Task Queue     │     │  │ ├─ worktree 1  ⚡  │  │
+│  - Tasks     │     │  ├─ PR Watcher     │     │  │ ├─ worktree 2  ⚡  │  │
+│  - Repos     │     │  ├─ Health Mon     │     │  │ └─ worktree N  ⚡  │  │
+│  - Cluster   │     │  └─ Ticket Sync    │     │  └────────────────────┘  │
+│  - Issues    │     │                    │     │  ┌── Repo Pod B ──────┐  │
+│  - Settings  │     │  Services:         │     │  │ clone + sleep      │  │
+│              │     │  ├─ Repo Pool      │     │  │ └─ worktree 1  ⚡  │  │
+│              │     │  ├─ Review Agent   │     │  └────────────────────┘  │
+│              │     │  └─ Auth/Secrets   │     │                          │
+└──────────────┘     └─────────┬──────────┘     └──────────────────────────┘
+                               │                  ⚡ = Claude Code / Codex
+                        ┌──────┴──────┐
+                        │  Postgres   │  Tasks, logs, events, secrets, repos
+                        │  Redis      │  Job queue, pub/sub, live streaming
+                        └─────────────┘
 ```
 
 One pod runs per repository. The pod clones the repo once, then stays alive. Each task gets its own git worktree inside the pod, so multiple tasks can run concurrently against the same repo without interference. Pods idle for 10 minutes (configurable), then get cleaned up. A health monitor watches for crashed/OOM-killed pods and auto-restarts them.
@@ -89,57 +89,58 @@ One pod runs per repository. The pod clones the repo once, then stays alive. Eac
 Every task follows a loop: the agent writes code, opens a PR, and then the system monitors, reviews, and self-heals until the PR merges.
 
 ```
-                    ┌──────────────────────────────────────────┐
-                    │            INTAKE                        │
-                    │                                          │
-                    │  GitHub Issue ──→ ┌─────────┐            │
-                    │  Manual Task ──→ │ QUEUED  │            │
-                    │  Ticket Sync ──→ └────┬────┘            │
-                    └───────────────────────┼──────────────────┘
-                                            │
-                    ┌───────────────────────┼──────────────────┐
-                    │            EXECUTION  ▼                  │
-                    │                                          │
-                    │  ┌──────────────┐   ┌────────────────┐   │
-                    │  │ PROVISIONING │──→│    RUNNING      │   │
-                    │  │ get/create   │   │  agent writes   │   │
-                    │  │ repo pod     │   │  code in        │   │
-                    │  └──────────────┘   │  worktree       │   │
-                    │                     └───────┬────────┘   │
-                    └─────────────────────────────┼────────────┘
-                                                  │
-                              ┌────────────────┐  │  ┌────────────────┐
-                              │    FAILED      │←─┤─→│  PR OPENED     │
-                              │                │  │  │                │
-                              │ (auto-retry    │  │  │  PR watcher    │
-                              │  if retriable) │  │  │  polls every   │
-                              └────────────────┘  │  │  30 seconds    │
-                                                  │  └───────┬────────┘
-                    ┌─────────────────────────────┘          │
-                    │       FEEDBACK LOOP                     │
-                    │  ┌─────────────────────────────────┐    │
-                    │  │                                 │    │
-                    │  │  ┌─ CI fails? ──→ Resume agent  │←───┤
-                    │  │  │                to fix build   │    │
-                    │  │  │                              │    │
-                    │  │  ├─ Conflicts? ──→ Resume agent │←───┤
-                    │  │  │                to rebase     │    │
-                    │  │  │                              │    │
-                    │  │  ├─ Review requests             │    │
-                    │  │  │  changes? ──→ Resume agent   │←───┤
-                    │  │  │              with feedback   │    │
-                    │  │  │                              │    │
-                    │  │  └─ CI passes + review done?    │    │
-                    │  │     ──→ Auto-merge + close      │────┤
-                    │  │         linked GitHub issue     │    │
-                    │  │                                 │    │
-                    │  └───── agent pushes fix ──────────┘    │
-                    │                                         │
-                    │                              ┌──────────▼──┐
-                    │                              │  COMPLETED  │
-                    │                              │  PR merged  │
-                    │                              │  Issue closed│
-                    └──────────────────────────────└─────────────┘
+  ┌─────────────────────────────────────────────────┐
+  │                    INTAKE                        │
+  │                                                  │
+  │   GitHub Issue ───→ ┌──────────┐                 │
+  │   Manual Task ───→  │  QUEUED  │                 │
+  │   Ticket Sync ───→  └────┬─────┘                 │
+  └───────────────────────────┼──────────────────────┘
+                              │
+  ┌───────────────────────────┼──────────────────────┐
+  │                 EXECUTION ▼                       │
+  │                                                   │
+  │   ┌──────────────┐    ┌─────────────────┐         │
+  │   │ PROVISIONING │───→│     RUNNING     │         │
+  │   │ get/create   │    │  agent writes   │         │
+  │   │ repo pod     │    │  code in        │         │
+  │   └──────────────┘    │  worktree       │         │
+  │                        └───────┬─────────┘         │
+  └────────────────────────────────┼──────────────────┘
+                                   │
+                 ┌─────────────┐   │   ┌─────────────────┐
+                 │   FAILED    │←──┴──→│   PR OPENED     │
+                 │             │       │                  │
+                 │ (auto-retry │       │  PR watcher      │
+                 │  if stale)  │       │  polls every 30s │
+                 └─────────────┘       └────────┬─────────┘
+                                                │
+  ┌─────────────────────────────────────────────┼────────┐
+  │                 FEEDBACK LOOP                │        │
+  │                                              │        │
+  │   CI fails?  ────────→  Resume agent  ←──────┤        │
+  │                          to fix build         │        │
+  │                                              │        │
+  │   Merge conflicts? ──→  Resume agent  ←──────┤        │
+  │                          to rebase            │        │
+  │                                              │        │
+  │   Review requests ───→  Resume agent  ←──────┤        │
+  │   changes?               with feedback        │        │
+  │                                              │        │
+  │   CI passes + ───────→  Auto-merge    ───────┘        │
+  │   review done?           & close issue                │
+  │                                                       │
+  │         ┌───────────────────────┐                     │
+  │         │  agent pushes fix,    │                     │
+  │         │  returns to PR OPENED │                     │
+  │         └───────────────────────┘                     │
+  │                                                       │
+  │                          ┌─────────────┐              │
+  │                          │  COMPLETED  │              │
+  │                          │  PR merged  │              │
+  │                          │  Issue closed│              │
+  │                          └─────────────┘              │
+  └───────────────────────────────────────────────────────┘
 ```
 
 **Key behaviors:**
