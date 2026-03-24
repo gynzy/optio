@@ -378,8 +378,14 @@ export function startTaskWorker() {
             .where(eq(tasks.id, taskId));
         }
 
-        // Check if a PR URL was detected during streaming (may not be in final result)
-        const detectedPrUrl = result.prUrl || taskAfterExec?.prUrl;
+        // Pick the best PR URL.  Priority:
+        //   1. capturedPrUrl — detected during streaming with heuristics (branch
+        //      matching, JSON-array filtering) so it's the most reliable.
+        //   2. taskAfterExec.prUrl — already persisted, e.g. preserved across
+        //      a force-restart.
+        //   3. result.prUrl — raw regex on the full NDJSON log; can match
+        //      placeholder URLs inside code the agent wrote (e.g. test fixtures).
+        const detectedPrUrl = capturedPrUrl || taskAfterExec?.prUrl || result.prUrl;
 
         if (!sessionId && !isReviewTask) {
           // Agent never started — no session ID means no agent output was produced.
@@ -395,7 +401,9 @@ export function startTaskWorker() {
         } else if (detectedPrUrl && !isReviewTask) {
           // PR exists — go to pr_opened regardless of exit code.
           // The PR watcher will track CI status and handle merge/failure from here.
-          if (result.prUrl) await taskService.updateTaskPr(taskId, result.prUrl);
+          if (detectedPrUrl !== taskAfterExec?.prUrl) {
+            await taskService.updateTaskPr(taskId, detectedPrUrl);
+          }
           await taskService.transitionTask(
             taskId,
             TaskState.PR_OPENED,
