@@ -50,13 +50,13 @@ describe("buildAgentCommand", () => {
       expect(cmds.some((c) => c.includes("sess-abc-123"))).toBe(true);
     });
 
-    it("uses resumePrompt over OPTIO_PROMPT when provided", () => {
+    it("uses resumePrompt with original prompt as context when provided", () => {
       const env = { OPTIO_PROMPT: "Original prompt" };
       const cmds = buildAgentCommand("claude-code", env, {
         resumePrompt: "Fix the tests now",
       });
       expect(cmds.some((c) => c.includes("Fix the tests now"))).toBe(true);
-      expect(cmds.some((c) => c.includes("Original prompt"))).toBe(false);
+      expect(cmds.some((c) => c.includes("Original prompt"))).toBe(true);
     });
 
     it("adds max-subscription auth setup when auth mode is max-subscription", () => {

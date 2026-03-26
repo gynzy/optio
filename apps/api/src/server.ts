@@ -1,5 +1,6 @@
 import Fastify, { type FastifyError } from "fastify";
 import cors from "@fastify/cors";
+import formbody from "@fastify/formbody";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import { healthRoutes } from "./routes/health.js";
@@ -20,6 +21,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { scheduleRoutes } from "./routes/schedules.js";
 import { commentRoutes } from "./routes/comments.js";
+import { slackRoutes } from "./routes/slack.js";
 import { logStreamWs } from "./ws/log-stream.js";
 import { eventsWs } from "./ws/events.js";
 import { sessionTerminalWs } from "./ws/session-terminal.js";
@@ -50,6 +52,7 @@ export async function buildServer() {
     timeWindow: "1 minute",
     allowList: ["127.0.0.1", "::1"],
   });
+  await app.register(formbody);
   await app.register(websocket);
 
   // Auth plugin (validates session cookie on protected routes)
@@ -74,6 +77,7 @@ export async function buildServer() {
   await app.register(sessionRoutes);
   await app.register(scheduleRoutes);
   await app.register(commentRoutes);
+  await app.register(slackRoutes);
 
   // WebSocket routes
   await app.register(logStreamWs);

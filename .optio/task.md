@@ -1,32 +1,31 @@
-# feat: CI pipeline to build and push agent images to container registry
+# feat: Slack integration
 
-feat: CI pipeline to build and push agent images to container registry
+feat: Slack integration
 
 ## Problem
 
-Agent images must be built locally with `docker build`. Deploying via Helm to a remote cluster fails because pods can't pull the image — there's no registry.
+Teams use Slack for coordination. No way to get Optio notifications in Slack or take quick actions from there.
 
-## Solution
+## Features
 
-Add a GitHub Actions workflow that:
+- **Incoming notifications**: Post to a Slack channel on task events (completed, failed, needs_attention, PR opened)
+- **Rich formatting**: Slack Block Kit messages with task details, cost, PR link
+- **Quick actions**: Buttons in Slack messages (Retry, View Logs, Cancel)
+- **Configuration**: Per-repo or global Slack webhook URL in settings
 
-1. Builds all image presets (base, node, python, go, rust, full) on push to `main` and on tags
-2. Pushes to `ghcr.io/jonwiggins/optio-agent-{preset}:{version}`
-3. Tags with `latest` + git SHA + semver tag (if applicable)
+## Implementation
 
-Update Helm chart defaults:
-
-- Change default image refs to `ghcr.io/jonwiggins/optio-agent-node:latest`
-- Change default `imagePullPolicy` to `IfNotPresent`
-- Local dev keeps `imagePullPolicy: Never` via `.env`
+- Build on top of the webhook/notification system (#49)
+- Slack-specific payload formatter
+- Action endpoint for Slack interactive components
 
 ## Acceptance Criteria
 
-- [ ] GitHub Actions workflow builds and pushes all image presets
-- [ ] Images tagged with `latest` and git SHA
-- [ ] Helm chart references registry images by default
-- [ ] Local dev still uses local builds
+- [ ] Slack channel receives formatted notifications on task events
+- [ ] Messages include task details, cost, and PR link
+- [ ] Quick action buttons work (retry, view)
+- [ ] Configurable per-repo or globally
 
 ---
 
-_Optio Task ID: 8fd19594-a893-40d5-83c3-ddd95e3033ee_
+_Optio Task ID: 6f7d42e2-7920-4b7f-96b4-4f472e718cb9_
