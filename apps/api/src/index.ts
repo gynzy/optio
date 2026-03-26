@@ -51,15 +51,23 @@ process.on("uncaughtException", (err) => {
 
 async function checkMetricsServer() {
   try {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-    await execFileAsync("kubectl", ["get", "--raw", "/apis/metrics.k8s.io"], {
-      timeout: 5000,
+    const { KubeConfig, CustomObjectsApi } = await import("@kubernetes/client-node");
+    const kc = new KubeConfig();
+    kc.loadFromDefault();
+    const api = kc.makeApiClient(CustomObjectsApi);
+    const res = await api.listClusterCustomObject({
+      group: "metrics.k8s.io",
+      version: "v1beta1",
+      plural: "nodes",
     });
-    logger.info("metrics-server detected");
-  } catch {
+    if (res && (res as any).items) {
+      logger.info("metrics-server detected");
+    } else {
+      throw new Error("No items in response");
+    }
+  } catch (err) {
     logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
       "metrics-server not detected — resource utilization will be unavailable. " +
         "Install with: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
     );

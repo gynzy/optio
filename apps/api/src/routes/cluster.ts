@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { KubeConfig, CoreV1Api } from "@kubernetes/client-node";
+import { KubeConfig, CoreV1Api, CustomObjectsApi } from "@kubernetes/client-node";
 import { db } from "../db/client.js";
 import { repoPods, tasks, podHealthEvents, repos } from "../db/schema.js";
 import { eq, desc, and, inArray, sql } from "drizzle-orm";
@@ -16,17 +16,35 @@ function getK8sApi() {
 
 const NAMESPACE = "optio";
 
-/** Fetch metrics from the K8s Metrics API (non-blocking) */
-async function fetchMetrics<T>(path: string): Promise<T | null> {
+function getMetricsApi() {
+  return getK8sConfig().makeApiClient(CustomObjectsApi);
+}
+
+/** Fetch metrics from the K8s Metrics API via the client library */
+async function fetchNodeMetrics(): Promise<NodeMetrics[] | null> {
   try {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-    const { stdout } = await execFileAsync("kubectl", ["get", "--raw", path], {
-      encoding: "utf-8",
-      timeout: 3000,
+    const api = getMetricsApi();
+    const res = await api.listClusterCustomObject({
+      group: "metrics.k8s.io",
+      version: "v1beta1",
+      plural: "nodes",
     });
-    return JSON.parse(stdout) as T;
+    return (res as any).items ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPodMetrics(namespace: string): Promise<PodMetrics[] | null> {
+  try {
+    const api = getMetricsApi();
+    const res = await api.listNamespacedCustomObject({
+      group: "metrics.k8s.io",
+      version: "v1beta1",
+      namespace,
+      plural: "pods",
+    });
+    return (res as any).items ?? null;
   } catch {
     return null;
   }
@@ -82,18 +100,16 @@ export async function clusterRoutes(app: FastifyInstance) {
       ]);
 
       // Fetch metrics (gracefully fail if metrics-server not installed)
-      const [nodeMetricsList, podMetricsList] = await Promise.all([
-        fetchMetrics<{ items: NodeMetrics[] }>("/apis/metrics.k8s.io/v1beta1/nodes"),
-        fetchMetrics<{ items: PodMetrics[] }>(
-          `/apis/metrics.k8s.io/v1beta1/namespaces/${NAMESPACE}/pods`,
-        ),
+      const [nodeMetricsItems, podMetricsItems] = await Promise.all([
+        fetchNodeMetrics(),
+        fetchPodMetrics(NAMESPACE),
       ]);
 
       const nodeMetricsMap = new Map(
-        (nodeMetricsList?.items ?? []).map((m) => [m.metadata.name, m.usage]),
+        (nodeMetricsItems ?? []).map((m) => [m.metadata.name, m.usage]),
       );
       const podMetricsMap = new Map(
-        (podMetricsList?.items ?? []).map((m) => [
+        (podMetricsItems ?? []).map((m) => [
           m.metadata.name,
           m.containers.reduce(
             (acc, c) => ({
@@ -267,7 +283,7 @@ export async function clusterRoutes(app: FastifyInstance) {
         services,
         events,
         repoPods: enrichedRepoPods,
-        metricsAvailable: nodeMetricsList !== null,
+        metricsAvailable: nodeMetricsItems !== null,
         summary: {
           totalPods: pods.length,
           runningPods: pods.filter((p) => p.status === "Running").length,
