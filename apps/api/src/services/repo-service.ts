@@ -38,6 +38,10 @@ export interface RepoRecord {
   slackEnabled: boolean;
   networkPolicy: string;
   offPeakOnly: boolean;
+  cpuRequest: string | null;
+  cpuLimit: string | null;
+  memoryRequest: string | null;
+  memoryLimit: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -156,6 +160,10 @@ export async function updateRepo(
     slackEnabled?: boolean;
     networkPolicy?: string;
     offPeakOnly?: boolean;
+    cpuRequest?: string | null;
+    cpuLimit?: string | null;
+    memoryRequest?: string | null;
+    memoryLimit?: string | null;
   },
 ): Promise<RepoRecord | null> {
   const [repo] = await db

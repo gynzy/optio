@@ -382,6 +382,10 @@ export function startTaskWorker() {
             maxAgentsPerPod,
             maxPodInstances,
             networkPolicy: repoConfig?.networkPolicy ?? "unrestricted",
+            cpuRequest: repoConfig?.cpuRequest,
+            cpuLimit: repoConfig?.cpuLimit,
+            memoryRequest: repoConfig?.memoryRequest,
+            memoryLimit: repoConfig?.memoryLimit,
           },
         );
         repoPodId = pod.id;
