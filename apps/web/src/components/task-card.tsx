@@ -40,9 +40,7 @@ export const TaskCard = React.memo(function TaskCard({ task, subtasks }: TaskCar
     <div
       onClick={() => router.push(`/tasks/${task.id}`)}
       className={cn(
-        "block rounded-xl border border-border/50 border-l-[3px] bg-bg-card cursor-pointer overflow-hidden card-hover",
-        "hover:border-border-strong hover:bg-bg-card-hover hover:shadow-lg hover:shadow-black/5",
-        `border-state-${task.state}`,
+        "block rounded-md border border-border bg-bg-card cursor-pointer overflow-hidden card-hover",
       )}
     >
       <div className="p-5">
