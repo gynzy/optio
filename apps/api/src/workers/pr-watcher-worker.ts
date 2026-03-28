@@ -76,23 +76,23 @@ export function determinePrAction(opts: {
   const canResume = opts.taskState !== "failed";
 
   // Merge conflicts
-  if (
-    opts.mergeable === false &&
-    opts.prState === "open" &&
-    opts.prevChecksStatus !== "conflicts"
-  ) {
+  // Resume actions fire whenever the condition holds (bounded by maxAutoResumes
+  // in the caller). We don't gate on prevChecksStatus for resumes because if a
+  // previous resume attempt failed, the DB status was already updated and the
+  // transition-detection guard would permanently block retries.
+  if (opts.mergeable === false && opts.prState === "open") {
     if (opts.autoResume && canResume) return { action: "resume_conflicts" };
-    return { action: "needs_attention", detail: "merge_conflicts" };
+    if (opts.prevChecksStatus !== "conflicts") {
+      return { action: "needs_attention", detail: "merge_conflicts" };
+    }
   }
 
-  // CI just started failing
-  if (
-    opts.checksStatus === "failing" &&
-    opts.prevChecksStatus !== "failing" &&
-    opts.prState === "open"
-  ) {
+  // CI failing
+  if (opts.checksStatus === "failing" && opts.prState === "open") {
     if (opts.autoResume && canResume) return { action: "resume_ci_failure" };
-    return { action: "needs_attention", detail: "ci_failing" };
+    if (opts.prevChecksStatus !== "failing") {
+      return { action: "needs_attention", detail: "ci_failing" };
+    }
   }
 
   // CI just passed — trigger review if configured
@@ -123,10 +123,12 @@ export function determinePrAction(opts: {
     if (opts.blockingSubtasksComplete) return { action: "auto_merge" };
   }
 
-  // Review changes requested (only on new review, not stale status)
-  if (opts.reviewStatus === "changes_requested" && opts.prevReviewStatus !== "changes_requested") {
+  // Review changes requested
+  if (opts.reviewStatus === "changes_requested") {
     if (opts.autoResume && canResume) return { action: "resume_review" };
-    return { action: "needs_attention", detail: "review_changes_requested" };
+    if (opts.prevReviewStatus !== "changes_requested") {
+      return { action: "needs_attention", detail: "review_changes_requested" };
+    }
   }
 
   return { action: "none" };

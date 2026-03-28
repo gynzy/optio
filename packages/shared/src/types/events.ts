@@ -17,6 +17,11 @@ export interface TaskStateChangedEvent {
   fromState: TaskState;
   toState: TaskState;
   timestamp: string;
+  /** Cost/token/model fields — populated on terminal-state transitions */
+  costUsd?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  modelUsed?: string;
 }
 
 export interface TaskLogEvent {

@@ -252,12 +252,18 @@ export async function transitionTask(
     userId,
   });
 
+  const updatedTask = updated[0];
   await publishEvent({
     type: "task:state_changed",
     taskId: id,
     fromState: currentState,
     toState,
     timestamp: new Date().toISOString(),
+    // Include cost/token/model data so the frontend can update without refetching
+    costUsd: updatedTask.costUsd ?? undefined,
+    inputTokens: updatedTask.inputTokens ?? undefined,
+    outputTokens: updatedTask.outputTokens ?? undefined,
+    modelUsed: updatedTask.modelUsed ?? undefined,
   });
 
   // Close linked GitHub issue when task completes

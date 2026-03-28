@@ -14,9 +14,12 @@ export function useGlobalWebSocket() {
     client.connect();
 
     client.on("task:state_changed", (event) => {
-      useStore
-        .getState()
-        .updateTask(event.taskId, { state: event.toState, updatedAt: event.timestamp });
+      const updates: Record<string, unknown> = { state: event.toState, updatedAt: event.timestamp };
+      if (event.costUsd !== undefined) updates.costUsd = event.costUsd;
+      if (event.inputTokens !== undefined) updates.inputTokens = event.inputTokens;
+      if (event.outputTokens !== undefined) updates.outputTokens = event.outputTokens;
+      if (event.modelUsed !== undefined) updates.modelUsed = event.modelUsed;
+      useStore.getState().updateTask(event.taskId, updates);
 
       if (["needs_attention", "pr_opened", "completed", "failed"].includes(event.toState)) {
         useStore.getState().addNotification({

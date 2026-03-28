@@ -131,7 +131,7 @@ describe("determinePrAction", () => {
     });
   });
 
-  it("does not re-trigger conflict resume if already handling", () => {
+  it("retries conflict resume even if already marked as conflicts", () => {
     expect(
       determinePrAction({
         ...defaults,
@@ -139,7 +139,7 @@ describe("determinePrAction", () => {
         autoResume: true,
         prevChecksStatus: "conflicts",
       }),
-    ).toEqual({ action: "none" });
+    ).toEqual({ action: "resume_conflicts" });
   });
 
   it("resumes on CI failure when autoResume is on", () => {
@@ -153,7 +153,7 @@ describe("determinePrAction", () => {
     ).toEqual({ action: "resume_ci_failure" });
   });
 
-  it("does not re-trigger CI resume if already failing", () => {
+  it("retries CI resume even if previously failing", () => {
     expect(
       determinePrAction({
         ...defaults,
@@ -161,7 +161,7 @@ describe("determinePrAction", () => {
         prevChecksStatus: "failing",
         autoResume: true,
       }),
-    ).toEqual({ action: "none" });
+    ).toEqual({ action: "resume_ci_failure" });
   });
 
   it("launches review when CI passes and review enabled with on_ci_pass", () => {
@@ -239,7 +239,7 @@ describe("determinePrAction", () => {
     ).toEqual({ action: "needs_attention", detail: "review_changes_requested" });
   });
 
-  it("does not re-trigger resume_review on stale changes_requested", () => {
+  it("retries resume_review even if previously changes_requested", () => {
     expect(
       determinePrAction({
         ...defaults,
@@ -247,7 +247,7 @@ describe("determinePrAction", () => {
         prevReviewStatus: "changes_requested",
         autoResume: true,
       }),
-    ).toEqual({ action: "none" });
+    ).toEqual({ action: "resume_review" });
   });
 
   it("skips resume actions for failed tasks", () => {
