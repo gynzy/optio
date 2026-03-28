@@ -76,23 +76,23 @@ export function determinePrAction(opts: {
   const canResume = opts.taskState !== "failed";
 
   // Merge conflicts
-  // Resume actions fire whenever the condition holds (bounded by maxAutoResumes
-  // in the caller). We don't gate on prevChecksStatus for resumes because if a
-  // previous resume attempt failed, the DB status was already updated and the
-  // transition-detection guard would permanently block retries.
-  if (opts.mergeable === false && opts.prState === "open") {
+  if (
+    opts.mergeable === false &&
+    opts.prState === "open" &&
+    opts.prevChecksStatus !== "conflicts"
+  ) {
     if (opts.autoResume && canResume) return { action: "resume_conflicts" };
-    if (opts.prevChecksStatus !== "conflicts") {
-      return { action: "needs_attention", detail: "merge_conflicts" };
-    }
+    return { action: "needs_attention", detail: "merge_conflicts" };
   }
 
-  // CI failing
-  if (opts.checksStatus === "failing" && opts.prState === "open") {
+  // CI just started failing
+  if (
+    opts.checksStatus === "failing" &&
+    opts.prevChecksStatus !== "failing" &&
+    opts.prState === "open"
+  ) {
     if (opts.autoResume && canResume) return { action: "resume_ci_failure" };
-    if (opts.prevChecksStatus !== "failing") {
-      return { action: "needs_attention", detail: "ci_failing" };
-    }
+    return { action: "needs_attention", detail: "ci_failing" };
   }
 
   // CI just passed — trigger review if configured
@@ -123,12 +123,10 @@ export function determinePrAction(opts: {
     if (opts.blockingSubtasksComplete) return { action: "auto_merge" };
   }
 
-  // Review changes requested
-  if (opts.reviewStatus === "changes_requested") {
+  // Review changes requested (only on new review, not stale status)
+  if (opts.reviewStatus === "changes_requested" && opts.prevReviewStatus !== "changes_requested") {
     if (opts.autoResume && canResume) return { action: "resume_review" };
-    if (opts.prevReviewStatus !== "changes_requested") {
-      return { action: "needs_attention", detail: "review_changes_requested" };
-    }
+    return { action: "needs_attention", detail: "review_changes_requested" };
   }
 
   return { action: "none" };
@@ -267,8 +265,8 @@ export function startPrWatcherWorker() {
               }
             }
 
-            // Update task — preserve "conflicts" status while PR is still unmergeable
-            // to prevent the conflict-resume guard from re-firing every poll cycle
+            // Update task status fields (except prChecksStatus — deferred until
+            // after the action executes so the transition guard can retry on failure)
             const effectiveChecksStatus =
               task.prChecksStatus === "conflicts" && prData.mergeable === false
                 ? "conflicts"
@@ -276,7 +274,6 @@ export function startPrWatcherWorker() {
             const updates: Record<string, unknown> = {
               prNumber,
               prState: prData.merged ? "merged" : prData.state,
-              prChecksStatus: effectiveChecksStatus,
               prReviewStatus: reviewStatus,
               updatedAt: new Date(),
             };
@@ -479,10 +476,17 @@ export function startPrWatcherWorker() {
                 case "none":
                   break;
               }
+              // Action succeeded — now commit prChecksStatus so the transition
+              // guard won't re-fire on the next poll.  If the action threw above,
+              // we skip this update so the next poll sees the old status and retries.
+              await db
+                .update(tasks)
+                .set({ prChecksStatus: effectiveChecksStatus })
+                .where(eq(tasks.id, task.id));
             } catch (err) {
               logger.warn(
                 { err, taskId: task.id, action: action.action },
-                "Failed to execute PR action",
+                "Failed to execute PR action — prChecksStatus left unchanged for retry",
               );
             }
           } catch (err) {
