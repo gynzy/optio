@@ -16,6 +16,7 @@ import {
   ArrowRight,
   ArrowLeft,
   AlertCircle,
+  AlertTriangle,
   Check,
   Plus,
   ExternalLink,
@@ -207,11 +208,18 @@ export default function SetupPage() {
     setLoading(false);
   };
 
+  const [oauthExpired, setOauthExpired] = useState(false);
+
   const checkOauthToken = async () => {
     setOauthChecking(true);
     try {
       const res = await api.getAuthStatus();
-      if (res.subscription.available) {
+      if (res.subscription.expired) {
+        setOauthExpired(true);
+        setOauthTokenDetected(false);
+        setClaudeAuthMode("oauth-token");
+      } else if (res.subscription.available) {
+        setOauthExpired(false);
         setOauthTokenDetected(true);
         setClaudeAuthMode("oauth-token");
       }
@@ -575,6 +583,11 @@ export default function SetupPage() {
                             <span className="text-xs text-text-muted flex items-center gap-1">
                               <Loader2 className="w-3 h-3 animate-spin" /> Checking for existing
                               token...
+                            </span>
+                          ) : oauthExpired ? (
+                            <span className="text-xs text-error flex items-center gap-2">
+                              <AlertTriangle className="w-3 h-3" /> OAuth token has expired — paste
+                              a new one below
                             </span>
                           ) : oauthTokenDetected ? (
                             <span className="text-xs text-success flex items-center gap-1">

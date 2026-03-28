@@ -82,11 +82,33 @@ export async function authRoutes(app: FastifyInstance) {
         }
       } catch {}
     }
+
+    // Validate the token against the Anthropic API if we have one
+    let expired = false;
+    if (result.available && result.token) {
+      try {
+        const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+          headers: {
+            Authorization: `Bearer ${result.token}`,
+            "anthropic-beta": "oauth-2025-04-20",
+          },
+        });
+        if (res.status === 401) {
+          expired = true;
+          result.available = false;
+          result.error = "OAuth token has expired — please paste a new one";
+        }
+      } catch {
+        // Network error — don't mark as expired, just skip validation
+      }
+    }
+
     reply.send({
       subscription: {
         available: result.available,
         expiresAt: result.expiresAt,
         error: result.error,
+        expired,
       },
     });
   });
