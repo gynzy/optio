@@ -1,0 +1,3 @@
+# Prevent git from auto-merging lockfiles during rebase/merge.
+# Forces a conflict so the lockfile must be regenerated with `pnpm install`.
+pnpm-lock.yaml merge=binary
