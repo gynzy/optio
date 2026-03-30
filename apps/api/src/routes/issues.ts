@@ -11,7 +11,9 @@ export async function issueRoutes(app: FastifyInstance) {
   app.get("/api/issues", async (req, reply) => {
     const query = req.query as { repoId?: string; state?: string };
 
-    const githubToken = await getGitHubToken({ userId: req.user!.id }).catch(() => null);
+    const githubToken = await getGitHubToken(
+      req.user ? { userId: req.user.id } : { server: true },
+    ).catch(() => null);
     if (!githubToken) {
       return reply.status(503).send({ issues: [], error: "No GitHub token configured" });
     }
@@ -148,7 +150,9 @@ export async function issueRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Repo not found" });
     }
 
-    const githubToken = await getGitHubToken({ userId: req.user!.id }).catch(() => null);
+    const githubToken = await getGitHubToken(
+      req.user ? { userId: req.user.id } : { server: true },
+    ).catch(() => null);
     if (!githubToken) {
       return reply.status(503).send({ error: "No GitHub token configured" });
     }
