@@ -7,6 +7,14 @@ import { authenticateWs } from "./ws-auth.js";
 import { logger } from "../logger.js";
 import { OPTIO_TOOL_CATEGORIES, type OptioToolDefinition } from "@optio/shared";
 import type { ExecSession } from "@optio/shared";
+import {
+  getClientIp,
+  trackConnection,
+  releaseConnection,
+  isMessageWithinSizeLimit,
+  WS_CLOSE_CONNECTION_LIMIT,
+  WS_CLOSE_MESSAGE_TOO_LARGE,
+} from "./ws-limits.js";
 
 const NAMESPACE = "optio";
 const POD_ROLE_LABEL = "optio.pod-role=optio";
@@ -210,8 +218,18 @@ export function parseActionResult(text: string): ParsedActionResult | null {
 
 export async function optioChatWs(app: FastifyInstance) {
   app.get("/ws/optio/chat", { websocket: true }, async (socket, req) => {
+    const clientIp = getClientIp(req);
+
+    if (!trackConnection(clientIp)) {
+      socket.close(WS_CLOSE_CONNECTION_LIMIT, "Too many connections");
+      return;
+    }
+
     const user = await authenticateWs(socket, req);
-    if (!user) return;
+    if (!user) {
+      releaseConnection(clientIp);
+      return;
+    }
 
     const userId = user.id;
     const log = logger.child({ userId, ws: "optio-chat" });
@@ -224,6 +242,7 @@ export async function optioChatWs(app: FastifyInstance) {
           message: "You already have an active Optio conversation. Close the other one first.",
         }),
       );
+      releaseConnection(clientIp);
       socket.close(4409, "Concurrent conversation");
       return;
     }
@@ -416,6 +435,11 @@ export async function optioChatWs(app: FastifyInstance) {
 
     // Handle incoming messages from the client
     socket.on("message", (data: Buffer | string) => {
+      if (!isMessageWithinSizeLimit(data)) {
+        socket.close(WS_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        return;
+      }
+
       const str = typeof data === "string" ? data : data.toString("utf-8");
 
       let msg: {
@@ -514,6 +538,7 @@ export async function optioChatWs(app: FastifyInstance) {
 
     socket.on("close", () => {
       log.info("Optio chat disconnected");
+      releaseConnection(clientIp);
       activeConnections.delete(userId);
       if (execSession) {
         execSession.close();

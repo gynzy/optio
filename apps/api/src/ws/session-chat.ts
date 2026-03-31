@@ -10,6 +10,14 @@ import { parseClaudeEvent } from "../services/agent-event-parser.js";
 import { publishSessionEvent } from "../services/event-bus.js";
 import type { ExecSession, OptioSettings } from "@optio/shared";
 import { extractSessionToken } from "./ws-auth.js";
+import {
+  getClientIp,
+  trackConnection,
+  releaseConnection,
+  isMessageWithinSizeLimit,
+  WS_CLOSE_CONNECTION_LIMIT,
+  WS_CLOSE_MESSAGE_TOO_LARGE,
+} from "./ws-limits.js";
 
 /**
  * Session chat WebSocket handler.
@@ -30,6 +38,13 @@ import { extractSessionToken } from "./ws-auth.js";
  */
 export async function sessionChatWs(app: FastifyInstance) {
   app.get("/ws/sessions/:sessionId/chat", { websocket: true }, async (socket, req) => {
+    const clientIp = getClientIp(req);
+
+    if (!trackConnection(clientIp)) {
+      socket.close(WS_CLOSE_CONNECTION_LIMIT, "Too many connections");
+      return;
+    }
+
     const { sessionId } = req.params as { sessionId: string };
     const log = logger.child({ sessionId, ws: "session-chat" });
 
@@ -41,18 +56,21 @@ export async function sessionChatWs(app: FastifyInstance) {
     const session = await getSession(sessionId);
     if (!session) {
       socket.send(JSON.stringify({ type: "error", message: "Session not found" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
 
     if (session.state !== "active") {
       socket.send(JSON.stringify({ type: "error", message: "Session is not active" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
 
     if (!session.podId) {
       socket.send(JSON.stringify({ type: "error", message: "Session has no pod assigned" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
@@ -61,6 +79,7 @@ export async function sessionChatWs(app: FastifyInstance) {
     const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, session.podId));
     if (!pod || !pod.podName) {
       socket.send(JSON.stringify({ type: "error", message: "Pod not found or not ready" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
@@ -239,6 +258,11 @@ export async function sessionChatWs(app: FastifyInstance) {
 
     // Handle incoming messages from the client
     socket.on("message", (data: Buffer | string) => {
+      if (!isMessageWithinSizeLimit(data)) {
+        socket.close(WS_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        return;
+      }
+
       const str = typeof data === "string" ? data : data.toString("utf-8");
 
       let msg: { type: string; content?: string; model?: string };
@@ -291,6 +315,7 @@ export async function sessionChatWs(app: FastifyInstance) {
 
     socket.on("close", () => {
       log.info("Session chat disconnected");
+      releaseConnection(clientIp);
       if (execSession) {
         execSession.close();
         execSession = null;

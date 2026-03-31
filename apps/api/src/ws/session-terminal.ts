@@ -6,29 +6,47 @@ import { repoPods } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { logger } from "../logger.js";
 import type { ContainerHandle, ExecSession } from "@optio/shared";
+import {
+  getClientIp,
+  trackConnection,
+  releaseConnection,
+  isMessageWithinSizeLimit,
+  WS_CLOSE_CONNECTION_LIMIT,
+  WS_CLOSE_MESSAGE_TOO_LARGE,
+} from "./ws-limits.js";
 
 const PR_URL_REGEX = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/g;
 
 export async function sessionTerminalWs(app: FastifyInstance) {
   app.get("/ws/sessions/:sessionId/terminal", { websocket: true }, async (socket, req) => {
+    const clientIp = getClientIp(req);
+
+    if (!trackConnection(clientIp)) {
+      socket.close(WS_CLOSE_CONNECTION_LIMIT, "Too many connections");
+      return;
+    }
+
     const { sessionId } = req.params as { sessionId: string };
     const log = logger.child({ sessionId });
 
     const session = await getSession(sessionId);
     if (!session) {
       socket.send(JSON.stringify({ error: "Session not found" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
 
     if (session.state !== "active") {
       socket.send(JSON.stringify({ error: "Session is not active" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
 
     if (!session.podId) {
       socket.send(JSON.stringify({ error: "Session has no pod assigned" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
@@ -37,6 +55,7 @@ export async function sessionTerminalWs(app: FastifyInstance) {
     const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, session.podId));
     if (!pod || !pod.podName) {
       socket.send(JSON.stringify({ error: "Pod not found or not ready" }));
+      releaseConnection(clientIp);
       socket.close();
       return;
     }
@@ -110,6 +129,11 @@ export async function sessionTerminalWs(app: FastifyInstance) {
 
       // Pipe WebSocket → exec stdin
       socket.on("message", (data: Buffer | string) => {
+        if (!isMessageWithinSizeLimit(data)) {
+          socket.close(WS_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+          return;
+        }
+
         const str = typeof data === "string" ? data : data.toString("utf-8");
 
         // Check for resize messages
@@ -136,11 +160,13 @@ export async function sessionTerminalWs(app: FastifyInstance) {
       // Handle WebSocket close
       socket.on("close", () => {
         log.info("Session terminal disconnected");
+        releaseConnection(clientIp);
         execSession?.close();
       });
     } catch (err) {
       log.error({ err }, "Failed to start terminal exec session");
       socket.send(JSON.stringify({ error: "Failed to start terminal" }));
+      releaseConnection(clientIp);
       socket.close();
     }
   });

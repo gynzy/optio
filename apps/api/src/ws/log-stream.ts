@@ -2,11 +2,27 @@ import type { FastifyInstance } from "fastify";
 import { createSubscriber } from "../services/event-bus.js";
 import { authenticateWs } from "./ws-auth.js";
 import { getTaskLogs } from "../services/task-service.js";
+import {
+  getClientIp,
+  trackConnection,
+  releaseConnection,
+  WS_CLOSE_CONNECTION_LIMIT,
+} from "./ws-limits.js";
 
 export async function logStreamWs(app: FastifyInstance) {
   app.get("/ws/logs/:taskId", { websocket: true }, async (socket, req) => {
+    const clientIp = getClientIp(req);
+
+    if (!trackConnection(clientIp)) {
+      socket.close(WS_CLOSE_CONNECTION_LIMIT, "Too many connections");
+      return;
+    }
+
     const user = await authenticateWs(socket, req);
-    if (!user) return;
+    if (!user) {
+      releaseConnection(clientIp);
+      return;
+    }
 
     const { taskId } = req.params as { taskId: string };
 
@@ -48,6 +64,7 @@ export async function logStreamWs(app: FastifyInstance) {
     });
 
     socket.on("close", () => {
+      releaseConnection(clientIp);
       subscriber.unsubscribe(channel);
       subscriber.disconnect();
     });
