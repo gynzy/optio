@@ -1,5 +1,5 @@
 import { Queue, Worker } from "bullmq";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { repoPods, podHealthEvents, tasks, taskEvents } from "../db/schema.js";
 import {
@@ -338,6 +338,30 @@ export function startRepoCleanupWorker() {
         }
       } catch (err) {
         logger.warn({ err }, "Failed to clean up expired sessions");
+      }
+
+      // Clean up stale Linear agent sessions
+      try {
+        const { linearAgentSessions } = await import("../db/schema.js");
+        const { LinearSessionStatus } = await import("@optio/shared");
+
+        // Delete sessions older than 28 days
+        const cutoff28d = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+        await db.delete(linearAgentSessions).where(lt(linearAgentSessions.lastActiveAt, cutoff28d));
+
+        // Expire sessions waiting for user input for > 7 days
+        const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        await db
+          .update(linearAgentSessions)
+          .set({ status: LinearSessionStatus.COMPLETED })
+          .where(
+            and(
+              eq(linearAgentSessions.status, LinearSessionStatus.WAITING_FOR_USER),
+              lt(linearAgentSessions.lastActiveAt, cutoff7d),
+            ),
+          );
+      } catch (err) {
+        logger.warn({ err }, "Failed to clean up stale Linear sessions");
       }
     },
     {
