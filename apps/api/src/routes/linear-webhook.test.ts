@@ -26,5 +26,30 @@ describe("linear-webhook", () => {
     it("returns false for empty signature", () => {
       expect(verifyLinearSignature(body, "", secret)).toBe(false);
     });
+
+    it("uses per-registration secret when available and rejects global secret", () => {
+      const registrationSecret = "per-registration-secret";
+      const globalSecret = "global-fallback-secret";
+      const payload = '{"oauthClientId":"client-123","agentSession":{"id":"sess-1"}}';
+
+      const sigWithRegistration = crypto
+        .createHmac("sha256", registrationSecret)
+        .update(payload)
+        .digest("hex");
+
+      // Valid with the registration secret
+      expect(verifyLinearSignature(payload, sigWithRegistration, registrationSecret)).toBe(true);
+      // Invalid with the global fallback secret
+      expect(verifyLinearSignature(payload, sigWithRegistration, globalSecret)).toBe(false);
+    });
+
+    it("falls back to global secret when no registration matches", () => {
+      const globalSecret = "global-fallback-secret";
+      const payload = '{"agentSession":{"id":"sess-2"}}';
+
+      const sigWithGlobal = crypto.createHmac("sha256", globalSecret).update(payload).digest("hex");
+
+      expect(verifyLinearSignature(payload, sigWithGlobal, globalSecret)).toBe(true);
+    });
   });
 });

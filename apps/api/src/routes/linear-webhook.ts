@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { logger } from "../logger.js";
+import type { RegistrationRecord } from "../services/linear-registration-service.js";
 
 const log = logger.child({ route: "linear-webhook" });
 
@@ -27,13 +28,38 @@ export async function linearWebhookRoutes(app: FastifyInstance) {
       return Readable.from(rawBody);
     },
     handler: async (req, reply) => {
-      let webhookSecret: string;
-      try {
-        const { retrieveSecret } = await import("../services/secret-service.js");
-        webhookSecret = (await retrieveSecret("LINEAR_WEBHOOK_SECRET")) as string;
-      } catch {
-        log.error("LINEAR_WEBHOOK_SECRET not configured");
-        return reply.status(401).send({ error: "Webhook secret not configured" });
+      const body = req.body as any;
+
+      // Try to look up a per-registration webhook secret via oauthClientId
+      let webhookSecret: string | undefined;
+      let registration: RegistrationRecord | undefined;
+
+      const oauthClientId = body?.oauthClientId as string | undefined;
+      if (oauthClientId) {
+        try {
+          const { getRegistrationByClientId } =
+            await import("../services/linear-registration-service.js");
+          const result = await getRegistrationByClientId(oauthClientId);
+          if (result) {
+            const { webhookSecret: regSecret, ...reg } = result;
+            webhookSecret = regSecret;
+            registration = reg;
+            log.debug({ oauthClientId }, "Using per-registration webhook secret");
+          }
+        } catch (err) {
+          log.warn({ err, oauthClientId }, "Failed to look up registration by oauthClientId");
+        }
+      }
+
+      // Fall back to global LINEAR_WEBHOOK_SECRET if no registration matched
+      if (!webhookSecret) {
+        try {
+          const { retrieveSecret } = await import("../services/secret-service.js");
+          webhookSecret = (await retrieveSecret("LINEAR_WEBHOOK_SECRET")) as string;
+        } catch {
+          log.error("LINEAR_WEBHOOK_SECRET not configured");
+          return reply.status(401).send({ error: "Webhook secret not configured" });
+        }
       }
 
       const signature = req.headers["linear-signature"] as string | undefined;
@@ -48,7 +74,7 @@ export async function linearWebhookRoutes(app: FastifyInstance) {
         return reply.status(401).send({ error: "Invalid signature" });
       }
 
-      const payload = req.body as any;
+      const payload = body;
       const sessionId = payload.agentSession?.id;
 
       if (!sessionId) {
@@ -67,7 +93,7 @@ export async function linearWebhookRoutes(app: FastifyInstance) {
 
       log.info({ sessionId }, "Received Linear agent webhook");
       import("../services/linear-coordinator-service.js")
-        .then(({ handleWebhook }) => handleWebhook(payload))
+        .then(({ handleWebhook }) => (handleWebhook as any)(payload, registration))
         .catch((err) => log.error({ err, sessionId }, "Failed to handle webhook"));
 
       return reply.status(200).send({ ok: true });
