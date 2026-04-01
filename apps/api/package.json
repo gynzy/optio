@@ -19,6 +19,7 @@
     "@fastify/rate-limit": "^10.2.2",
     "@fastify/websocket": "^11.0.2",
     "@kubernetes/client-node": "^1.4.0",
+    "@linear/sdk": "^80.0.0",
     "@optio/agent-adapters": "workspace:*",
     "@optio/container-runtime": "workspace:*",
     "@optio/shared": "workspace:*",
