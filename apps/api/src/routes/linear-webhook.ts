@@ -93,7 +93,7 @@ export async function linearWebhookRoutes(app: FastifyInstance) {
 
       log.info({ sessionId }, "Received Linear agent webhook");
       import("../services/linear-coordinator-service.js")
-        .then(({ handleWebhook }) => (handleWebhook as any)(payload, registration))
+        .then(({ handleWebhook }) => handleWebhook(payload, registration))
         .catch((err) => log.error({ err, sessionId }, "Failed to handle webhook"));
 
       return reply.status(200).send({ ok: true });

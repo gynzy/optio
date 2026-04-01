@@ -12,6 +12,7 @@ import { logger } from "../logger.js";
 import { db } from "../db/client.js";
 import { linearAgentSessions, repos, customSkills } from "../db/schema.js";
 import { createLinearApiService, type LinearApiService } from "./linear-api-service.js";
+import type { RegistrationRecord } from "./linear-registration-service.js";
 import {
   formatActionForLinear,
   formatResultForLinear,
@@ -452,7 +453,10 @@ async function runToolLoop(
 
 // ─── Main webhook handler ────────────────────────────────────────────────────
 
-export async function handleWebhook(payload: any): Promise<void> {
+export async function handleWebhook(
+  payload: any,
+  registration?: RegistrationRecord | null,
+): Promise<void> {
   const linearSessionId = payload.agentSession?.id as string;
   const linearIssueId = payload.agentSession?.issueId as string | undefined;
   const userMessage = payload.agentActivity?.body as string | undefined;
@@ -507,10 +511,56 @@ export async function handleWebhook(payload: any): Promise<void> {
     // Load coordinator context
     const { repoList, skillList } = await loadCoordinatorContext();
 
+    // Load skills: global + registration-selected + agent-scoped
+    const { listSkills, getSkill } = await import("./skill-service.js");
+    let skills = await listSkills("global", session.workspaceId);
+
+    if (registration?.selectedSkillIds?.length) {
+      for (const skillId of registration.selectedSkillIds) {
+        const skill = await getSkill(skillId);
+        if (skill && !skills.some((s) => s.id === skill.id)) {
+          skills.push(skill);
+        }
+      }
+    }
+
+    // Also load agent-scoped skills
+    const agentScopedSkills = await listSkills(
+      `linear-agent:${registration?.id}`,
+      session.workspaceId,
+    );
+    skills = [...skills, ...agentScopedSkills];
+
+    // Load MCP servers: global + registration-selected
+    const { listMcpServers, getMcpServer } = await import("./mcp-server-service.js");
+    const mcpServers = await listMcpServers("global", session.workspaceId);
+
+    if (registration?.selectedMcpServerIds?.length) {
+      for (const mcpId of registration.selectedMcpServerIds) {
+        const server = await getMcpServer(mcpId);
+        if (server && !mcpServers.some((s) => s.id === server.id)) {
+          mcpServers.push(server);
+        }
+      }
+    }
+
+    // Use registration's system prompt, fall back to payload agent instructions
+    const agentPrompt =
+      registration?.systemPrompt ?? (payload.agentSession as any)?.agent?.instructions ?? "";
+
+    // Merge skill names from both DB query and skill-service for the system prompt
+    const allSkillNames = [
+      ...skillList,
+      ...skills
+        .filter((s) => !skillList.some((sl) => sl.name === s.name))
+        .map((s) => ({ name: s.name, description: s.description ?? null })),
+    ];
+
     // Build system prompt
     const systemPrompt = buildCoordinatorSystemPrompt({
       repos: repoList,
-      skills: skillList,
+      skills: allSkillNames,
+      agentPrompt: agentPrompt || undefined,
       issueTitle,
       issueDescription,
       issueIdentifier,
