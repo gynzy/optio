@@ -32,6 +32,7 @@ import { skillRoutes } from "./routes/skills.js";
 import { optioRoutes } from "./routes/optio.js";
 import { optioSettingsRoutes } from "./routes/optio-settings.js";
 import githubAppRoutes from "./routes/github-app.js";
+import { linearWebhookRoutes } from "./routes/linear-webhook.js";
 import { logStreamWs } from "./ws/log-stream.js";
 import { eventsWs } from "./ws/events.js";
 import { sessionTerminalWs } from "./ws/session-terminal.js";
@@ -102,6 +103,7 @@ export async function buildServer() {
   await app.register(optioRoutes);
   await app.register(optioSettingsRoutes);
   await app.register(githubAppRoutes);
+  await app.register(linearWebhookRoutes);
 
   // WebSocket routes
   await app.register(logStreamWs);
