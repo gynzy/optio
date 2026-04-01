@@ -59,23 +59,15 @@ export async function linearWebhookRoutes(app: FastifyInstance) {
       const signal = payload.agentActivity?.signal;
       if (signal === "stop") {
         log.info({ sessionId }, "Received stop signal from Linear");
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore — coordinator service added in Task 7
         import("../services/linear-coordinator-service.js")
-          .then(({ stopSession }: { stopSession: (id: string) => Promise<void> }) =>
-            stopSession(sessionId),
-          )
+          .then(({ stopSession }) => stopSession(sessionId))
           .catch((err) => log.error({ err, sessionId }, "Failed to stop session"));
         return reply.status(200).send({ ok: true });
       }
 
       log.info({ sessionId }, "Received Linear agent webhook");
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore — coordinator service added in Task 7
       import("../services/linear-coordinator-service.js")
-        .then(({ handleWebhook }: { handleWebhook: (payload: unknown) => Promise<void> }) =>
-          handleWebhook(payload),
-        )
+        .then(({ handleWebhook }) => handleWebhook(payload))
         .catch((err) => log.error({ err, sessionId }, "Failed to handle webhook"));
 
       return reply.status(200).send({ ok: true });
