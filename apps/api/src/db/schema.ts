@@ -689,6 +689,32 @@ export const linearAgentSessions = pgTable(
   ],
 );
 
+// ── Linear Agent Registrations ──────────────────────────────────────────────
+
+export const linearAgentRegistrations = pgTable(
+  "linear_agent_registrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    oauthClientId: text("oauth_client_id").notNull(),
+    encryptedWebhookSecret: bytea("encrypted_webhook_secret").notNull(),
+    secretIv: bytea("secret_iv").notNull(),
+    secretAuthTag: bytea("secret_auth_tag").notNull(),
+    systemPrompt: text("system_prompt").notNull().default(""),
+    selectedSkillIds: jsonb("selected_skill_ids").$type<string[]>().notNull().default([]),
+    selectedMcpServerIds: jsonb("selected_mcp_server_ids").$type<string[]>().notNull().default([]),
+    marketplacePlugins: jsonb("marketplace_plugins").$type<string[]>().notNull().default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    workspaceId: uuid("workspace_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("linear_agent_registrations_oauth_client_id_idx").on(table.oauthClientId),
+    index("linear_agent_registrations_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
 export const promptTemplates = pgTable(
   "prompt_templates",
   {

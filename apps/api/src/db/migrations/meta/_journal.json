@@ -281,6 +281,13 @@
       "when": 1776355200000,
       "tag": "0039_linear_agent_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1776441600000,
+      "tag": "0040_linear_agent_registrations",
+      "breakpoints": true
     }
   ]
 }
