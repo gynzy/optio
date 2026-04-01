@@ -96,6 +96,9 @@ async function main() {
 
   const app = await buildServer();
 
+  const { setApp } = await import("./server.js");
+  setApp(app);
+
   // Bind HTTP server first so turbo sees output quickly.
   // Heavy Redis/BullMQ work is deferred to after listen() to avoid
   // blocking Turborepo's process management and stalling sibling

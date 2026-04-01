@@ -136,3 +136,14 @@ export async function buildServer() {
 
   return app;
 }
+
+let appInstance: Awaited<ReturnType<typeof buildServer>> | null = null;
+
+export function setApp(app: Awaited<ReturnType<typeof buildServer>>): void {
+  appInstance = app;
+}
+
+export function getApp(): Awaited<ReturnType<typeof buildServer>> {
+  if (!appInstance) throw new Error("Fastify app not initialized");
+  return appInstance;
+}
