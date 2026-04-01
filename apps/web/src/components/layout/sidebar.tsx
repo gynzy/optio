@@ -18,7 +18,6 @@ import {
   FileText,
   GitBranch,
   Bot,
-  Link2,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
 import { WorkspaceSwitcher } from "./workspace-switcher";
@@ -37,7 +36,6 @@ const MAIN_NAV = [
 ];
 
 const SECONDARY_NAV = [
-  { href: "/integrations/linear", label: "Linear", icon: Link2 },
   { href: "/secrets", label: "Secrets", icon: KeyRound },
   { href: "/workspace-settings", label: "Workspace", icon: Building2 },
   { href: "/settings", label: "Settings", icon: Settings },
