@@ -10,6 +10,7 @@ import {
   customType,
   unique,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ── Workspace enums ─────────────────────────────────────────────────────────
@@ -657,6 +658,34 @@ export const reviewDrafts = pgTable(
   (table) => [
     index("review_drafts_task_id_idx").on(table.taskId),
     index("review_drafts_state_idx").on(table.state),
+  ],
+);
+
+// ── Linear Agent Sessions ───────────────────────────────────────────────────
+
+export const linearAgentSessions = pgTable(
+  "linear_agent_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    linearSessionId: text("linear_session_id").notNull(),
+    linearIssueId: text("linear_issue_id"),
+    status: text("status").notNull().default("active"),
+    conversationMessages: jsonb("conversation_messages").$type<unknown[]>().notNull().default([]),
+    enrichedContext: jsonb("enriched_context"),
+    spawnedTaskIds: jsonb("spawned_task_ids").$type<string[]>().notNull().default([]),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
+    costUsd: text("cost_usd"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    workspaceId: uuid("workspace_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("linear_agent_sessions_linear_session_id_idx").on(table.linearSessionId),
+    index("linear_agent_sessions_status_idx").on(table.status),
   ],
 );
 
