@@ -20,3 +20,4 @@ export * from "./utils/off-peak.js";
 export * from "./types/optio-settings.js";
 export * from "./types/optio-action.js";
 export * from "./optio-tools.js";
+export * from "./types/linear-agent.js";
