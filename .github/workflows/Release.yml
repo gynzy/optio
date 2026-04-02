@@ -727,7 +727,7 @@
       "with":
         "atomic": "false"
         "chart": "./helm/optio"
-        "clusterLocation": "europe-west4-b"
+        "clusterLocation": "europe-west4"
         "clusterName": "gh-runners-2023"
         "clusterProject": "gh-runners"
         "clusterSaJson": "${{ secrets.GCE_JSON }}"
