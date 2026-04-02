@@ -7,8 +7,9 @@ local misc = import '.github/jsonnet/misc.jsonnet';
 
 local nodeImage = 'mirror.gcr.io/node:22';
 local project = 'unicorn-985';
-local imageTag = 'deploy-${{ github.sha }}';
+local imageTag = 'deploy-${{ github.event.pull_request.head.sha || github.sha }}';
 local baseImageRef = 'europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:' + imageTag;
+local imageRef = '${{ github.event.pull_request.head.sha || github.sha }}';
 
 local checkoutAndPnpm() =
   misc.checkout() +
@@ -38,6 +39,14 @@ local pnpmJob(name, commands) =
     ],
   );
 
+local releaseServices = [
+  { name: 'api', dockerfile: 'Dockerfile.api' },
+  { name: 'web', dockerfile: 'Dockerfile.web' },
+  { name: 'optio', dockerfile: 'Dockerfile.optio' },
+];
+
+local agentPresets = ['node', 'python', 'go', 'rust', 'full'];
+
 // ── CI ──────────────────────────────────────────────────────────────────────
 local ci = base.pipeline(
   'CI',
@@ -47,22 +56,48 @@ local ci = base.pipeline(
     pnpmJob('test', [{ name: 'Test', run: 'pnpm turbo test' }]),
     pnpmJob('build-web', [{ name: 'Build web', run: 'cd apps/web && npx next build' }]),
     pnpmJob('build-site', [{ name: 'Build site', run: 'cd apps/site && npx next build' }]),
+  ] + [
     base.ghJob(
-      'build-image',
+      'build-' + svc.name,
       image=nodeImage,
       useCredentials=false,
       steps=[
-        misc.checkout(),
+        misc.checkout(ref=imageRef),
+        buildImage('optio-' + svc.name, svc.dockerfile),
+      ],
+    )
+    for svc in releaseServices
+  ] + [
+    base.ghJob(
+      'build-agent-base',
+      image=nodeImage,
+      useCredentials=false,
+      steps=[
+        misc.checkout(ref=imageRef),
         buildImage('optio-agent-base', 'images/base.Dockerfile'),
-        buildImage('optio-agent-node', 'images/node.Dockerfile', buildArgs='BASE_IMAGE=' + baseImageRef),
       ],
     ),
+  ] + [
+    base.ghJob(
+      'build-agent-' + preset,
+      image=nodeImage,
+      useCredentials=false,
+      needs=['build-agent-base'],
+      steps=[
+        misc.checkout(ref=imageRef),
+        buildImage(
+          'optio-agent-' + preset,
+          'images/' + preset + '.Dockerfile',
+          buildArgs='BASE_IMAGE=' + baseImageRef,
+        ),
+      ],
+    )
+    for preset in agentPresets
   ],
   event={ push: { branches: ['main'] }, pull_request: { branches: ['main'] } },
 );
 
 // ── Build Agent Images ──────────────────────────────────────────────────────
-local agentPresets = ['node', 'python', 'go', 'rust', 'full'];
 
 local buildImages = base.pipeline(
   'Build Agent Images',
@@ -94,11 +129,6 @@ local buildImages = base.pipeline(
     for preset in agentPresets
   ],
   event={
-    push: {
-      branches: ['main'],
-      tags: ['v*'],
-      paths: ['images/**', 'scripts/repo-init.sh', 'scripts/agent-entrypoint.sh', '.github/workflows/Build Agent Images.yml'],
-    },
     workflow_dispatch: null,
   },
 );
@@ -107,63 +137,16 @@ local buildImages = base.pipeline(
 local deployHook = deployment.masterMergeDeploymentEventHook();
 
 // ── Release ─────────────────────────────────────────────────────────────────
-local releaseServices = [
-  { name: 'api', dockerfile: 'Dockerfile.api' },
-  { name: 'web', dockerfile: 'Dockerfile.web' },
-  { name: 'optio', dockerfile: 'Dockerfile.optio' },
-];
-
 local prodIfClause = deployment.deploymentTargets(['production']);
 
 local release = base.pipeline(
   'Release',
   [
     base.ghJob(
-      'build-' + svc.name,
-      image=nodeImage,
-      useCredentials=false,
-      ifClause=prodIfClause,
-      steps=[
-        misc.checkout(),
-        buildImage('optio-' + svc.name, svc.dockerfile),
-      ],
-    )
-    for svc in releaseServices
-  ] + [
-    base.ghJob(
-      'build-agent-base',
-      image=nodeImage,
-      useCredentials=false,
-      ifClause=prodIfClause,
-      steps=[
-        misc.checkout(),
-        buildImage('optio-agent-base', 'images/base.Dockerfile'),
-      ],
-    ),
-  ] + [
-    base.ghJob(
-      'build-agent-' + preset,
-      image=nodeImage,
-      useCredentials=false,
-      ifClause=prodIfClause,
-      needs=['build-agent-base'],
-      steps=[
-        misc.checkout(),
-        buildImage(
-          'optio-agent-' + preset,
-          'images/' + preset + '.Dockerfile',
-          buildArgs='BASE_IMAGE=' + baseImageRef,
-        ),
-      ],
-    )
-    for preset in agentPresets
-  ] + [
-    base.ghJob(
       'deploy',
       image=nodeImage,
       useCredentials=false,
       ifClause=prodIfClause,
-      needs=['build-api', 'build-web', 'build-optio'] + ['build-agent-' + p for p in agentPresets],
       steps=[
         misc.checkout(),
         helm.deployHelm(
