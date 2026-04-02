@@ -139,6 +139,8 @@ local deployHook = deployment.masterMergeDeploymentEventHook();
 // ── Release ─────────────────────────────────────────────────────────────────
 local prodIfClause = deployment.deploymentTargets(['production']);
 
+local registry = 'europe-docker.pkg.dev/' + project + '/private-images';
+
 local release = base.pipeline(
   'Release',
   [
@@ -153,7 +155,10 @@ local release = base.pipeline(
           clusters['gh-runners'],
           release='optio',
           values={
-            image: { tag: imageTag },
+            api: { image: { repository: registry + '/optio-api', tag: imageTag } },
+            web: { image: { repository: registry + '/optio-web', tag: imageTag } },
+            optio: { image: { repository: registry + '/optio-optio', tag: imageTag } },
+            agent: { image: { repository: registry + '/optio-agent-base', tag: imageTag, pullPolicy: 'IfNotPresent' }, imagePullPolicy: 'IfNotPresent' },
             postgresql: { enabled: false },
             externalDatabase: { url: misc.secret('EXTERNAL_DATABASE_URL') },
             encryption: { key: misc.secret('ENCRYPTION_KEY') },
