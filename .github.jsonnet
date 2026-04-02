@@ -158,6 +158,12 @@ local release = base.pipeline(
             externalDatabase: { url: misc.secret('EXTERNAL_DATABASE_URL') },
             encryption: { key: misc.secret('ENCRYPTION_KEY') },
             publicUrl: 'https://optio.gynzy.dev',
+            auth: {
+              google: {
+                clientId: misc.secret('GOOGLE_OAUTH_CLIENT_ID'),
+                clientSecret: misc.secret('GOOGLE_OAUTH_CLIENT_SECRET'),
+              },
+            },
           },
           chartPath='./helm/optio',
           namespace='optio',
