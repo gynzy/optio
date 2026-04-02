@@ -1,5 +1,6 @@
 local base = import '.github/jsonnet/base.jsonnet';
 local clusters = import '.github/jsonnet/clusters.jsonnet';
+local deployment = import '.github/jsonnet/deployment.jsonnet';
 local docker = import '.github/jsonnet/docker.jsonnet';
 local helm = import '.github/jsonnet/helm.jsonnet';
 local misc = import '.github/jsonnet/misc.jsonnet';
@@ -102,12 +103,17 @@ local buildImages = base.pipeline(
   },
 );
 
+// ── Deployment Event Hook ───────────────────────────────────────────────────
+local deployHook = deployment.masterMergeDeploymentEventHook();
+
 // ── Release ─────────────────────────────────────────────────────────────────
 local releaseServices = [
   { name: 'api', dockerfile: 'Dockerfile.api' },
   { name: 'web', dockerfile: 'Dockerfile.web' },
   { name: 'optio', dockerfile: 'Dockerfile.optio' },
 ];
+
+local prodIfClause = deployment.deploymentTargets(['production']);
 
 local release = base.pipeline(
   'Release',
@@ -116,6 +122,7 @@ local release = base.pipeline(
       'build-' + svc.name,
       image=nodeImage,
       useCredentials=false,
+      ifClause=prodIfClause,
       steps=[
         misc.checkout(),
         buildImage('optio-' + svc.name, svc.dockerfile),
@@ -127,6 +134,7 @@ local release = base.pipeline(
       'build-agent-base',
       image=nodeImage,
       useCredentials=false,
+      ifClause=prodIfClause,
       steps=[
         misc.checkout(),
         buildImage('optio-agent-base', 'images/base.Dockerfile'),
@@ -137,6 +145,7 @@ local release = base.pipeline(
       'build-agent-' + preset,
       image=nodeImage,
       useCredentials=false,
+      ifClause=prodIfClause,
       needs=['build-agent-base'],
       steps=[
         misc.checkout(),
@@ -153,6 +162,7 @@ local release = base.pipeline(
       'deploy',
       image=nodeImage,
       useCredentials=false,
+      ifClause=prodIfClause,
       needs=['build-api', 'build-web', 'build-optio'] + ['build-agent-' + p for p in agentPresets],
       steps=[
         misc.checkout(),
@@ -163,13 +173,11 @@ local release = base.pipeline(
           chartPath='./helm/optio',
           namespace='optio',
         ),
+        deployment.updateDeploymentStatus(),
       ],
     ),
   ],
-  event={
-    push: { tags: ['v*'] },
-    workflow_dispatch: null,
-  },
+  event='deployment',
 );
 
 // ── Deploy Site ─────────────────────────────────────────────────────────────
@@ -207,4 +215,4 @@ local deploySite = base.pipeline(
   concurrency={ group: 'pages', 'cancel-in-progress': false },
 );
 
-ci + buildImages + release + deploySite
+ci + buildImages + deployHook + release + deploySite

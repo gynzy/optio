@@ -1,0 +1,53 @@
+# GENERATED with jsonnet - DO NOT EDIT MANUALLY
+"jobs":
+  "create-merge-deployment-default-branch-to-production":
+    "container":
+      "image": "mirror.gcr.io/alpine:3.20.0"
+    "if": "${{ github.event.pull_request.merged == true}}"
+    "permissions":
+      "contents": "read"
+      "deployments": "write"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "name": "install jq curl"
+      "run": "apk add --no-cache jq curl"
+    - "env":
+        "GITHUB_REPOSITORY": "${{ github.repository }}"
+        "GITHUB_TOKEN": "${{ github.token }}"
+        "PR_MERGE_COMMIT_SHA": "${{ github.sha }}"
+        "TARGET_BRANCH": "${{ github.event.pull_request.base.repo.default_branch }}"
+      "id": "assert-merge-sha-is-latest-commit"
+      "name": "assert merge sha is latest commit"
+      "run": |
+        HEAD_SHA=$(curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/${GITHUB_REPOSITORY}/branches/${TARGET_BRANCH} | jq -r .commit.sha);
+        if [ ${HEAD_SHA} == ${PR_MERGE_COMMIT_SHA} ]; then
+          echo "Merge sha is latest commit on branch ${TARGET_BRANCH}! HEAD_SHA: ${HEAD_SHA} PR_MERGE_COMMIT_SHA: ${PR_MERGE_COMMIT_SHA}";
+          echo "CREATE_DEPLOY_EVENT=true" >> $GITHUB_OUTPUT
+        else
+          echo "Merge sha is not latest commit on branch ${TARGET_BRANCH}! HEAD_SHA: ${HEAD_SHA} PR_MERGE_COMMIT_SHA: ${PR_MERGE_COMMIT_SHA}";
+          echo "CREATE_DEPLOY_EVENT=false" >> $GITHUB_OUTPUT
+        fi
+    - "if": "${{ github.event.pull_request.base.ref == github.event.pull_request.base.repo.default_branch && steps.assert-merge-sha-is-latest-commit.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
+      "name": "publish-deploy-production-event"
+      "uses": "chrnorm/deployment-action@v2"
+      "with":
+        "auto-merge": "false"
+        "description": "Auto deploy production on PR merge. pr: ${{ github.event.number }} ref: ${{ github.event.pull_request.head.sha }}"
+        "environment": "production"
+        "payload": "{ \"pr\" : ${{ github.event.number }}, \"branch\": \"${{ github.head_ref }}\", \"base_ref\": \"${{ github.event.pull_request.base.sha }}\", \"head_ref\": \"${{ github.event.pull_request.head.sha }}\" }"
+        "ref": "${{ github.event.pull_request.head.sha }}"
+        "token": "${{ secrets.VIRKO_GITHUB_TOKEN }}"
+    - "if": "${{ github.event.pull_request.base.ref == github.event.pull_request.base.repo.default_branch && steps.assert-merge-sha-is-latest-commit.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
+      "name": "sendSlackMessage"
+      "uses": "act10ns/slack@v2"
+      "with":
+        "channel": "#dev-deployments"
+        "message": "Deploy to production of <https://github.com/${{ github.repository }}/pull/${{ github.event.number }}|*PR ${{ github.event.number }}*> started!\nTitle: ${{ github.event.pull_request.title }}\nBranch: ${{ github.head_ref }}"
+        "status": "starting"
+        "webhook-url": "${{ secrets.SLACK_WEBHOOK_DEPLOY_NOTIFICATION }}"
+    "timeout-minutes": 30
+"name": "create-merge-deployment"
+"on":
+  "pull_request":
+    "types":
+    - "closed"

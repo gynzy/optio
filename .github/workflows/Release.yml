@@ -3,6 +3,7 @@
   "build-agent-base":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "runs-on": "arc-runner-2"
     "steps":
     - "id": "check-binaries"
@@ -73,6 +74,7 @@
   "build-agent-full":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "needs":
     - "build-agent-base"
     "runs-on": "arc-runner-2"
@@ -146,6 +148,7 @@
   "build-agent-go":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "needs":
     - "build-agent-base"
     "runs-on": "arc-runner-2"
@@ -219,6 +222,7 @@
   "build-agent-node":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "needs":
     - "build-agent-base"
     "runs-on": "arc-runner-2"
@@ -292,6 +296,7 @@
   "build-agent-python":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "needs":
     - "build-agent-base"
     "runs-on": "arc-runner-2"
@@ -365,6 +370,7 @@
   "build-agent-rust":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "needs":
     - "build-agent-base"
     "runs-on": "arc-runner-2"
@@ -438,6 +444,7 @@
   "build-api":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "runs-on": "arc-runner-2"
     "steps":
     - "id": "check-binaries"
@@ -508,6 +515,7 @@
   "build-optio":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "runs-on": "arc-runner-2"
     "steps":
     - "id": "check-binaries"
@@ -578,6 +586,7 @@
   "build-web":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "runs-on": "arc-runner-2"
     "steps":
     - "id": "check-binaries"
@@ -648,6 +657,7 @@
   "deploy":
     "container":
       "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
     "needs":
     - "build-api"
     - "build-web"
@@ -729,10 +739,13 @@
         "values": "{\"image\":{\"tag\":\"deploy-${{ github.sha }}\"}}"
         "version": "${{ github.event.pull_request.head.sha }}"
         "wait": "false"
+    - "if": "${{ always() }}"
+      "name": "Update deployment status"
+      "uses": "chrnorm/deployment-status@v2"
+      "with":
+        "deployment-id": "${{ github.event.deployment.id }}"
+        "state": "${{ job.status }}"
+        "token": "${{ secrets.GITHUB_TOKEN }}"
     "timeout-minutes": 30
 "name": "Release"
-"on":
-  "push":
-    "tags":
-    - "v*"
-  "workflow_dispatch": null
+"on": "deployment"
