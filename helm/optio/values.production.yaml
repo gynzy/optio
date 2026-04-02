@@ -102,27 +102,30 @@ auth:
   # auth.gitlab.clientId / auth.gitlab.clientSecret
 
 # --- Ingress with TLS ---
+# GKE native ingress with Google-managed SSL certificates.
+# For nginx-ingress + cert-manager, set className: nginx, gke.enabled: false,
+# and certManager.enabled: true instead.
 ingress:
   enabled: true
-  className: nginx
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-body-size: 50m
-  certManager:
+  className: gce
+  gke:
     enabled: true
-    clusterIssuer: letsencrypt-prod
+    staticIpName: optio
+    managedCertificate:
+      enabled: true
+      domains:
+        - optio.example.com
   hosts:
     - host: optio.example.com
       paths:
-        - path: /
-          pathType: Prefix
+        - path: /*
+          pathType: ImplementationSpecific
           service: web
-        - path: /api
-          pathType: Prefix
+        - path: /api/*
+          pathType: ImplementationSpecific
           service: api
-        - path: /ws
-          pathType: Prefix
+        - path: /ws/*
+          pathType: ImplementationSpecific
           service: api
 
 # --- Resource quotas to limit agent resource consumption ---

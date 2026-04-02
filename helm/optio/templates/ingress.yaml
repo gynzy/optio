@@ -8,6 +8,14 @@ metadata:
   labels:
     {{- include "optio.labels" . | nindent 4 }}
   annotations:
+    {{- if and .Values.ingress.gke .Values.ingress.gke.enabled }}
+    {{- if .Values.ingress.gke.staticIpName }}
+    kubernetes.io/ingress.global-static-ip-name: {{ .Values.ingress.gke.staticIpName | quote }}
+    {{- end }}
+    {{- if and .Values.ingress.gke.managedCertificate .Values.ingress.gke.managedCertificate.enabled }}
+    networking.gke.io/managed-certificates: {{ .Release.Name }}-managed-cert
+    {{- end }}
+    {{- else }}
     {{- if and .Values.ingress.certManager .Values.ingress.certManager.enabled }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManager.clusterIssuer | quote }}
     {{- end }}
@@ -18,6 +26,7 @@ metadata:
       location /api/internal/ {
         return 404;
       }
+    {{- end }}
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

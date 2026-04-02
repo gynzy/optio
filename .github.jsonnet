@@ -166,6 +166,26 @@ local release = base.pipeline(
             postgresql: { enabled: false },
             externalDatabase: { url: misc.secret('EXTERNAL_DATABASE_URL') },
             encryption: { key: misc.secret('ENCRYPTION_KEY') },
+            ingress: {
+              enabled: true,
+              className: 'gce',
+              gke: {
+                enabled: true,
+                staticIpName: 'optio',
+                managedCertificate: {
+                  enabled: true,
+                  domains: ['optio.gynzy.dev'],
+                },
+              },
+              hosts: [{
+                host: 'optio.gynzy.dev',
+                paths: [
+                  { path: '/*', pathType: 'ImplementationSpecific', service: 'web' },
+                  { path: '/api/*', pathType: 'ImplementationSpecific', service: 'api' },
+                  { path: '/ws/*', pathType: 'ImplementationSpecific', service: 'api' },
+                ],
+              }],
+            },
             publicUrl: 'https://optio.gynzy.dev',
             auth: {
               google: {

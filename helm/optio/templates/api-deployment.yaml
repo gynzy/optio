@@ -131,13 +131,18 @@ metadata:
   labels:
     app: optio-api
     {{- include "optio.labels" . | nindent 4 }}
+  {{- if and .Values.ingress.gke .Values.ingress.gke.enabled }}
+  annotations:
+    cloud.google.com/backend-config: '{"default": "{{ .Release.Name }}-api-backend-config"}'
+    cloud.google.com/neg: '{"ingress": true}'
+  {{- end }}
 spec:
-  type: {{ .Values.api.service.type }}
+  type: {{ if and .Values.ingress.gke .Values.ingress.gke.enabled }}NodePort{{ else }}{{ .Values.api.service.type }}{{ end }}
   selector:
     app: optio-api
   ports:
     - port: {{ .Values.api.port }}
       targetPort: {{ .Values.api.port }}
-      {{- if and (eq .Values.api.service.type "NodePort") .Values.api.service.nodePort }}
+      {{- if and (not (and .Values.ingress.gke .Values.ingress.gke.enabled)) (eq .Values.api.service.type "NodePort") .Values.api.service.nodePort }}
       nodePort: {{ .Values.api.service.nodePort }}
       {{- end }}

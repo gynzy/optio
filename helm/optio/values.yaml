@@ -305,6 +305,14 @@ ingress:
         - path: /ws
           pathType: Prefix
           service: api
+  # GKE-native ingress. Uses Google-managed SSL certificates and static IP
+  # instead of cert-manager. Set className to "gce" when using this.
+  gke:
+    enabled: false
+    staticIpName: ""
+    managedCertificate:
+      enabled: false
+      domains: []
   # Manual TLS configuration. When certManager is enabled, TLS entries are
   # generated automatically from hosts — this field is only needed for
   # manual certificate management.
