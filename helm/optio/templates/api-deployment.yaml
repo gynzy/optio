@@ -137,12 +137,12 @@ metadata:
     cloud.google.com/neg: '{"ingress": true}'
   {{- end }}
 spec:
-  type: {{ if and .Values.ingress.gke .Values.ingress.gke.enabled }}NodePort{{ else }}{{ .Values.api.service.type }}{{ end }}
+  type: {{ .Values.api.service.type }}
   selector:
     app: optio-api
   ports:
     - port: {{ .Values.api.port }}
       targetPort: {{ .Values.api.port }}
-      {{- if and (not (and .Values.ingress.gke .Values.ingress.gke.enabled)) (eq .Values.api.service.type "NodePort") .Values.api.service.nodePort }}
+      {{- if and (eq .Values.api.service.type "NodePort") .Values.api.service.nodePort }}
       nodePort: {{ .Values.api.service.nodePort }}
       {{- end }}
