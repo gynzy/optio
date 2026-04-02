@@ -139,6 +139,17 @@ agent:
       - ReadWriteOnce
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Cloud SQL Proxy sidecar (for GCP Cloud SQL connections)
+# ──────────────────────────────────────────────────────────────────────────────
+cloudSqlProxy:
+  enabled: false
+  image:
+    repository: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+    tag: "2.15.0"
+  instanceConnectionName: ""  # e.g. project:region:instance
+  credentialsSecret: cloudsql-proxy  # K8s secret name containing service_json key
+
+# ──────────────────────────────────────────────────────────────────────────────
 # PostgreSQL (built-in)
 # Set enabled=false and configure externalDatabase.url for managed Postgres.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -270,7 +281,6 @@ credentialSecret: ""
 # ──────────────────────────────────────────────────────────────────────────────
 ingress:
   enabled: false
-  className: nginx
   # The ingress template automatically blocks /api/internal/* from public traffic
   # via an nginx server-snippet. These endpoints use bearer token auth (not session
   # auth) and must only be reachable within the cluster. If using a non-nginx ingress
@@ -294,6 +304,15 @@ ingress:
         - path: /ws
           pathType: Prefix
           service: api
+  # GKE-native ingress. Uses Google-managed SSL certificates and static IP
+  # instead of cert-manager. Set className to "gce" when using this.
+  gke:
+    enabled: false
+    staticIpName: ""
+    cloudArmorPolicy: ""
+    managedCertificate:
+      enabled: false
+      domains: []
   # Manual TLS configuration. When certManager is enabled, TLS entries are
   # generated automatically from hosts — this field is only needed for
   # manual certificate management.

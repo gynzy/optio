@@ -72,6 +72,11 @@ metadata:
   labels:
     app: optio-web
     {{- include "optio.labels" . | nindent 4 }}
+  {{- if and .Values.ingress.gke .Values.ingress.gke.enabled }}
+  annotations:
+    cloud.google.com/backend-config: '{"default": "{{ .Release.Name }}-web-backend-config"}'
+    cloud.google.com/neg: '{"ingress": true}'
+  {{- end }}
 spec:
   type: {{ .Values.web.service.type }}
   selector:

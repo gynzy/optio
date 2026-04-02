@@ -1,0 +1,440 @@
+# GENERATED with jsonnet - DO NOT EDIT MANUALLY
+"jobs":
+  "build-base":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "env": {}
+      "name": "build-docker optio-agent-base"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "context": "."
+        "dockerfile": "images/base.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-base"
+        "image_tag": "deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    "timeout-minutes": 30
+  "build-full":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "needs":
+    - "build-base"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "env": {}
+      "name": "build-docker optio-agent-full"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "build_args": "BASE_IMAGE=europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "context": "."
+        "dockerfile": "images/full.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-full"
+        "image_tag": "deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    "timeout-minutes": 30
+  "build-go":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "needs":
+    - "build-base"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "env": {}
+      "name": "build-docker optio-agent-go"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "build_args": "BASE_IMAGE=europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "context": "."
+        "dockerfile": "images/go.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-go"
+        "image_tag": "deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    "timeout-minutes": 30
+  "build-node":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "needs":
+    - "build-base"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "env": {}
+      "name": "build-docker optio-agent-node"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "build_args": "BASE_IMAGE=europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "context": "."
+        "dockerfile": "images/node.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-node"
+        "image_tag": "deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    "timeout-minutes": 30
+  "build-python":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "needs":
+    - "build-base"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "env": {}
+      "name": "build-docker optio-agent-python"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "build_args": "BASE_IMAGE=europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "context": "."
+        "dockerfile": "images/python.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-python"
+        "image_tag": "deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    "timeout-minutes": 30
+  "build-rust":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "needs":
+    - "build-base"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "env": {}
+      "name": "build-docker optio-agent-rust"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "build_args": "BASE_IMAGE=europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "context": "."
+        "dockerfile": "images/rust.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-rust"
+        "image_tag": "deploy-${{ github.event.pull_request.head.sha || github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    "timeout-minutes": 30
+"name": "Build Agent Images"
+"on":
+  "workflow_dispatch": null

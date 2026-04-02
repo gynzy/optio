@@ -5,3 +5,4 @@
 **/node_modules
 **/helm
 pnpm-lock.yaml
+.github/workflows

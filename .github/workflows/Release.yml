@@ -1,0 +1,88 @@
+# GENERATED with jsonnet - DO NOT EDIT MANUALLY
+"jobs":
+  "deploy":
+    "container":
+      "image": "mirror.gcr.io/node:22"
+    "if": "${{ github.event.deployment.environment == 'production' }}"
+    "runs-on": "arc-runner-2"
+    "steps":
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            else
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            else
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "name": "deploy-helm"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/helm-action:v4"
+      "with":
+        "atomic": "false"
+        "chart": "./helm/optio"
+        "clusterLocation": "europe-west4"
+        "clusterName": "gh-runners-2023"
+        "clusterProject": "gh-runners"
+        "clusterSaJson": "${{ secrets.GCE_JSON }}"
+        "fetch-dependencies": "false"
+        "helm": "helm3"
+        "namespace": "optio"
+        "release": "optio"
+        "token": "${{ github.token }}"
+        "values": "{\"agent\":{\"image\":{\"pullPolicy\":\"IfNotPresent\",\"repository\":\"europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base\",\"tag\":\"deploy-${{ github.event.pull_request.head.sha || github.sha }}\"},\"imagePullPolicy\":\"IfNotPresent\"},\"api\":{\"image\":{\"repository\":\"europe-docker.pkg.dev/unicorn-985/private-images/optio-api\",\"tag\":\"deploy-${{ github.event.pull_request.head.sha || github.sha }}\"}},\"auth\":{\"google\":{\"clientId\":\"${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}\",\"clientSecret\":\"${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}\"}},\"cloudSqlProxy\":{\"enabled\":true,\"instanceConnectionName\":\"gh-runners:europe-west4:optio\"},\"encryption\":{\"key\":\"${{ secrets.ENCRYPTION_KEY }}\"},\"externalDatabase\":{\"url\":\"${{ secrets.EXTERNAL_DATABASE_URL }}\"},\"ingress\":{\"enabled\":true,\"gke\":{\"cloudArmorPolicy\":\"optio\",\"enabled\":true,\"managedCertificate\":{\"domains\":[\"optio.gynzy.dev\"],\"enabled\":true},\"staticIpName\":\"optio\"},\"hosts\":[{\"host\":\"optio.gynzy.dev\",\"paths\":[{\"path\":\"/*\",\"pathType\":\"ImplementationSpecific\",\"service\":\"web\"},{\"path\":\"/api/*\",\"pathType\":\"ImplementationSpecific\",\"service\":\"api\"},{\"path\":\"/ws/*\",\"pathType\":\"ImplementationSpecific\",\"service\":\"api\"}]}]},\"optio\":{\"image\":{\"repository\":\"europe-docker.pkg.dev/unicorn-985/private-images/optio-optio\",\"tag\":\"deploy-${{ github.event.pull_request.head.sha || github.sha }}\"}},\"postgresql\":{\"enabled\":false},\"publicUrl\":\"https://optio.gynzy.dev\",\"web\":{\"image\":{\"repository\":\"europe-docker.pkg.dev/unicorn-985/private-images/optio-web\",\"tag\":\"deploy-${{ github.event.pull_request.head.sha || github.sha }}\"}}}"
+        "version": "${{ github.sha }}"
+        "wait": "false"
+    - "if": "${{ always() }}"
+      "name": "Update deployment status"
+      "uses": "chrnorm/deployment-status@v2"
+      "with":
+        "deployment-id": "${{ github.event.deployment.id }}"
+        "state": "${{ job.status }}"
+        "token": "${{ secrets.GITHUB_TOKEN }}"
+    "timeout-minutes": 30
+"name": "Release"
+"on": "deployment"
