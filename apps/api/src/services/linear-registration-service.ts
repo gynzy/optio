@@ -30,17 +30,6 @@ export interface CreateRegistrationInput {
   enabled?: boolean;
 }
 
-export interface UpdateRegistrationInput {
-  name?: string;
-  oauthClientId?: string;
-  webhookSecret?: string;
-  systemPrompt?: string;
-  selectedSkillIds?: string[];
-  selectedMcpServerIds?: string[];
-  marketplacePlugins?: string[];
-  enabled?: boolean;
-}
-
 function mapRow(row: typeof linearAgentRegistrations.$inferSelect): RegistrationRecord {
   return {
     id: row.id,
@@ -58,33 +47,25 @@ function mapRow(row: typeof linearAgentRegistrations.$inferSelect): Registration
 }
 
 /**
- * List all registrations for a workspace (never exposes the webhook secret).
+ * Get the single registration for a workspace (never exposes the webhook secret).
+ * Returns the first (and only expected) registration, or null if none exists.
  */
-export async function listRegistrations(
+export async function getRegistration(
   workspaceId?: string | null,
-): Promise<RegistrationRecord[]> {
+): Promise<RegistrationRecord | null> {
   const rows = workspaceId
     ? await db
         .select()
         .from(linearAgentRegistrations)
         .where(eq(linearAgentRegistrations.workspaceId, workspaceId))
         .orderBy(desc(linearAgentRegistrations.createdAt))
+        .limit(1)
     : await db
         .select()
         .from(linearAgentRegistrations)
-        .orderBy(desc(linearAgentRegistrations.createdAt));
-  return rows.map(mapRow);
-}
-
-/**
- * Get a single registration by ID (no webhook secret exposed).
- */
-export async function getRegistration(id: string): Promise<RegistrationRecord | null> {
-  const [row] = await db
-    .select()
-    .from(linearAgentRegistrations)
-    .where(eq(linearAgentRegistrations.id, id));
-  return row ? mapRow(row) : null;
+        .orderBy(desc(linearAgentRegistrations.createdAt))
+        .limit(1);
+  return rows[0] ? mapRow(rows[0]) : null;
 }
 
 /**
@@ -106,12 +87,47 @@ export async function getRegistrationByClientId(
 }
 
 /**
- * Create a new registration. The webhook secret is encrypted at rest.
+ * Create or update the single registration. If one already exists for the
+ * workspace it is updated; otherwise a new row is inserted.
+ * The webhook secret is encrypted at rest.
  */
-export async function createRegistration(
+export async function saveRegistration(
   input: CreateRegistrationInput,
   workspaceId?: string | null,
 ): Promise<RegistrationRecord> {
+  const existing = await getRegistration(workspaceId);
+
+  if (existing) {
+    // Update the existing registration
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.oauthClientId !== undefined) updates.oauthClientId = input.oauthClientId;
+    if (input.systemPrompt !== undefined) updates.systemPrompt = input.systemPrompt;
+    if (input.selectedSkillIds !== undefined) updates.selectedSkillIds = input.selectedSkillIds;
+    if (input.selectedMcpServerIds !== undefined)
+      updates.selectedMcpServerIds = input.selectedMcpServerIds;
+    if (input.marketplacePlugins !== undefined)
+      updates.marketplacePlugins = input.marketplacePlugins;
+    if (input.enabled !== undefined) updates.enabled = input.enabled;
+
+    if (input.webhookSecret) {
+      const { encrypted, iv, authTag } = encrypt(input.webhookSecret);
+      updates.encryptedWebhookSecret = encrypted;
+      updates.secretIv = iv;
+      updates.secretAuthTag = authTag;
+    }
+
+    const [row] = await db
+      .update(linearAgentRegistrations)
+      .set(updates)
+      .where(eq(linearAgentRegistrations.id, existing.id))
+      .returning();
+
+    return mapRow(row);
+  }
+
+  // Create new registration
   const { encrypted, iv, authTag } = encrypt(input.webhookSecret);
 
   const [row] = await db
@@ -135,43 +151,8 @@ export async function createRegistration(
 }
 
 /**
- * Update an existing registration. If `webhookSecret` is provided it will be
- * re-encrypted; otherwise the existing ciphertext is left untouched.
- */
-export async function updateRegistration(
-  id: string,
-  input: UpdateRegistrationInput,
-): Promise<RegistrationRecord | null> {
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
-
-  if (input.name !== undefined) updates.name = input.name;
-  if (input.oauthClientId !== undefined) updates.oauthClientId = input.oauthClientId;
-  if (input.systemPrompt !== undefined) updates.systemPrompt = input.systemPrompt;
-  if (input.selectedSkillIds !== undefined) updates.selectedSkillIds = input.selectedSkillIds;
-  if (input.selectedMcpServerIds !== undefined)
-    updates.selectedMcpServerIds = input.selectedMcpServerIds;
-  if (input.marketplacePlugins !== undefined) updates.marketplacePlugins = input.marketplacePlugins;
-  if (input.enabled !== undefined) updates.enabled = input.enabled;
-
-  if (input.webhookSecret !== undefined) {
-    const { encrypted, iv, authTag } = encrypt(input.webhookSecret);
-    updates.encryptedWebhookSecret = encrypted;
-    updates.secretIv = iv;
-    updates.secretAuthTag = authTag;
-  }
-
-  const [row] = await db
-    .update(linearAgentRegistrations)
-    .set(updates)
-    .where(eq(linearAgentRegistrations.id, id))
-    .returning();
-
-  return row ? mapRow(row) : null;
-}
-
-/**
- * Delete a registration and clean up any agent-scoped skills and MCP servers
- * that were attached to it.
+ * Delete the single registration (by ID) and clean up any agent-scoped skills
+ * and MCP servers that were attached to it.
  */
 export async function deleteRegistration(id: string): Promise<boolean> {
   const scope = `linear-agent:${id}`;

@@ -995,12 +995,9 @@ export const api = {
   testLinearConnection: () =>
     request<{ success: boolean; error?: string }>("/api/linear/config/test", { method: "POST" }),
 
-  listLinearRegistrations: () => request<{ registrations: any[] }>("/api/linear/registrations"),
+  getLinearRegistration: () => request<{ registration: any }>("/api/linear/registration"),
 
-  getLinearRegistration: (id: string) =>
-    request<{ registration: any }>(`/api/linear/registrations/${id}`),
-
-  createLinearRegistration: (input: {
+  saveLinearRegistration: (input: {
     name: string;
     oauthClientId: string;
     webhookSecret: string;
@@ -1009,17 +1006,10 @@ export const api = {
     selectedMcpServerIds?: string[];
     marketplacePlugins?: string[];
   }) =>
-    request<{ registration: any }>("/api/linear/registrations", {
-      method: "POST",
+    request<{ registration: any }>("/api/linear/registration", {
+      method: "PUT",
       body: JSON.stringify(input),
     }),
 
-  updateLinearRegistration: (id: string, input: Record<string, unknown>) =>
-    request<{ registration: any }>(`/api/linear/registrations/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    }),
-
-  deleteLinearRegistration: (id: string) =>
-    request<void>(`/api/linear/registrations/${id}`, { method: "DELETE" }),
+  deleteLinearRegistration: () => request<void>("/api/linear/registration", { method: "DELETE" }),
 };

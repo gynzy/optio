@@ -6,19 +6,15 @@ import type { FastifyInstance } from "fastify";
 
 const mockGetConfigStatus = vi.fn();
 const mockTestConnection = vi.fn();
-const mockListRegistrations = vi.fn();
 const mockGetRegistration = vi.fn();
-const mockCreateRegistration = vi.fn();
-const mockUpdateRegistration = vi.fn();
+const mockSaveRegistration = vi.fn();
 const mockDeleteRegistration = vi.fn();
 
 vi.mock("../services/linear-registration-service.js", () => ({
   getConfigStatus: (...args: unknown[]) => mockGetConfigStatus(...args),
   testConnection: (...args: unknown[]) => mockTestConnection(...args),
-  listRegistrations: (...args: unknown[]) => mockListRegistrations(...args),
   getRegistration: (...args: unknown[]) => mockGetRegistration(...args),
-  createRegistration: (...args: unknown[]) => mockCreateRegistration(...args),
-  updateRegistration: (...args: unknown[]) => mockUpdateRegistration(...args),
+  saveRegistration: (...args: unknown[]) => mockSaveRegistration(...args),
   deleteRegistration: (...args: unknown[]) => mockDeleteRegistration(...args),
 }));
 
@@ -107,7 +103,7 @@ describe("POST /api/linear/config/test", () => {
   });
 });
 
-describe("GET /api/linear/registrations", () => {
+describe("GET /api/linear/registration", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -115,65 +111,27 @@ describe("GET /api/linear/registrations", () => {
     app = await buildTestApp();
   });
 
-  it("returns list of registrations", async () => {
-    mockListRegistrations.mockResolvedValue([
-      { id: "reg-1", name: "My Agent", enabled: true },
-      { id: "reg-2", name: "Another Agent", enabled: false },
-    ]);
+  it("returns the registration when it exists", async () => {
+    mockGetRegistration.mockResolvedValue({ id: "reg-1", name: "My Agent", enabled: true });
 
-    const res = await app.inject({ method: "GET", url: "/api/linear/registrations" });
-
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.registrations).toHaveLength(2);
-    expect(mockListRegistrations).toHaveBeenCalledWith("ws-1");
-  });
-
-  it("returns empty list when no registrations exist", async () => {
-    mockListRegistrations.mockResolvedValue([]);
-
-    const res = await app.inject({ method: "GET", url: "/api/linear/registrations" });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.json().registrations).toHaveLength(0);
-  });
-});
-
-describe("GET /api/linear/registrations/:id", () => {
-  let app: FastifyInstance;
-
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    app = await buildTestApp();
-  });
-
-  it("returns a single registration", async () => {
-    mockGetRegistration.mockResolvedValue({ id: "reg-1", name: "My Agent", workspaceId: "ws-1" });
-
-    const res = await app.inject({ method: "GET", url: "/api/linear/registrations/reg-1" });
+    const res = await app.inject({ method: "GET", url: "/api/linear/registration" });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().registration.id).toBe("reg-1");
+    expect(mockGetRegistration).toHaveBeenCalledWith("ws-1");
   });
 
-  it("returns 404 for nonexistent registration", async () => {
+  it("returns null when no registration exists", async () => {
     mockGetRegistration.mockResolvedValue(null);
 
-    const res = await app.inject({ method: "GET", url: "/api/linear/registrations/nonexistent" });
+    const res = await app.inject({ method: "GET", url: "/api/linear/registration" });
 
-    expect(res.statusCode).toBe(404);
-  });
-
-  it("returns 404 for registration from another workspace", async () => {
-    mockGetRegistration.mockResolvedValue({ id: "reg-1", workspaceId: "ws-other" });
-
-    const res = await app.inject({ method: "GET", url: "/api/linear/registrations/reg-1" });
-
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().registration).toBeNull();
   });
 });
 
-describe("POST /api/linear/registrations", () => {
+describe("PUT /api/linear/registration", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -181,12 +139,12 @@ describe("POST /api/linear/registrations", () => {
     app = await buildTestApp();
   });
 
-  it("creates a registration", async () => {
-    mockCreateRegistration.mockResolvedValue({ id: "reg-1", name: "My Agent", enabled: true });
+  it("creates or updates the registration", async () => {
+    mockSaveRegistration.mockResolvedValue({ id: "reg-1", name: "My Agent", enabled: true });
 
     const res = await app.inject({
-      method: "POST",
-      url: "/api/linear/registrations",
+      method: "PUT",
+      url: "/api/linear/registration",
       payload: {
         name: "My Agent",
         oauthClientId: "client-abc",
@@ -194,9 +152,9 @@ describe("POST /api/linear/registrations", () => {
       },
     });
 
-    expect(res.statusCode).toBe(201);
+    expect(res.statusCode).toBe(200);
     expect(res.json().registration.id).toBe("reg-1");
-    expect(mockCreateRegistration).toHaveBeenCalledWith(
+    expect(mockSaveRegistration).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "My Agent",
         oauthClientId: "client-abc",
@@ -206,30 +164,30 @@ describe("POST /api/linear/registrations", () => {
     );
   });
 
-  it("returns 400 when name is missing (Zod throws)", async () => {
+  it("returns 500 when name is missing (Zod throws)", async () => {
     const res = await app.inject({
-      method: "POST",
-      url: "/api/linear/registrations",
+      method: "PUT",
+      url: "/api/linear/registration",
       payload: { oauthClientId: "client-abc", webhookSecret: "secret-xyz" },
     });
 
     expect(res.statusCode).toBe(500);
   });
 
-  it("returns 400 when oauthClientId is missing (Zod throws)", async () => {
+  it("returns 500 when oauthClientId is missing (Zod throws)", async () => {
     const res = await app.inject({
-      method: "POST",
-      url: "/api/linear/registrations",
+      method: "PUT",
+      url: "/api/linear/registration",
       payload: { name: "My Agent", webhookSecret: "secret-xyz" },
     });
 
     expect(res.statusCode).toBe(500);
   });
 
-  it("returns 400 when webhookSecret is missing (Zod throws)", async () => {
+  it("returns 500 when webhookSecret is missing (Zod throws)", async () => {
     const res = await app.inject({
-      method: "POST",
-      url: "/api/linear/registrations",
+      method: "PUT",
+      url: "/api/linear/registration",
       payload: { name: "My Agent", oauthClientId: "client-abc" },
     });
 
@@ -237,7 +195,7 @@ describe("POST /api/linear/registrations", () => {
   });
 });
 
-describe("PATCH /api/linear/registrations/:id", () => {
+describe("DELETE /api/linear/registration", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -245,78 +203,20 @@ describe("PATCH /api/linear/registrations/:id", () => {
     app = await buildTestApp();
   });
 
-  it("updates a registration", async () => {
-    mockGetRegistration.mockResolvedValue({ id: "reg-1", workspaceId: "ws-1" });
-    mockUpdateRegistration.mockResolvedValue({ id: "reg-1", enabled: false });
-
-    const res = await app.inject({
-      method: "PATCH",
-      url: "/api/linear/registrations/reg-1",
-      payload: { enabled: false },
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.json().registration.enabled).toBe(false);
-  });
-
-  it("returns 404 for nonexistent registration", async () => {
-    mockGetRegistration.mockResolvedValue(null);
-
-    const res = await app.inject({
-      method: "PATCH",
-      url: "/api/linear/registrations/nonexistent",
-      payload: { enabled: false },
-    });
-
-    expect(res.statusCode).toBe(404);
-  });
-
-  it("returns 404 for registration from another workspace", async () => {
-    mockGetRegistration.mockResolvedValue({ id: "reg-1", workspaceId: "ws-other" });
-
-    const res = await app.inject({
-      method: "PATCH",
-      url: "/api/linear/registrations/reg-1",
-      payload: { enabled: false },
-    });
-
-    expect(res.statusCode).toBe(404);
-  });
-});
-
-describe("DELETE /api/linear/registrations/:id", () => {
-  let app: FastifyInstance;
-
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    app = await buildTestApp();
-  });
-
-  it("deletes a registration and returns 204", async () => {
+  it("deletes the registration and returns 204", async () => {
     mockGetRegistration.mockResolvedValue({ id: "reg-1", workspaceId: "ws-1" });
     mockDeleteRegistration.mockResolvedValue(true);
 
-    const res = await app.inject({ method: "DELETE", url: "/api/linear/registrations/reg-1" });
+    const res = await app.inject({ method: "DELETE", url: "/api/linear/registration" });
 
     expect(res.statusCode).toBe(204);
     expect(mockDeleteRegistration).toHaveBeenCalledWith("reg-1");
   });
 
-  it("returns 404 for nonexistent registration", async () => {
+  it("returns 404 when no registration exists", async () => {
     mockGetRegistration.mockResolvedValue(null);
 
-    const res = await app.inject({
-      method: "DELETE",
-      url: "/api/linear/registrations/nonexistent",
-    });
-
-    expect(res.statusCode).toBe(404);
-  });
-
-  it("returns 404 for registration from another workspace", async () => {
-    mockGetRegistration.mockResolvedValue({ id: "reg-1", workspaceId: "ws-other" });
-
-    const res = await app.inject({ method: "DELETE", url: "/api/linear/registrations/reg-1" });
+    const res = await app.inject({ method: "DELETE", url: "/api/linear/registration" });
 
     expect(res.statusCode).toBe(404);
   });

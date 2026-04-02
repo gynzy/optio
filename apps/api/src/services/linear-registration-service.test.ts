@@ -50,11 +50,9 @@ vi.mock("@linear/sdk", () => ({
 import { db } from "../db/client.js";
 import { encrypt, decrypt, retrieveSecret } from "./secret-service.js";
 import {
-  listRegistrations,
   getRegistration,
   getRegistrationByClientId,
-  createRegistration,
-  updateRegistration,
+  saveRegistration,
   deleteRegistration,
   testConnection,
   getConfigStatus,
@@ -98,78 +96,57 @@ beforeEach(() => {
   }));
 });
 
-// ── listRegistrations ─────────────────────────────────────────────────────────
+// ── getRegistration ─────────────────────────────────────────────────────────
 
-describe("listRegistrations", () => {
-  it("returns mapped records without webhook secret", async () => {
+describe("getRegistration", () => {
+  it("returns null when no registration exists", async () => {
     (db.select as ReturnType<typeof vi.fn>).mockReturnValue({
       from: vi.fn().mockReturnValue({
-        orderBy: vi.fn().mockResolvedValue([baseRow]),
+        orderBy: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([]),
+        }),
       }),
     });
 
-    const results = await listRegistrations();
+    const result = await getRegistration();
+    expect(result).toBeNull();
+  });
 
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({
-      id: "reg-1",
-      name: "My App",
-      oauthClientId: "client-abc",
-      systemPrompt: "You are a helpful agent.",
-      enabled: true,
-      workspaceId: "ws-1",
+  it("returns the single registration without webhook secret", async () => {
+    (db.select as ReturnType<typeof vi.fn>).mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        orderBy: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([baseRow]),
+        }),
+      }),
     });
-    expect(results[0]).not.toHaveProperty("webhookSecret");
-    expect(results[0]).not.toHaveProperty("encryptedWebhookSecret");
+
+    const result = await getRegistration();
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe("reg-1");
+    expect(result!.name).toBe("My App");
+    expect(result).not.toHaveProperty("webhookSecret");
+    expect(result).not.toHaveProperty("encryptedWebhookSecret");
   });
 
   it("filters by workspaceId when provided", async () => {
-    const mockOrderBy = vi.fn().mockResolvedValue([baseRow]);
+    const mockLimit = vi.fn().mockResolvedValue([baseRow]);
+    const mockOrderBy = vi.fn().mockReturnValue({ limit: mockLimit });
     const mockWhere = vi.fn().mockReturnValue({ orderBy: mockOrderBy });
     (db.select as ReturnType<typeof vi.fn>).mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: mockWhere,
-        orderBy: vi.fn().mockResolvedValue([]),
+        orderBy: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([]) }),
       }),
     });
 
-    const results = await listRegistrations("ws-1");
-
-    expect(results).toHaveLength(1);
-    expect(mockWhere).toHaveBeenCalled();
-    expect(mockOrderBy).toHaveBeenCalled();
-  });
-});
-
-// ── getRegistration ───────────────────────────────────────────────────────────
-
-describe("getRegistration", () => {
-  it("returns null when not found", async () => {
-    (db.select as ReturnType<typeof vi.fn>).mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
-      }),
-    });
-
-    const result = await getRegistration("missing-id");
-    expect(result).toBeNull();
-  });
-
-  it("returns mapped record when found", async () => {
-    (db.select as ReturnType<typeof vi.fn>).mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([baseRow]),
-      }),
-    });
-
-    const result = await getRegistration("reg-1");
+    const result = await getRegistration("ws-1");
     expect(result).not.toBeNull();
-    expect(result!.id).toBe("reg-1");
-    expect(result).not.toHaveProperty("webhookSecret");
+    expect(mockWhere).toHaveBeenCalled();
   });
 });
 
-// ── getRegistrationByClientId ─────────────────────────────────────────────────
+// ── getRegistrationByClientId ───────────────────────────────────────────────
 
 describe("getRegistrationByClientId", () => {
   it("returns null when not found", async () => {
@@ -198,17 +175,31 @@ describe("getRegistrationByClientId", () => {
   });
 });
 
-// ── createRegistration ────────────────────────────────────────────────────────
+// ── saveRegistration ────────────────────────────────────────────────────────
 
-describe("createRegistration", () => {
-  it("encrypts the webhook secret and inserts a row", async () => {
+describe("saveRegistration", () => {
+  function mockSelectChain(rows: any[]) {
+    const mockLimit = vi.fn().mockResolvedValue(rows);
+    const mockOrderBy = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockWhere = vi.fn().mockReturnValue({ orderBy: mockOrderBy });
+    (db.select as ReturnType<typeof vi.fn>).mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: mockWhere,
+        orderBy: mockOrderBy,
+      }),
+    });
+  }
+
+  it("creates a new registration when none exists", async () => {
+    mockSelectChain([]);
+
     (db.insert as ReturnType<typeof vi.fn>).mockReturnValue({
       values: vi.fn().mockReturnValue({
         returning: vi.fn().mockResolvedValue([baseRow]),
       }),
     });
 
-    const result = await createRegistration(
+    const result = await saveRegistration(
       {
         name: "My App",
         oauthClientId: "client-abc",
@@ -223,56 +214,34 @@ describe("createRegistration", () => {
     expect(result).toMatchObject({ id: "reg-1", name: "My App" });
     expect(result).not.toHaveProperty("webhookSecret");
   });
-});
 
-// ── updateRegistration ────────────────────────────────────────────────────────
+  it("updates the existing registration when one exists", async () => {
+    mockSelectChain([baseRow]);
 
-describe("updateRegistration", () => {
-  it("re-encrypts webhook secret when provided", async () => {
     (db.update as ReturnType<typeof vi.fn>).mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([baseRow]),
+          returning: vi.fn().mockResolvedValue([{ ...baseRow, name: "Updated App" }]),
         }),
       }),
     });
 
-    const result = await updateRegistration("reg-1", { webhookSecret: "new-secret" });
+    const result = await saveRegistration(
+      {
+        name: "Updated App",
+        oauthClientId: "client-abc",
+        webhookSecret: "new-secret",
+      },
+      "ws-1",
+    );
 
     expect(encrypt).toHaveBeenCalledWith("new-secret");
-    expect(result).not.toBeNull();
-    expect(result!.id).toBe("reg-1");
-  });
-
-  it("does not call encrypt when webhookSecret not in input", async () => {
-    (db.update as ReturnType<typeof vi.fn>).mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([baseRow]),
-        }),
-      }),
-    });
-
-    await updateRegistration("reg-1", { name: "Renamed App" });
-
-    expect(encrypt).not.toHaveBeenCalled();
-  });
-
-  it("returns null when record not found", async () => {
-    (db.update as ReturnType<typeof vi.fn>).mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([]),
-        }),
-      }),
-    });
-
-    const result = await updateRegistration("missing", { name: "x" });
-    expect(result).toBeNull();
+    expect(db.update).toHaveBeenCalled();
+    expect(result.name).toBe("Updated App");
   });
 });
 
-// ── deleteRegistration ────────────────────────────────────────────────────────
+// ── deleteRegistration ──────────────────────────────────────────────────────
 
 describe("deleteRegistration", () => {
   it("deletes agent-scoped skills, MCP servers, and the registration", async () => {
@@ -302,7 +271,7 @@ describe("deleteRegistration", () => {
   });
 });
 
-// ── testConnection ────────────────────────────────────────────────────────────
+// ── testConnection ──────────────────────────────────────────────────────────
 
 describe("testConnection", () => {
   it("returns true when LINEAR_API_TOKEN is valid and viewer resolves", async () => {
@@ -339,7 +308,7 @@ describe("testConnection", () => {
   });
 });
 
-// ── getConfigStatus ───────────────────────────────────────────────────────────
+// ── getConfigStatus ─────────────────────────────────────────────────────────
 
 describe("getConfigStatus", () => {
   it("returns all true when token is set and connection works", async () => {
