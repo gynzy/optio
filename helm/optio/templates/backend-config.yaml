@@ -8,6 +8,10 @@ metadata:
     {{- include "optio.labels" . | nindent 4 }}
 spec:
   timeoutSec: 3600
+  {{- if .Values.ingress.gke.cloudArmorPolicy }}
+  securityPolicy:
+    name: {{ .Values.ingress.gke.cloudArmorPolicy | quote }}
+  {{- end }}
   healthCheck:
     type: HTTP
     requestPath: /api/health
@@ -21,6 +25,10 @@ metadata:
   labels:
     {{- include "optio.labels" . | nindent 4 }}
 spec:
+  {{- if .Values.ingress.gke.cloudArmorPolicy }}
+  securityPolicy:
+    name: {{ .Values.ingress.gke.cloudArmorPolicy | quote }}
+  {{- end }}
   healthCheck:
     type: HTTP
     requestPath: /

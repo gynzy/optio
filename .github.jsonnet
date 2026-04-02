@@ -171,6 +171,7 @@ local release = base.pipeline(
               gke: {
                 enabled: true,
                 staticIpName: 'optio',
+                cloudArmorPolicy: 'optio',
                 managedCertificate: {
                   enabled: true,
                   domains: ['optio.gynzy.dev'],

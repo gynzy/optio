@@ -309,6 +309,7 @@ ingress:
   gke:
     enabled: false
     staticIpName: ""
+    cloudArmorPolicy: ""
     managedCertificate:
       enabled: false
       domains: []
