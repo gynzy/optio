@@ -21,6 +21,12 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
   exit 1
 fi
 
+# Check available disk space in Docker (need ~15GB for images)
+DOCKER_DISK_FREE=$(docker system df --format '{{.Reclaimable}}' 2>/dev/null | head -1 || true)
+echo "   Docker disk reclaimable: ${DOCKER_DISK_FREE:-unknown}"
+echo "   Tip: run 'docker system prune -a --volumes' if builds fail with 'no space left on device'"
+echo ""
+
 echo "[1/6] Installing dependencies..."
 pnpm install
 
@@ -40,13 +46,18 @@ echo "   Building optio-optio (operations assistant)..."
 docker build -t optio-optio:latest -f Dockerfile.optio . -q &
 wait
 echo "   Building optio-full..."
-docker build -t optio-full:latest -f images/full.Dockerfile . -q
+docker build -t optio-full:latest -f images/full.Dockerfile . -q || echo "   ⚠ optio-full build failed (optional, skipping)"
 echo "   All agent images built."
 
 echo "[3/6] Building API and Web images..."
 docker build -t optio-api:latest -f Dockerfile.api . -q
 docker build -t optio-web:latest -f Dockerfile.web . -q
 echo "   API and Web images built."
+
+# Pull external images that the Helm chart needs (containerd may not have them)
+echo "   Pulling postgres:16 and redis:7-alpine..."
+docker pull -q postgres:16 2>/dev/null || echo "   ⚠ Failed to pull postgres:16 (will try at deploy time)"
+docker pull -q redis:7-alpine 2>/dev/null || echo "   ⚠ Failed to pull redis:7-alpine (will try at deploy time)"
 
 echo "[4/6] Installing metrics-server..."
 if kubectl get deployment metrics-server -n kube-system &>/dev/null; then
@@ -64,58 +75,89 @@ fi
 echo "[5/6] Deploying Optio to Kubernetes via Helm..."
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 
-if helm status optio -n optio &>/dev/null; then
-  echo "   Existing release found, upgrading..."
-  helm upgrade optio helm/optio -n optio \
-    --set encryption.key="$ENCRYPTION_KEY" \
-    --set api.image.pullPolicy=Never \
-    --set web.image.pullPolicy=Never \
-    --set agent.image.repository=optio-base \
-    --set agent.image.tag=latest \
-    --set agent.imagePullPolicy=Never \
-    --set optio.image.pullPolicy=Never \
-    --set auth.disabled=true \
-    --set api.service.type=NodePort \
-    --set api.service.nodePort=30400 \
-    --set web.service.type=NodePort \
-    --set web.service.nodePort=30310 \
-    --set postgresql.auth.password=optio_dev \
-    --wait --timeout=120s
-else
-  helm install optio helm/optio -n optio --create-namespace \
-    --set encryption.key="$ENCRYPTION_KEY" \
-    --set api.image.pullPolicy=Never \
-    --set web.image.pullPolicy=Never \
-    --set agent.image.repository=optio-base \
-    --set agent.image.tag=latest \
-    --set agent.imagePullPolicy=Never \
-    --set optio.image.pullPolicy=Never \
-    --set auth.disabled=true \
-    --set api.service.type=NodePort \
-    --set api.service.nodePort=30400 \
-    --set web.service.type=NodePort \
-    --set web.service.nodePort=30310 \
-    --set postgresql.auth.password=optio_dev \
-    --wait --timeout=120s
+# Clean up any stuck-terminating namespace from a previous failed run
+if kubectl get namespace optio -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Terminating; then
+  echo "   Cleaning up stuck namespace from previous run..."
+  kubectl get namespace optio -o json \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); d['spec']['finalizers']=[]; json.dump(d,sys.stdout)" \
+    | kubectl replace --raw "/api/v1/namespaces/optio/finalize" -f - >/dev/null 2>&1 || true
+  sleep 3
 fi
+
+# Pre-create namespace with Helm ownership labels (chart includes a Namespace resource,
+# so --create-namespace would conflict with it)
+if ! kubectl get namespace optio &>/dev/null; then
+  kubectl create namespace optio
+  kubectl label namespace optio app.kubernetes.io/managed-by=Helm
+  kubectl annotate namespace optio meta.helm.sh/release-name=optio meta.helm.sh/release-namespace=optio
+fi
+
+helm upgrade --install optio helm/optio -n optio \
+  --set encryption.key="$ENCRYPTION_KEY" \
+  --set api.image.pullPolicy=IfNotPresent \
+  --set web.image.pullPolicy=IfNotPresent \
+  --set agent.image.repository=optio-base \
+  --set agent.image.tag=latest \
+  --set agent.imagePullPolicy=IfNotPresent \
+  --set optio.image.pullPolicy=IfNotPresent \
+  --set auth.disabled=true \
+  --set api.service.type=NodePort \
+  --set api.service.nodePort=30400 \
+  --set web.service.type=NodePort \
+  --set web.service.nodePort=30310 \
+  --set postgresql.auth.password=optio_dev \
+  --timeout=120s
 echo "   Helm deployment complete."
 
-echo "[6/6] Verifying deployment..."
-kubectl wait --namespace optio --for=condition=available deployment/optio-api --timeout=60s 2>/dev/null || true
+echo "[6/6] Waiting for pods to be ready..."
+kubectl wait --namespace optio --for=condition=available deployment/optio-postgres --timeout=60s 2>/dev/null || true
+kubectl wait --namespace optio --for=condition=available deployment/optio-redis --timeout=30s 2>/dev/null || true
+kubectl wait --namespace optio --for=condition=available deployment/optio-api --timeout=90s 2>/dev/null || true
 kubectl wait --namespace optio --for=condition=available deployment/optio-web --timeout=60s 2>/dev/null || true
 kubectl wait --namespace optio --for=condition=available deployment/optio-optio --timeout=60s 2>/dev/null || true
+
+# Start port-forwarding (NodePort may not be reachable on Docker Desktop with kind/containerd)
+echo ""
+echo "   Starting port-forwarding..."
+pkill -f "kubectl port-forward.*optio" 2>/dev/null || true
+sleep 1
+kubectl port-forward svc/optio-web 30310:3000 -n optio &>/dev/null &
+PF_WEB_PID=$!
+kubectl port-forward svc/optio-api 30400:4000 -n optio &>/dev/null &
+PF_API_PID=$!
+sleep 2
+
+# Verify services are reachable
+WEB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:30310 2>/dev/null || echo "000")
+API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:30400/api/health 2>/dev/null || echo "000")
 
 echo ""
 echo "=== Setup Complete ==="
 echo ""
 echo "Services:"
-echo "  Web UI ...... http://localhost:30310"
-echo "  API ......... http://localhost:30400"
+if [ "$WEB_STATUS" = "200" ]; then
+  echo "  Web UI ...... http://localhost:30310 ✓"
+else
+  echo "  Web UI ...... http://localhost:30310 (status: $WEB_STATUS — may still be starting)"
+fi
+if [ "$API_STATUS" = "200" ]; then
+  echo "  API ......... http://localhost:30400 ✓"
+else
+  echo "  API ......... http://localhost:30400 (status: $API_STATUS — may still be starting)"
+fi
 echo "  Postgres .... optio-postgres:5432 (K8s internal)"
 echo "  Redis ....... optio-redis:6379 (K8s internal)"
 echo ""
+echo "Pod status:"
+kubectl get pods -n optio --no-headers 2>/dev/null | sed 's/^/  /'
+echo ""
 echo "Agent images:"
 docker images --filter "reference=optio-*" --format "  {{.Repository}}:{{.Tag}}" 2>/dev/null || true
+echo ""
+echo "Port-forwarding is running in the background (PIDs: $PF_WEB_PID, $PF_API_PID)."
+echo "If it stops, restart with:"
+echo "  kubectl port-forward svc/optio-web 30310:3000 -n optio &"
+echo "  kubectl port-forward svc/optio-api 30400:4000 -n optio &"
 echo ""
 echo "Next steps:"
 echo ""

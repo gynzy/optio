@@ -16,3 +16,4 @@ apps/api/.env
 .values.local.yaml
 .worktrees/
 issues/
+.worktrees

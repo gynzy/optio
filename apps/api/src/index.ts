@@ -96,6 +96,9 @@ async function main() {
 
   const app = await buildServer();
 
+  const { setApp } = await import("./server.js");
+  setApp(app);
+
   // Bind HTTP server first so turbo sees output quickly.
   // Heavy Redis/BullMQ work is deferred to after listen() to avoid
   // blocking Turborepo's process management and stalling sibling
@@ -142,6 +145,13 @@ async function main() {
     logger.error(err, "Failed to reconcile orphaned tasks");
   });
 
+  // Recover any interrupted Linear agent sessions
+  import("./services/linear-coordinator-service.js")
+    .then(({ recoverInterruptedSessions }) => recoverInterruptedSessions())
+    .catch((err) => {
+      logger.error(err, "Failed to recover Linear sessions");
+    });
+
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down...");
@@ -151,6 +161,14 @@ async function main() {
     await prWatcherWorker.close();
     await webhookWorker.close();
     await scheduleWorker.close();
+    // Mark active Linear sessions as interrupted
+    try {
+      const { markSessionsInterrupted } = await import("./services/linear-coordinator-service.js");
+      const count = await markSessionsInterrupted();
+      if (count > 0) logger.info({ count }, "Marked Linear sessions as interrupted");
+    } catch {
+      // Non-critical
+    }
     await app.close();
     process.exit(0);
   };

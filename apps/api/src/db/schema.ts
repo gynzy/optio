@@ -10,6 +10,7 @@ import {
   customType,
   unique,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ── Workspace enums ─────────────────────────────────────────────────────────
@@ -657,6 +658,60 @@ export const reviewDrafts = pgTable(
   (table) => [
     index("review_drafts_task_id_idx").on(table.taskId),
     index("review_drafts_state_idx").on(table.state),
+  ],
+);
+
+// ── Linear Agent Sessions ───────────────────────────────────────────────────
+
+export const linearAgentSessions = pgTable(
+  "linear_agent_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    linearSessionId: text("linear_session_id").notNull(),
+    linearIssueId: text("linear_issue_id"),
+    status: text("status").notNull().default("active"),
+    conversationMessages: jsonb("conversation_messages").$type<unknown[]>().notNull().default([]),
+    enrichedContext: jsonb("enriched_context"),
+    spawnedTaskIds: jsonb("spawned_task_ids").$type<string[]>().notNull().default([]),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
+    costUsd: text("cost_usd"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    workspaceId: uuid("workspace_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("linear_agent_sessions_linear_session_id_idx").on(table.linearSessionId),
+    index("linear_agent_sessions_status_idx").on(table.status),
+  ],
+);
+
+// ── Linear Agent Registrations ──────────────────────────────────────────────
+
+export const linearAgentRegistrations = pgTable(
+  "linear_agent_registrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    oauthClientId: text("oauth_client_id").notNull(),
+    encryptedWebhookSecret: bytea("encrypted_webhook_secret").notNull(),
+    secretIv: bytea("secret_iv").notNull(),
+    secretAuthTag: bytea("secret_auth_tag").notNull(),
+    systemPrompt: text("system_prompt").notNull().default(""),
+    selectedSkillIds: jsonb("selected_skill_ids").$type<string[]>().notNull().default([]),
+    selectedMcpServerIds: jsonb("selected_mcp_server_ids").$type<string[]>().notNull().default([]),
+    marketplacePlugins: jsonb("marketplace_plugins").$type<string[]>().notNull().default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    workspaceId: uuid("workspace_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("linear_agent_registrations_oauth_client_id_idx").on(table.oauthClientId),
+    index("linear_agent_registrations_workspace_id_idx").on(table.workspaceId),
   ],
 );
 

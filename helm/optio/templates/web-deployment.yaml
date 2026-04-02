@@ -57,6 +57,8 @@ spec:
           ports:
             - containerPort: {{ .Values.web.port }}
           env:
+            - name: HOSTNAME
+              value: "0.0.0.0"
             - name: INTERNAL_API_URL
               value: "http://{{ .Release.Name }}-api:{{ .Values.api.port }}"
             - name: OPTIO_AUTH_DISABLED

@@ -20,8 +20,10 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Link2,
 } from "lucide-react";
 import { OPTIO_TOOL_CATEGORIES, ALL_OPTIO_TOOL_NAMES } from "@optio/shared";
+import { LinearAgentSettings } from "@/components/linear-agent-settings";
 
 function PromptTemplateEditor() {
   const [template, setTemplate] = useState("");
@@ -1138,6 +1140,15 @@ export default function SettingsPage() {
           Global Custom Skills
         </h2>
         <GlobalSkills />
+      </section>
+
+      {/* Linear Agent */}
+      <section>
+        <h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-2">
+          <Link2 className="w-4 h-4" />
+          Linear Agent
+        </h2>
+        <LinearAgentSettings />
       </section>
 
       {/* Prompt Template */}

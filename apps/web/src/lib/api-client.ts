@@ -985,4 +985,31 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+
+  // Linear config
+  getLinearConfig: () =>
+    request<{ tokenConfigured: boolean; connected: boolean; webhookUrl: string }>(
+      "/api/linear/config",
+    ),
+
+  testLinearConnection: () =>
+    request<{ success: boolean; error?: string }>("/api/linear/config/test", { method: "POST" }),
+
+  getLinearRegistration: () => request<{ registration: any }>("/api/linear/registration"),
+
+  saveLinearRegistration: (input: {
+    name: string;
+    oauthClientId: string;
+    webhookSecret: string;
+    systemPrompt?: string;
+    selectedSkillIds?: string[];
+    selectedMcpServerIds?: string[];
+    marketplacePlugins?: string[];
+  }) =>
+    request<{ registration: any }>("/api/linear/registration", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+
+  deleteLinearRegistration: () => request<void>("/api/linear/registration", { method: "DELETE" }),
 };

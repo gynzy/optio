@@ -53,6 +53,9 @@ importers:
       '@kubernetes/client-node':
         specifier: ^1.4.0
         version: 1.4.0
+      '@linear/sdk':
+        specifier: ^80.0.0
+        version: 80.1.0(graphql@15.10.1)
       '@optio/agent-adapters':
         specifier: workspace:*
         version: link:../../packages/agent-adapters
@@ -1210,6 +1213,10 @@ packages:
   '@linear/sdk@37.0.0':
     resolution: {integrity: sha512-EAZCXtV414Nwtvrwn7Ucu3E8BbYYKsc3HqZCGf1mHUE7FhZGtfISu295DOVv89WhhXlp2N344EMg3K0nnhLxtA==}
     engines: {node: '>=12.x', yarn: 1.x}
+
+  '@linear/sdk@80.1.0':
+    resolution: {integrity: sha512-/ZCnFZrdSEW5gkOD5juYnPQRqnvju2GfSK3J7sIeR4YWdpY+/0XS2zzEbdZUGFDQQNktmYxEYAWoKygvFErTLA==}
+    engines: {node: '>=18.x'}
 
   '@lukeed/ms@2.0.2':
     resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
@@ -5031,6 +5038,12 @@ snapshots:
       isomorphic-unfetch: 3.1.0
     transitivePeerDependencies:
       - encoding
+
+  '@linear/sdk@80.1.0(graphql@15.10.1)':
+    dependencies:
+      '@graphql-typed-document-node/core': 3.2.0(graphql@15.10.1)
+    transitivePeerDependencies:
+      - graphql
 
   '@lukeed/ms@2.0.2': {}
 
