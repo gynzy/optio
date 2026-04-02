@@ -139,6 +139,17 @@ agent:
       - ReadWriteOnce
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Cloud SQL Proxy sidecar (for GCP Cloud SQL connections)
+# ──────────────────────────────────────────────────────────────────────────────
+cloudSqlProxy:
+  enabled: false
+  image:
+    repository: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+    tag: "2.15.0"
+  instanceConnectionName: ""  # e.g. project:region:instance
+  credentialsSecret: cloudsql-proxy  # K8s secret name containing service_json key
+
+# ──────────────────────────────────────────────────────────────────────────────
 # PostgreSQL (built-in)
 # Set enabled=false and configure externalDatabase.url for managed Postgres.
 # ──────────────────────────────────────────────────────────────────────────────

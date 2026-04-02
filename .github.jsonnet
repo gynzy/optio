@@ -159,6 +159,10 @@ local release = base.pipeline(
             web: { image: { repository: registry + '/optio-web', tag: imageTag } },
             optio: { image: { repository: registry + '/optio-optio', tag: imageTag } },
             agent: { image: { repository: registry + '/optio-agent-base', tag: imageTag, pullPolicy: 'IfNotPresent' }, imagePullPolicy: 'IfNotPresent' },
+            cloudSqlProxy: {
+              enabled: true,
+              instanceConnectionName: 'gh-runners:europe-west4:optio',
+            },
             postgresql: { enabled: false },
             externalDatabase: { url: misc.secret('EXTERNAL_DATABASE_URL') },
             encryption: { key: misc.secret('ENCRYPTION_KEY') },
