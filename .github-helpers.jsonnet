@@ -9,11 +9,8 @@ local pnpm = import '.github/jsonnet/pnpm.jsonnet';
   imageTag: 'deploy-${{ github.sha }}',
   baseImageRef: 'europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.sha }}',
 
-  checkout()::
-    misc.checkout(preferSshClone=false, includeSubmodules=false),
-
   checkoutAndPnpm()::
-    self.checkout() +
+    misc.checkout() +
     pnpm.install(),
 
   buildImage(name, dockerfile, buildArgs=null)::
