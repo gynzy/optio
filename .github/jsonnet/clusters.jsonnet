@@ -37,7 +37,7 @@ local misc = import 'misc.jsonnet';
 
   'gh-runners': {
     project: 'gh-runners',
-    name: 'prod-europe-west4',
+    name: 'gh-runners-2023',
     zone: 'europe-west4-b',
     secret: misc.secret('GCE_JSON'),
     jobNodeSelectorKey: 'optio',
