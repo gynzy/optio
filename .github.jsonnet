@@ -52,8 +52,8 @@ local ci = base.pipeline(
       useCredentials=false,
       steps=[
         misc.checkout(),
-        base.step('Build base image', 'docker build -t optio-base:latest -f images/base.Dockerfile .'),
-        base.step('Build node image', 'docker build -t optio-node:latest -f images/node.Dockerfile .'),
+        buildImage('optio-agent-base', 'images/base.Dockerfile'),
+        buildImage('optio-agent-node', 'images/node.Dockerfile', buildArgs='BASE_IMAGE=' + baseImageRef),
       ],
     ),
   ],

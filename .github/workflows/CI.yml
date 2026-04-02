@@ -58,10 +58,29 @@
         "submodules": "recursive"
     - "name": "git safe directory"
       "run": "command -v git && git config --global --add safe.directory '*' || true"
-    - "name": "Build base image"
-      "run": "docker build -t optio-base:latest -f images/base.Dockerfile ."
-    - "name": "Build node image"
-      "run": "docker build -t optio-node:latest -f images/node.Dockerfile ."
+    - "env": {}
+      "name": "build-docker optio-agent-base"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "context": "."
+        "dockerfile": "images/base.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-base"
+        "image_tag": "deploy-${{ github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
+    - "env": {}
+      "name": "build-docker optio-agent-node"
+      "uses": "docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1"
+      "with":
+        "build_args": "BASE_IMAGE=europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:deploy-${{ github.sha }}"
+        "context": "."
+        "dockerfile": "images/node.Dockerfile"
+        "gcloud_service_key": "${{ secrets.docker_gcr_io_base64 }}"
+        "image_name": "private-images/optio-agent-node"
+        "image_tag": "deploy-${{ github.sha }}"
+        "project_id": "unicorn-985"
+        "registry": "europe-docker.pkg.dev"
     "timeout-minutes": 30
   "build-site":
     "container":
