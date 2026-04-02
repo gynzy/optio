@@ -168,7 +168,6 @@ local release = base.pipeline(
             encryption: { key: misc.secret('ENCRYPTION_KEY') },
             ingress: {
               enabled: true,
-              className: 'gce',
               gke: {
                 enabled: true,
                 staticIpName: 'optio',

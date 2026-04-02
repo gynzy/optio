@@ -107,7 +107,6 @@ auth:
 # and certManager.enabled: true instead.
 ingress:
   enabled: true
-  className: gce
   gke:
     enabled: true
     staticIpName: optio
