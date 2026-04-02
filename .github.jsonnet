@@ -152,7 +152,12 @@ local release = base.pipeline(
         helm.deployHelm(
           clusters['gh-runners'],
           release='optio',
-          values={ image: { tag: imageTag } },
+          values={
+            image: { tag: imageTag },
+            postgresql: { enabled: false },
+            externalDatabase: { url: misc.secret('EXTERNAL_DATABASE_URL') },
+            encryption: { key: misc.secret('ENCRYPTION_KEY') },
+          },
           chartPath='./helm/optio',
           namespace='optio',
           version='${{ github.sha }}',

@@ -73,7 +73,7 @@
         "namespace": "optio"
         "release": "optio"
         "token": "${{ github.token }}"
-        "values": "{\"image\":{\"tag\":\"deploy-${{ github.event.pull_request.head.sha || github.sha }}\"}}"
+        "values": "{\"encryption\":{\"key\":\"${{ secrets.ENCRYPTION_KEY }}\"},\"externalDatabase\":{\"url\":\"${{ secrets.EXTERNAL_DATABASE_URL }}\"},\"image\":{\"tag\":\"deploy-${{ github.event.pull_request.head.sha || github.sha }}\"},\"postgresql\":{\"enabled\":false}}"
         "version": "${{ github.sha }}"
         "wait": "false"
     - "if": "${{ always() }}"
