@@ -8,91 +8,89 @@
       "image": "mirror.gcr.io/node:22"
     "runs-on": "arc-runner-2"
     "steps":
-      - "id": "check-binaries"
-        "name": "check for ssh/git binaries"
-        "run": |
-          if command -v git;
-            then
-              echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
-              echo "Git binary exists";
+    - "id": "check-binaries"
+      "name": "check for ssh/git binaries"
+      "run": |
+        if command -v git;
+          then
+            echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "Git binary exists";
+          else
+            echo "Attempt to install git binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
             else
-              echo "Attempt to install git binary";
-              if command -v apk; then
-                echo "apk exists";
-                apk add git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
-              elif command -v apt; then
-                echo "apt exists";
-                apt update && apt install -y git && echo "gitBinaryExists=true" >> $GITHUB_OUTPUT;
-              else
-                echo "No package manager found, unable to install git cli binary";
-                echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
-              fi;
-          fi;
-
-          if command -v ssh;
-            then
-              echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
-              echo "SSH binary exists";
-              exit 0;
+              echo "No package manager found, unable to install git cli binary";
+              echo "gitBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        
+        if command -v ssh;
+          then
+            echo "sshBinaryExists=true" >> $GITHUB_OUTPUT;
+            echo "SSH binary exists";
+            exit 0;
+          else
+            echo "Attempt to install ssh binary";
+            if command -v apk; then
+              echo "apk exists";
+              apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
+            elif command -v apt; then
+              echo "apt exists";
+              apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
             else
-              echo "Attempt to install ssh binary";
-              if command -v apk; then
-                echo "apk exists";
-                apk add openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
-              elif command -v apt; then
-                echo "apt exists";
-                apt update && apt install -y openssh-client && echo "sshBinaryExists=true" >> $GITHUB_OUTPUT && exit 0;
-              else
-                echo "No package manager found, unable to install ssh cli binary";
-                echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
-              fi;
-          fi;
-          echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
-      - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
-        "name": "Check out repository code via ssh"
-        "uses": "actions/checkout@v4"
-        "with":
-          "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
-          "submodules": "recursive"
-      - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
-        "name": "Check out repository code via https"
-        "uses": "actions/checkout@v4"
-        "with":
-          "submodules": "recursive"
-      - "name": "git safe directory"
-        "run": "command -v git && git config --global --add safe.directory '*' || true"
-      - "name": "Install pnpm tool"
-        "uses": "pnpm/action-setup@v4"
-        "with":
-          "version": "10"
-      - "name": "Run pnpm install"
-        "run": "pnpm install"
-      - "name": "Build site"
-        "run": "pnpm turbo build --filter=@optio/site"
-      - "name": "Upload Pages artifact"
-        "uses": "actions/upload-pages-artifact@v3"
-        "with":
-          "path": "apps/site/out"
+              echo "No package manager found, unable to install ssh cli binary";
+              echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+            fi;
+        fi;
+        echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
+      "name": "Check out repository code via ssh"
+      "uses": "actions/checkout@v4"
+      "with":
+        "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
+        "submodules": "recursive"
+    - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
+      "name": "Check out repository code via https"
+      "uses": "actions/checkout@v4"
+      "with":
+        "submodules": "recursive"
+    - "name": "git safe directory"
+      "run": "command -v git && git config --global --add safe.directory '*' || true"
+    - "name": "Install pnpm"
+      "uses": "pnpm/action-setup@v4"
+    - "name": "Install dependencies"
+      "run": "pnpm install --frozen-lockfile"
+    - "name": "Build site"
+      "run": "pnpm turbo build --filter=@optio/site"
+    - "name": "Upload Pages artifact"
+      "uses": "actions/upload-pages-artifact@v3"
+      "with":
+        "path": "apps/site/out"
     "timeout-minutes": 30
   "deploy":
     "container":
       "image": "mirror.gcr.io/node:22"
     "needs":
-      - "build"
+    - "build"
     "runs-on": "arc-runner-2"
     "steps":
-      - "id": "deployment"
-        "name": "Deploy to Pages"
-        "uses": "actions/deploy-pages@v4"
+    - "id": "deployment"
+      "name": "Deploy to Pages"
+      "uses": "actions/deploy-pages@v4"
     "timeout-minutes": 30
 "name": "Deploy Site"
 "on":
   "push":
     "branches":
-      - "main"
+    - "main"
     "paths":
-      - "apps/site/**"
-      - ".github/workflows/Deploy Site.yml"
+    - "apps/site/**"
+    - ".github/workflows/Deploy Site.yml"
   "workflow_dispatch": null
 "permissions":
   "contents": "read"

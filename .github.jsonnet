@@ -3,7 +3,6 @@ local clusters = import '.github/jsonnet/clusters.jsonnet';
 local docker = import '.github/jsonnet/docker.jsonnet';
 local helm = import '.github/jsonnet/helm.jsonnet';
 local misc = import '.github/jsonnet/misc.jsonnet';
-local pnpm = import '.github/jsonnet/pnpm.jsonnet';
 
 local nodeImage = 'mirror.gcr.io/node:22';
 local project = 'unicorn-985';
@@ -12,7 +11,8 @@ local baseImageRef = 'europe-docker.pkg.dev/unicorn-985/private-images/optio-age
 
 local checkoutAndPnpm() =
   misc.checkout() +
-  pnpm.install();
+  base.action('Install pnpm', 'pnpm/action-setup@v4') +
+  base.step('Install dependencies', 'pnpm install --frozen-lockfile');
 
 local buildImage(name, dockerfile, buildArgs=null) =
   docker.buildDocker(
@@ -52,8 +52,8 @@ local ci = base.pipeline(
       useCredentials=false,
       steps=[
         misc.checkout(),
-        buildImage('optio-agent-base', 'images/base.Dockerfile'),
-        buildImage('optio-agent-node', 'images/node.Dockerfile'),
+        base.step('Build base image', 'docker build -t optio-base:latest -f images/base.Dockerfile .'),
+        base.step('Build node image', 'docker build -t optio-node:latest -f images/node.Dockerfile .'),
       ],
     ),
   ],
