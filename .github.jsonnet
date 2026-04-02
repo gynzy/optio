@@ -3,25 +3,57 @@ local clusters = import '.github/jsonnet/clusters.jsonnet';
 local docker = import '.github/jsonnet/docker.jsonnet';
 local helm = import '.github/jsonnet/helm.jsonnet';
 local misc = import '.github/jsonnet/misc.jsonnet';
-local optio = import '.github-helpers.jsonnet';
+local pnpm = import '.github/jsonnet/pnpm.jsonnet';
+
+local nodeImage = 'mirror.gcr.io/node:22';
+local project = 'unicorn-985';
+local imageTag = 'deploy-${{ github.sha }}';
+local baseImageRef = 'europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base:' + imageTag;
+
+local checkoutAndPnpm() =
+  misc.checkout() +
+  pnpm.install();
+
+local buildImage(name, dockerfile, buildArgs=null) =
+  docker.buildDocker(
+    name,
+    imageTag=imageTag,
+    isPublic=false,
+    dockerfile=dockerfile,
+    project=project,
+    build_args=buildArgs,
+  );
+
+local pnpmJob(name, commands) =
+  base.ghJob(
+    name,
+    image=nodeImage,
+    useCredentials=false,
+    steps=[
+      checkoutAndPnpm(),
+    ] + [
+      base.step(cmd.name, cmd.run)
+      for cmd in commands
+    ],
+  );
 
 // ── CI ──────────────────────────────────────────────────────────────────────
 local ci = base.pipeline(
   'CI',
   [
-    optio.pnpmJob('format', [{ name: 'Format check', run: 'pnpm format:check' }]),
-    optio.pnpmJob('typecheck', [{ name: 'Typecheck', run: 'pnpm turbo typecheck' }]),
-    optio.pnpmJob('test', [{ name: 'Test', run: 'pnpm turbo test' }]),
-    optio.pnpmJob('build-web', [{ name: 'Build web', run: 'cd apps/web && npx next build' }]),
-    optio.pnpmJob('build-site', [{ name: 'Build site', run: 'cd apps/site && npx next build' }]),
+    pnpmJob('format', [{ name: 'Format check', run: 'pnpm format:check' }]),
+    pnpmJob('typecheck', [{ name: 'Typecheck', run: 'pnpm turbo typecheck' }]),
+    pnpmJob('test', [{ name: 'Test', run: 'pnpm turbo test' }]),
+    pnpmJob('build-web', [{ name: 'Build web', run: 'cd apps/web && npx next build' }]),
+    pnpmJob('build-site', [{ name: 'Build site', run: 'cd apps/site && npx next build' }]),
     base.ghJob(
       'build-image',
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       steps=[
         misc.checkout(),
-        optio.buildImage('optio-agent-base', 'images/base.Dockerfile'),
-        optio.buildImage('optio-agent-node', 'images/node.Dockerfile'),
+        buildImage('optio-agent-base', 'images/base.Dockerfile'),
+        buildImage('optio-agent-node', 'images/node.Dockerfile'),
       ],
     ),
   ],
@@ -36,25 +68,25 @@ local buildImages = base.pipeline(
   [
     base.ghJob(
       'build-base',
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       steps=[
         misc.checkout(),
-        optio.buildImage('optio-agent-base', 'images/base.Dockerfile'),
+        buildImage('optio-agent-base', 'images/base.Dockerfile'),
       ],
     ),
   ] + [
     base.ghJob(
       'build-' + preset,
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       needs=['build-base'],
       steps=[
         misc.checkout(),
-        optio.buildImage(
+        buildImage(
           'optio-agent-' + preset,
           'images/' + preset + '.Dockerfile',
-          buildArgs='BASE_IMAGE=' + optio.baseImageRef,
+          buildArgs='BASE_IMAGE=' + baseImageRef,
         ),
       ],
     )
@@ -82,36 +114,36 @@ local release = base.pipeline(
   [
     base.ghJob(
       'build-' + svc.name,
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       steps=[
         misc.checkout(),
-        optio.buildImage('optio-' + svc.name, svc.dockerfile),
+        buildImage('optio-' + svc.name, svc.dockerfile),
       ],
     )
     for svc in releaseServices
   ] + [
     base.ghJob(
       'build-agent-base',
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       steps=[
         misc.checkout(),
-        optio.buildImage('optio-agent-base', 'images/base.Dockerfile'),
+        buildImage('optio-agent-base', 'images/base.Dockerfile'),
       ],
     ),
   ] + [
     base.ghJob(
       'build-agent-' + preset,
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       needs=['build-agent-base'],
       steps=[
         misc.checkout(),
-        optio.buildImage(
+        buildImage(
           'optio-agent-' + preset,
           'images/' + preset + '.Dockerfile',
-          buildArgs='BASE_IMAGE=' + optio.baseImageRef,
+          buildArgs='BASE_IMAGE=' + baseImageRef,
         ),
       ],
     )
@@ -119,7 +151,7 @@ local release = base.pipeline(
   ] + [
     base.ghJob(
       'deploy',
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       needs=['build-api', 'build-web', 'build-optio'] + ['build-agent-' + p for p in agentPresets],
       steps=[
@@ -127,7 +159,7 @@ local release = base.pipeline(
         helm.deployHelm(
           clusters['gh-runners'],
           release='optio',
-          values={ image: { tag: optio.imageTag } },
+          values={ image: { tag: imageTag } },
           chartPath='./helm/optio',
           namespace='optio',
         ),
@@ -146,17 +178,17 @@ local deploySite = base.pipeline(
   [
     base.ghJob(
       'build',
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       steps=[
-        optio.checkoutAndPnpm(),
+        checkoutAndPnpm(),
         base.step('Build site', 'pnpm turbo build --filter=@optio/site'),
         base.action('Upload Pages artifact', 'actions/upload-pages-artifact@v3', with={ path: 'apps/site/out' }),
       ],
     ),
     base.ghJob(
       'deploy',
-      image=optio.nodeImage,
+      image=nodeImage,
       useCredentials=false,
       needs=['build'],
       steps=[
