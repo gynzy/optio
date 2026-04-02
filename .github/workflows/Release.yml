@@ -737,7 +737,7 @@
         "release": "optio"
         "token": "${{ github.token }}"
         "values": "{\"image\":{\"tag\":\"deploy-${{ github.sha }}\"}}"
-        "version": "${{ github.event.pull_request.head.sha }}"
+        "version": "${{ github.sha }}"
         "wait": "false"
     - "if": "${{ always() }}"
       "name": "Update deployment status"

@@ -172,6 +172,7 @@ local release = base.pipeline(
           values={ image: { tag: imageTag } },
           chartPath='./helm/optio',
           namespace='optio',
+          version='${{ github.sha }}',
         ),
         deployment.updateDeploymentStatus(),
       ],
