@@ -31,6 +31,6 @@ spec:
   {{- end }}
   healthCheck:
     type: HTTP
-    requestPath: /
+    requestPath: /api/health
     port: {{ .Values.web.port }}
 {{- end }}
