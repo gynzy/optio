@@ -206,6 +206,7 @@ export const repos = pgTable(
     setupCommands: text("setup_commands"), // shell commands run at pod startup after clone
     customDockerfile: text("custom_dockerfile"), // full Dockerfile override (advanced)
     autoMerge: boolean("auto_merge").notNull().default(false),
+    cautiousMode: boolean("cautious_mode").notNull().default(false),
     defaultAgentType: text("default_agent_type").notNull().default("claude-code"),
     promptTemplateOverride: text("prompt_template_override"), // null = use global default
     claudeModel: text("claude_model").default("opus"),

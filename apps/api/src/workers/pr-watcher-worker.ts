@@ -55,6 +55,7 @@ export function determinePrAction(opts: {
   reviewStatus: string;
   prevReviewStatus: string | null;
   autoMerge: boolean;
+  cautiousMode: boolean;
   autoResume: boolean;
   reviewEnabled: boolean;
   reviewTrigger: string;
@@ -120,7 +121,7 @@ export function determinePrAction(opts: {
 
   // Auto-merge: CI passing (or no checks) + subtasks done + autoMerge enabled
   const checksOk = opts.checksStatus === "passing" || opts.checksStatus === "none";
-  if (checksOk && opts.prState === "open" && opts.autoMerge) {
+  if (checksOk && opts.prState === "open" && opts.autoMerge && !opts.cautiousMode) {
     if (opts.blockingSubtasksComplete) return { action: "auto_merge" };
   }
 
@@ -319,6 +320,7 @@ export function startPrWatcherWorker() {
               reviewStatus,
               prevReviewStatus: task.prReviewStatus,
               autoMerge: repoConfig?.autoMerge ?? false,
+              cautiousMode: repoConfig?.cautiousMode ?? false,
               autoResume: repoConfig?.autoResume ?? false,
               reviewEnabled: repoConfig?.reviewEnabled ?? false,
               reviewTrigger: repoConfig?.reviewTrigger ?? "manual",
