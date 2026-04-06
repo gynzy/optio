@@ -119,6 +119,36 @@ describe("DEFAULT_PROMPT_TEMPLATE", () => {
     expect(result).toContain("Implements task abc-123");
     expect(result).not.toContain("Closes #");
   });
+
+  it("includes --draft flag when DRAFT_PR is true", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      DRAFT_PR: "true",
+      ISSUE_NUMBER: "",
+    });
+    expect(result).toContain("--draft");
+    expect(result).toContain("opened as a draft");
+  });
+
+  it("does not include --draft flag when DRAFT_PR is false", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      DRAFT_PR: "false",
+      ISSUE_NUMBER: "",
+    });
+    expect(result).not.toContain("--draft");
+    expect(result).not.toContain("opened as a draft");
+  });
 });
 
 describe("TASK_FILE_PATH", () => {

@@ -89,7 +89,13 @@ export async function sessionChatWs(app: FastifyInstance) {
     // Get pod info
     const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, session.podId));
     if (!pod || !pod.podName) {
-      socket.send(JSON.stringify({ type: "error", message: "Pod not found or not ready" }));
+      socket.send(
+        JSON.stringify({
+          type: "error",
+          message:
+            "Session pod was cleaned up due to inactivity. Please end this session and start a new one.",
+        }),
+      );
       releaseConnection(clientIp);
       socket.close();
       return;

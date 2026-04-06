@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, and, lt, sql, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { repoPods, tasks } from "../db/schema.js";
+import { repoPods, tasks, interactiveSessions } from "../db/schema.js";
 import { getRuntime } from "./container-service.js";
 import type { ContainerHandle, ContainerSpec, ExecSession, RepoImageConfig } from "@optio/shared";
 import {
@@ -657,6 +657,20 @@ export async function cleanupIdleRepoPods(): Promise<number> {
     const sorted = repoIdlePods.sort((a, b) => b.instanceIndex - a.instanceIndex);
 
     for (const pod of sorted) {
+      // Skip pods that have active interactive sessions
+      const [activeSession] = await db
+        .select({ id: interactiveSessions.id })
+        .from(interactiveSessions)
+        .where(and(eq(interactiveSessions.podId, pod.id), eq(interactiveSessions.state, "active")))
+        .limit(1);
+      if (activeSession) {
+        logger.info(
+          { podName: pod.podName, sessionId: activeSession.id },
+          "Skipping idle pod cleanup — active session exists",
+        );
+        continue;
+      }
+
       try {
         if (pod.podName) {
           await deleteNetworkPolicy(pod.podName).catch(() => {});

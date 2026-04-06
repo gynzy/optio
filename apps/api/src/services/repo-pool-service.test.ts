@@ -37,6 +37,12 @@ vi.mock("../db/schema.js", () => ({
     lastPodId: "lastPodId",
     updatedAt: "updatedAt",
   },
+  interactiveSessions: {
+    id: "id",
+    repoUrl: "repoUrl",
+    state: "state",
+    podId: "podId",
+  },
 }));
 
 const mockRuntimeCreate = vi.fn();
@@ -51,6 +57,13 @@ vi.mock("./container-service.js", () => ({
     status: mockRuntimeStatus,
     destroy: mockRuntimeDestroy,
   }),
+}));
+
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(
+    (_cmd: string, _args: string[], cb: (err: null, stdout: string, stderr: string) => void) =>
+      cb(null, "", ""),
+  ),
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -196,7 +209,15 @@ describe("cleanupIdleRepoPods", () => {
       instanceIndex: 0,
     };
 
-    vi.mocked(db.select().from(undefined as any).where as any).mockResolvedValueOnce([idlePod]);
+    // where() is used as both a terminal (idle pods, delete) and chainable (.limit() for sessions).
+    // Return an object that supports .limit() and is also thenable.
+    const chainable = {
+      limit: vi.fn().mockResolvedValue([]),
+      then: (res: any, rej?: any) => Promise.resolve([]).then(res, rej),
+    };
+    vi.mocked(db.select().from(undefined as any).where as any)
+      .mockResolvedValueOnce([idlePod]) // idle pods query
+      .mockReturnValueOnce(chainable); // interactive sessions query (chainable to .limit())
 
     mockRuntimeDestroy.mockResolvedValueOnce(undefined);
     vi.mocked(db.delete(undefined as any).where as any).mockResolvedValueOnce(undefined);
@@ -229,7 +250,14 @@ describe("cleanupIdleRepoPods", () => {
       },
     ];
 
-    vi.mocked(db.select().from(undefined as any).where as any).mockResolvedValueOnce(pods);
+    const chainable = {
+      limit: vi.fn().mockResolvedValue([]),
+      then: (res: any, rej?: any) => Promise.resolve([]).then(res, rej),
+    };
+    vi.mocked(db.select().from(undefined as any).where as any)
+      .mockResolvedValueOnce(pods)
+      .mockReturnValueOnce(chainable) // session check for pod-2 (sorted desc by instanceIndex)
+      .mockReturnValueOnce(chainable); // session check for pod-1
 
     mockRuntimeDestroy
       .mockRejectedValueOnce(new Error("Failed to destroy"))
@@ -252,7 +280,13 @@ describe("cleanupIdleRepoPods", () => {
       instanceIndex: 0,
     };
 
-    vi.mocked(db.select().from(undefined as any).where as any).mockResolvedValueOnce([pod]);
+    const chainable = {
+      limit: vi.fn().mockResolvedValue([]),
+      then: (res: any, rej?: any) => Promise.resolve([]).then(res, rej),
+    };
+    vi.mocked(db.select().from(undefined as any).where as any)
+      .mockResolvedValueOnce([pod])
+      .mockReturnValueOnce(chainable); // session check
     vi.mocked(db.delete(undefined as any).where as any).mockResolvedValue(undefined);
 
     const cleaned = await cleanupIdleRepoPods();

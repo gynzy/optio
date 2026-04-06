@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { checkRuntimeHealth } from "../services/container-service.js";
 import { listSecrets, retrieveSecret } from "../services/secret-service.js";
 import { isSubscriptionAvailable } from "../services/auth-service.js";
-import { isGitHubAppConfigured } from "../services/github-app-service.js";
+import { isGitHubAppConfigured, getInstallationToken } from "../services/github-app-service.js";
 import { isAuthDisabled } from "../services/oauth/index.js";
 
 /** Rate limit config for setup POST endpoints: 5 requests per 15 minutes per IP. */
@@ -239,21 +239,34 @@ export async function setupRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const { token } = req.body as { token: string };
-      if (!token) return reply.status(400).send({ repos: [], error: "Token is required" });
+
+      // Resolve an effective token: user-supplied PAT → GitHub App installation token
+      let effectiveToken = token || null;
+      if (!effectiveToken && isGitHubAppConfigured()) {
+        try {
+          effectiveToken = await getInstallationToken();
+        } catch {
+          return reply.send({ repos: [], error: "Failed to get GitHub App token" });
+        }
+      }
+      if (!effectiveToken) {
+        return reply.status(400).send({ repos: [], error: "Token is required" });
+      }
 
       try {
-        const headers = { Authorization: `Bearer ${token}`, "User-Agent": "Optio" };
+        const headers = { Authorization: `Bearer ${effectiveToken}`, "User-Agent": "Optio" };
 
-        // Fetch repos sorted by most recently pushed
-        const res = await fetch(
-          "https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=20&affiliation=owner,collaborator,organization_member",
-          { headers },
-        );
+        // GitHub App installation tokens use /installation/repositories, not /user/repos.
+        // PATs use /user/repos for the authenticated user's repos.
+        const apiUrl = token
+          ? "https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=20&affiliation=owner,collaborator,organization_member"
+          : "https://api.github.com/installation/repositories?sort=pushed&direction=desc&per_page=20";
+        const res = await fetch(apiUrl, { headers });
         if (!res.ok) {
           return reply.send({ repos: [], error: `GitHub returned ${res.status}` });
         }
 
-        const data = (await res.json()) as Array<{
+        type RepoItem = {
           full_name: string;
           html_url: string;
           clone_url: string;
@@ -262,7 +275,11 @@ export async function setupRoutes(app: FastifyInstance) {
           description: string | null;
           language: string | null;
           pushed_at: string;
-        }>;
+        };
+
+        const json = (await res.json()) as RepoItem[] | { repositories: RepoItem[] };
+        // /installation/repositories wraps results; /user/repos returns a flat array
+        const data: RepoItem[] = Array.isArray(json) ? json : json.repositories;
 
         const repos = data.map((r) => ({
           fullName: r.full_name,
@@ -302,8 +319,12 @@ export async function setupRoutes(app: FastifyInstance) {
         }
         const [, owner, repo] = match;
         const headers: Record<string, string> = { "User-Agent": "Optio" };
-        const effectiveToken = token ?? (await retrieveSecret("GITHUB_TOKEN").catch(() => null));
-        if (effectiveToken) headers["Authorization"] = `Bearer ${effectiveToken}`;
+        let repoToken: string | null = token ?? null;
+        if (!repoToken) repoToken = await retrieveSecret("GITHUB_TOKEN").catch(() => null);
+        if (!repoToken && isGitHubAppConfigured()) {
+          repoToken = await getInstallationToken().catch(() => null);
+        }
+        if (repoToken) headers["Authorization"] = `Bearer ${repoToken}`;
 
         const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
         if (res.ok) {

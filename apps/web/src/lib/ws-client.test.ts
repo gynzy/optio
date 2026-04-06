@@ -9,7 +9,7 @@ class MockWebSocket {
   readyState = MockWebSocket.OPEN;
   url: string;
   onmessage: ((msg: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev: { code: number }) => void) | null = null;
   onerror: (() => void) | null = null;
 
   close = vi.fn(() => {
@@ -111,7 +111,7 @@ describe("WsClient", () => {
 
     const ws = MockWebSocket.instances[0];
     ws.readyState = MockWebSocket.CLOSED;
-    ws.onclose!();
+    ws.onclose!({ code: 1006 });
 
     vi.advanceTimersByTime(3000);
     expect(MockWebSocket.instances).toHaveLength(2);

@@ -44,6 +44,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
   const [customDockerfile, setCustomDockerfile] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [autoMerge, setAutoMerge] = useState(false);
+  const [cautiousMode, setCautiousMode] = useState(false);
   const [defaultAgentType, setDefaultAgentType] = useState("claude-code");
   const [promptOverride, setPromptOverride] = useState("");
   const [useCustomPrompt, setUseCustomPrompt] = useState(false);
@@ -106,6 +107,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         setCustomDockerfile(r.customDockerfile ?? "");
         if (r.setupCommands || r.customDockerfile) setShowAdvanced(true);
         setAutoMerge(r.autoMerge);
+        setCautiousMode(r.cautiousMode ?? false);
         setDefaultAgentType(r.defaultAgentType ?? "claude-code");
         setAutoResume(r.autoResume ?? false);
         setMaxConcurrentTasks(r.maxConcurrentTasks ?? 2);
@@ -176,7 +178,8 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         extraPackages: extraPackages || undefined,
         setupCommands: setupCommands || undefined,
         customDockerfile: customDockerfile || null,
-        autoMerge,
+        autoMerge: cautiousMode ? false : autoMerge,
+        cautiousMode,
         defaultAgentType,
         autoResume,
         maxConcurrentTasks,
@@ -597,6 +600,28 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
           Configure what happens after the coding agent opens a pull request.
         </p>
 
+        {/* Cautious Mode */}
+        <div className="flex items-center gap-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5 mb-4">
+          <label className="flex items-center gap-2 cursor-pointer flex-1">
+            <input
+              type="checkbox"
+              checked={cautiousMode}
+              onChange={(e) => {
+                setCautiousMode(e.target.checked);
+                if (e.target.checked) setAutoMerge(false);
+              }}
+              className="w-4 h-4 rounded"
+            />
+            <div>
+              <span className="text-sm font-medium">Cautious Mode</span>
+              <p className="text-xs text-text-muted">
+                Opens draft PRs and disables auto-merge. A human must mark PRs ready and merge them
+                manually.
+              </p>
+            </div>
+          </label>
+        </div>
+
         {/* Stage 1: Code Review */}
         <PipelineStage number={1} enabled={reviewEnabled} label="Code Review">
           <label className="flex items-center gap-2 cursor-pointer">
@@ -784,16 +809,28 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         </PipelineStage>
 
         {/* Stage 3: Auto-merge */}
-        <PipelineStage number={3} enabled={autoMerge} last label="Auto-merge">
+        <PipelineStage
+          number={3}
+          enabled={autoMerge}
+          disabled={cautiousMode}
+          last
+          label="Auto-merge"
+        >
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
               checked={autoMerge}
               onChange={(e) => setAutoMerge(e.target.checked)}
+              disabled={cautiousMode}
               className="w-4 h-4 rounded"
             />
             <span className="text-sm">Auto-merge PR when checks pass and review completes</span>
           </label>
+          {cautiousMode && (
+            <p className="text-xs text-amber-500 mt-1">
+              Disabled by Cautious Mode — PRs are opened as drafts and require manual merge.
+            </p>
+          )}
         </PipelineStage>
       </section>
 
@@ -1424,6 +1461,13 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
                   <span className="text-text-muted">
                     Whether auto-merge is enabled — use with{" "}
                     <code className="text-primary">{"{{#if AUTO_MERGE}}...{{/if}}"}</code>
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <code className="text-primary shrink-0">{"{{DRAFT_PR}}"}</code>
+                  <span className="text-text-muted">
+                    Whether Cautious Mode is on (opens draft PRs) — use with{" "}
+                    <code className="text-primary">{"{{#if DRAFT_PR}}...{{/if}}"}</code>
                   </span>
                 </li>
               </ul>
