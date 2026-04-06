@@ -50,7 +50,8 @@ export class WsClient {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (ev) => {
+      if (ev.code === 4429) return; // connection limit exceeded — retry can't help
       this.reconnectTimer = setTimeout(() => this.connect(), 3000);
     };
 

@@ -44,6 +44,7 @@ function makeRepoConfig(overrides: Partial<RepoRecord> = {}): RepoRecord {
     setupCommands: null,
     customDockerfile: null,
     autoMerge: false,
+    cautiousMode: false,
     defaultAgentType: "claude-code",
     promptTemplateOverride: null,
     claudeModel: "opus",

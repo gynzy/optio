@@ -24,6 +24,7 @@ const updateRepoSchema = z.object({
   setupCommands: z.string().optional(),
   customDockerfile: z.string().nullable().optional(),
   autoMerge: z.boolean().optional(),
+  cautiousMode: z.boolean().optional(),
   defaultAgentType: z.enum(["claude-code", "codex", "copilot"]).optional(),
   promptTemplateOverride: z.string().nullable().optional(),
   defaultBranch: z.string().optional(),

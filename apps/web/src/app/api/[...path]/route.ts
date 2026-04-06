@@ -35,9 +35,15 @@ async function proxyRequest(request: NextRequest) {
   }
 
   try {
+    // OAuth login routes return 302 redirects that the browser must follow
+    // directly (to GitHub, Google, etc.). Don't let fetch() silently follow
+    // them — pass the redirect through to the browser instead.
+    const isAuthRedirect = url.pathname.match(/^\/api\/auth\/[^/]+\/(login|callback)$/);
+
     const fetchInit: RequestInit = {
       method: request.method,
       headers,
+      redirect: isAuthRedirect ? "manual" : "follow",
     };
 
     // Forward request body for non-GET/HEAD methods
@@ -48,6 +54,14 @@ async function proxyRequest(request: NextRequest) {
     }
 
     const apiRes = await fetch(targetUrl, fetchInit);
+
+    // For auth redirects, pass the Location header through to the browser
+    if (isAuthRedirect && apiRes.status >= 300 && apiRes.status < 400) {
+      const location = apiRes.headers.get("location");
+      if (location) {
+        return NextResponse.redirect(location, apiRes.status);
+      }
+    }
 
     // Build a clean response — don't forward Set-Cookie or other sensitive
     // headers from the API that could conflict with the web origin.

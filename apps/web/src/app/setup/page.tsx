@@ -54,6 +54,7 @@ export default function SetupPage() {
   const [githubUser, setGithubUser] = useState<{ login: string; name: string } | null>(null);
   const [githubValidated, setGithubValidated] = useState(false);
   const [githubError, setGithubError] = useState("");
+  const [githubAppConfigured, setGithubAppConfigured] = useState(false);
 
   // Step 3: Agent keys
   const [anthropicKey, setAnthropicKey] = useState("");
@@ -110,12 +111,16 @@ export default function SetupPage() {
   const [notionApiKey, setNotionApiKey] = useState("");
   const [notionDatabaseId, setNotionDatabaseId] = useState("");
 
-  // Check runtime on mount
+  // Check runtime and GitHub App status on mount
   useEffect(() => {
     api
       .getHealth()
       .then((res) => setRuntimeHealthy(res.healthy))
       .catch(() => setRuntimeHealthy(false));
+    api
+      .getGitHubAppStatus()
+      .then((res) => setGithubAppConfigured(res.configured))
+      .catch(() => {});
   }, []);
 
   // Check if OAuth token is already stored when reaching the agents step
@@ -127,13 +132,17 @@ export default function SetupPage() {
 
   // Fetch suggested repos when reaching the repos step
   useEffect(() => {
-    if (currentStep?.id === "repos" && githubToken && suggestedRepos.length === 0) {
-      setSuggestedLoading(true);
-      api
-        .listUserRepos(githubToken)
-        .then((res) => setSuggestedRepos(res.repos.slice(0, 8)))
-        .catch(() => {})
-        .finally(() => setSuggestedLoading(false));
+    if (currentStep?.id === "repos" && suggestedRepos.length === 0) {
+      // When GitHub App is configured, fetch repos server-side (no PAT needed).
+      // When using a PAT, pass it for the user-scoped repo listing.
+      if (githubAppConfigured || githubToken) {
+        setSuggestedLoading(true);
+        api
+          .listUserRepos(githubToken || "")
+          .then((res) => setSuggestedRepos(res.repos.slice(0, 8)))
+          .catch(() => {})
+          .finally(() => setSuggestedLoading(false));
+      }
     }
   }, [step]);
 
@@ -343,12 +352,18 @@ export default function SetupPage() {
     try {
       for (const repo of repos) {
         if (repo.fullName && repo.url) {
-          await api.createRepoConfig({
-            repoUrl: repo.url,
-            fullName: repo.fullName,
-            defaultBranch: repo.defaultBranch,
-            isPrivate: repo.isPrivate,
-          });
+          try {
+            await api.createRepoConfig({
+              repoUrl: repo.url,
+              fullName: repo.fullName,
+              defaultBranch: repo.defaultBranch,
+              isPrivate: repo.isPrivate,
+            });
+          } catch (err) {
+            // Repo already exists from a previous setup — safe to skip
+            if (err instanceof Error && err.message.includes("already been added")) continue;
+            throw err;
+          }
         }
       }
       goNext();
@@ -490,57 +505,77 @@ export default function SetupPage() {
                 <Github className="w-6 h-6 text-text" />
                 <h2 className="text-lg font-bold">GitHub Access</h2>
               </div>
-              <p className="text-text-muted text-sm">
-                Agents need a GitHub token to clone repos, create branches, and open pull requests.
-                Create a token with <code className="px-1 py-0.5 bg-bg rounded text-xs">repo</code>{" "}
-                scope, then paste it below.
-              </p>
-              <a
-                href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=Optio+Agent"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-bg-hover text-text text-sm hover:bg-border transition-colors"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Create GitHub Personal Access Token
-              </a>
-              <div>
-                <label className="block text-sm text-text-muted mb-1.5">GitHub Token</label>
-                <input
-                  type="password"
-                  value={githubToken}
-                  onChange={(e) => {
-                    setGithubToken(e.target.value);
-                    setGithubValidated(false);
-                    setGithubError("");
-                  }}
-                  onPaste={(e) => {
-                    e.preventDefault();
-                    const pasted = e.clipboardData.getData("text").trim();
-                    if (pasted) {
-                      setGithubToken(pasted);
-                      setGithubValidated(false);
-                      setGithubError("");
-                      setTimeout(() => validateGithub(pasted), 50);
-                    }
-                  }}
-                  placeholder="ghp_..."
-                  className="w-full px-3 py-2 rounded-md bg-bg border border-border text-sm focus:outline-none focus:border-primary"
-                />
-              </div>
-              {githubError && (
-                <div className="flex items-center gap-2 text-error text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {githubError}
-                </div>
+
+              {githubAppConfigured ? (
+                <>
+                  <div className="flex items-center gap-2 text-success text-sm p-3 rounded-md bg-success/10">
+                    <CheckCircle className="w-4 h-4" />
+                    GitHub App is configured — no personal access token needed.
+                  </div>
+                  <p className="text-text-muted text-sm">
+                    Optio will use the installed GitHub App to clone repos, create branches, and
+                    open pull requests.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-text-muted text-sm">
+                    Agents need a GitHub token to clone repos, create branches, and open pull
+                    requests. Create a token with{" "}
+                    <code className="px-1 py-0.5 bg-bg rounded text-xs">repo</code> scope, then
+                    paste it below.
+                  </p>
+                  <a
+                    href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=Optio+Agent"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-bg-hover text-text text-sm hover:bg-border transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Create GitHub Personal Access Token
+                  </a>
+                  <div>
+                    <label className="block text-sm text-text-muted mb-1.5">GitHub Token</label>
+                    <input
+                      type="password"
+                      value={githubToken}
+                      onChange={(e) => {
+                        setGithubToken(e.target.value);
+                        setGithubValidated(false);
+                        setGithubError("");
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const pasted = e.clipboardData.getData("text").trim();
+                        if (pasted) {
+                          setGithubToken(pasted);
+                          setGithubValidated(false);
+                          setGithubError("");
+                          setTimeout(() => validateGithub(pasted), 50);
+                        }
+                      }}
+                      placeholder="ghp_..."
+                      className="w-full px-3 py-2 rounded-md bg-bg border border-border text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  {githubError && (
+                    <div className="flex items-center gap-2 text-error text-sm">
+                      <AlertCircle className="w-4 h-4" />
+                      {githubError}
+                    </div>
+                  )}
+                  {githubValidated && githubUser && (
+                    <div className="flex items-center gap-2 text-success text-sm p-2 rounded-md bg-success/10">
+                      <CheckCircle className="w-4 h-4" />
+                      Authenticated as <strong>{githubUser.login}</strong>
+                      {githubUser.name && (
+                        <span className="text-text-muted">({githubUser.name})</span>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
-              {githubValidated && githubUser && (
-                <div className="flex items-center gap-2 text-success text-sm p-2 rounded-md bg-success/10">
-                  <CheckCircle className="w-4 h-4" />
-                  Authenticated as <strong>{githubUser.login}</strong>
-                  {githubUser.name && <span className="text-text-muted">({githubUser.name})</span>}
-                </div>
-              )}
+
               <div className="flex items-center justify-between">
                 <button
                   onClick={goBack}
@@ -549,7 +584,7 @@ export default function SetupPage() {
                   <ArrowLeft className="w-4 h-4" /> Back
                 </button>
                 <div className="flex gap-2">
-                  {!githubValidated && (
+                  {!githubAppConfigured && !githubValidated && (
                     <button
                       onClick={() => validateGithub()}
                       disabled={loading || !githubToken.trim()}
@@ -559,8 +594,8 @@ export default function SetupPage() {
                     </button>
                   )}
                   <button
-                    onClick={saveGithubStep}
-                    disabled={!githubValidated || loading}
+                    onClick={githubAppConfigured ? goNext : saveGithubStep}
+                    disabled={!githubAppConfigured && (!githubValidated || loading)}
                     className="flex items-center gap-2 px-5 py-2 rounded-md bg-primary text-white text-sm hover:bg-primary-hover disabled:opacity-50"
                   >
                     {loading ? (
@@ -628,17 +663,18 @@ export default function SetupPage() {
                               <Loader2 className="w-3 h-3 animate-spin" /> Checking for existing
                               token...
                             </span>
-                          ) : oauthExpired ? (
-                            <span className="text-xs text-error flex items-center gap-2">
-                              <AlertTriangle className="w-3 h-3" /> OAuth token has expired — paste
-                              a new one below
-                            </span>
                           ) : oauthTokenDetected ? (
                             <span className="text-xs text-success flex items-center gap-1">
                               <CheckCircle className="w-3 h-3" /> Claude subscription token detected
                             </span>
                           ) : (
                             <>
+                              {oauthExpired && (
+                                <span className="text-xs text-error flex items-center gap-2">
+                                  <AlertTriangle className="w-3 h-3" /> OAuth token has expired —
+                                  paste a new one below
+                                </span>
+                              )}
                               <div>
                                 <p className="text-xs text-text-muted mb-1.5">
                                   Run this in a terminal to copy your token:
@@ -1408,7 +1444,10 @@ export default function SetupPage() {
                 <h3 className="text-sm font-medium mb-2">Configuration summary</h3>
                 <div className="flex items-center gap-2 text-sm">
                   <CheckCircle className="w-4 h-4 text-success" />
-                  <span>GitHub: {githubUser?.login ?? "configured"}</span>
+                  <span>
+                    GitHub:{" "}
+                    {githubAppConfigured ? "App configured" : (githubUser?.login ?? "configured")}
+                  </span>
                 </div>
                 {claudeReady && (
                   <div className="flex items-center gap-2 text-sm">

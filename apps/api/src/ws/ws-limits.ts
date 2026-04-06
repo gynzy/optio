@@ -10,7 +10,7 @@ const log = logger.child({ module: "ws-limits" });
  */
 
 /** Maximum concurrent WebSocket connections per IP address. */
-export const MAX_WS_CONNECTIONS_PER_IP = 10;
+export const MAX_WS_CONNECTIONS_PER_IP = 50;
 
 /** Maximum message size in bytes (1 MB). */
 export const MAX_WS_MESSAGE_SIZE = 1_048_576;

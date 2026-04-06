@@ -13,6 +13,7 @@ export async function getPromptTemplate(repoUrl?: string): Promise<{
   id: string;
   template: string;
   autoMerge: boolean;
+  cautiousMode: boolean;
 }> {
   // Check repo-level override first
   if (repoUrl) {
@@ -22,7 +23,8 @@ export async function getPromptTemplate(repoUrl?: string): Promise<{
       return {
         id: repo.id,
         template: repo.promptTemplateOverride,
-        autoMerge: repo.autoMerge,
+        autoMerge: repo.cautiousMode ? false : repo.autoMerge,
+        cautiousMode: repo.cautiousMode,
       };
     }
     // Also use the repo's autoMerge setting even if no prompt override
@@ -30,7 +32,8 @@ export async function getPromptTemplate(repoUrl?: string): Promise<{
       const globalTemplate = await getGlobalDefault();
       return {
         ...globalTemplate,
-        autoMerge: repo.autoMerge,
+        autoMerge: repo.cautiousMode ? false : repo.autoMerge,
+        cautiousMode: repo.cautiousMode,
       };
     }
   }
@@ -42,6 +45,7 @@ async function getGlobalDefault(): Promise<{
   id: string;
   template: string;
   autoMerge: boolean;
+  cautiousMode: boolean;
 }> {
   const [defaultTemplate] = await db
     .select()
@@ -53,6 +57,7 @@ async function getGlobalDefault(): Promise<{
       id: defaultTemplate.id,
       template: defaultTemplate.template,
       autoMerge: defaultTemplate.autoMerge,
+      cautiousMode: false,
     };
   }
 
@@ -60,6 +65,7 @@ async function getGlobalDefault(): Promise<{
     id: "builtin",
     template: DEFAULT_PROMPT_TEMPLATE,
     autoMerge: false,
+    cautiousMode: false,
   };
 }
 
