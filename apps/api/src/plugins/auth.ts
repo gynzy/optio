@@ -42,15 +42,27 @@ export function requireRole(minimumRole: WorkspaceRole) {
 const SESSION_COOKIE_NAME = "optio_session";
 const WORKSPACE_HEADER = "x-workspace-id";
 
-/** Routes that never require authentication. */
-const PUBLIC_ROUTES = [
-  "/api/health",
-  "/api/auth/",
-  "/api/setup/status",
-  "/api/webhooks/",
-  "/ws/",
-  "/api/internal/git-credentials",
-];
+/** Exact routes that are always public. */
+const PUBLIC_ROUTES = new Set(["/api/health", "/api/setup/status"]);
+
+/** Prefix-matched routes that are always public. */
+const PUBLIC_PREFIXES = ["/api/webhooks/", "/ws/", "/api/internal/git-credentials"];
+
+/**
+ * Auth routes that are public (OAuth login/callback flows only).
+ * Sensitive endpoints like claude-token, status, usage, me are NOT listed
+ * here — they require authentication via the normal auth path.
+ */
+const PUBLIC_AUTH_ROUTES = new Set([
+  "/api/auth/providers",
+  "/api/auth/exchange-code",
+  "/api/auth/github/login",
+  "/api/auth/github/callback",
+  "/api/auth/google/login",
+  "/api/auth/google/callback",
+  "/api/auth/gitlab/login",
+  "/api/auth/gitlab/callback",
+]);
 
 /**
  * Secrets whose presence indicates that initial setup has been completed.
@@ -91,8 +103,10 @@ export function resetSetupCompleteCache(): void {
   _setupCompleteCache = null;
 }
 
-function isPublicRoute(url: string): boolean {
-  return PUBLIC_ROUTES.some((prefix) => url.startsWith(prefix));
+export function isPublicRoute(url: string): boolean {
+  const path = url.split("?")[0];
+  if (PUBLIC_ROUTES.has(path) || PUBLIC_AUTH_ROUTES.has(path)) return true;
+  return PUBLIC_PREFIXES.some((p) => path.startsWith(p));
 }
 
 function parseCookie(header: string | undefined, name: string): string | undefined {
