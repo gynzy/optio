@@ -238,5 +238,17 @@ export async function updateRepo(
 }
 
 export async function deleteRepo(id: string): Promise<void> {
+  // Look up the repo URL before deletion for PVC cleanup
+  const repo = await getRepo(id);
+  if (repo) {
+    try {
+      const { cleanupCachePvcsForRepo, cleanupHomePvcsForRepo } =
+        await import("./shared-directory-service.js");
+      await cleanupCachePvcsForRepo(repo.repoUrl);
+      await cleanupHomePvcsForRepo(repo.repoUrl);
+    } catch {
+      // PVC cleanup is best-effort — don't block repo deletion
+    }
+  }
   await db.delete(repos).where(eq(repos.id, id));
 }

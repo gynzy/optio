@@ -28,6 +28,7 @@ import {
 import { formatRelativeTime, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { SharedDirectoriesSection } from "@/components/shared-directories-section";
 
 export default function RepoDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -1001,6 +1002,9 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
       </section>
+
+      {/* Cache Directories */}
+      {repo && <SharedDirectoriesSection repoId={repo.id} maxPodInstances={repo.maxPodInstances} />}
 
       {/* MCP Servers */}
       <section className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-3">

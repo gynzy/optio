@@ -300,6 +300,8 @@ export const repoPods = pgTable(
     activeTaskCount: integer("active_task_count").notNull().default(0),
     lastTaskAt: timestamp("last_task_at", { withTimezone: true }),
     errorMessage: text("error_message"),
+    cachePvcName: text("cache_pvc_name"),
+    cachePvcState: text("cache_pvc_state"), // "pending" | "bound" | "error"
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -766,4 +768,33 @@ export const promptTemplates = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("prompt_templates_workspace_id_idx").on(table.workspaceId)],
+);
+
+// ── Repo Shared Directories (persistent cache) ───────────────────────────────
+
+export const repoSharedDirectories = pgTable(
+  "repo_shared_directories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id"),
+    name: text("name").notNull(),
+    description: text("description"),
+    mountLocation: text("mount_location").notNull(), // "workspace" | "home"
+    mountSubPath: text("mount_sub_path").notNull(),
+    sizeGi: integer("size_gi").notNull().default(10),
+    scope: text("scope").notNull().default("per-pod"), // "per-pod" | "per-repo" (future)
+    createdBy: uuid("created_by"),
+    lastClearedAt: timestamp("last_cleared_at", { withTimezone: true }),
+    lastMountedAt: timestamp("last_mounted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("repo_shared_dirs_repo_name_key").on(table.repoId, table.name),
+    index("repo_shared_dirs_repo_id_idx").on(table.repoId),
+    index("repo_shared_dirs_workspace_idx").on(table.workspaceId),
+  ],
 );

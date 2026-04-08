@@ -262,6 +262,32 @@ spec:
     logger.warn({ err, pvcName }, "Failed to create PVC, pod will use ephemeral storage");
   }
 
+  // Load shared directories and ensure cache PVC exists
+  let cacheInfo: {
+    pvcName: string;
+    volumeMounts: Array<{ mountPath: string; subPath: string }>;
+  } | null = null;
+  try {
+    const { getSharedDirectoriesForRepo, ensureCachePvcForPod } =
+      await import("./shared-directory-service.js");
+    const sharedDirs = await getSharedDirectoriesForRepo(repoUrl, workspaceId);
+    if (sharedDirs.length > 0) {
+      cacheInfo = await ensureCachePvcForPod(repoUrl, instanceIndex, sharedDirs);
+      if (cacheInfo) {
+        await db
+          .update(repoPods)
+          .set({
+            cachePvcName: cacheInfo.pvcName,
+            cachePvcState: "bound",
+            updatedAt: new Date(),
+          })
+          .where(eq(repoPods.id, record.id));
+      }
+    }
+  } catch (err) {
+    logger.warn({ err, repoUrl }, "Failed to set up cache PVC — continuing without cache");
+  }
+
   let podNameForCleanup: string | undefined;
   try {
     const podName = generateRepoPodName(repoUrl);
@@ -280,6 +306,24 @@ spec:
       Object.assign(agentEnv, getAgentProxyEnv());
       agentEnv.OPTIO_SECRET_PROXY = "true";
     }
+
+    // Build cache volume and mounts for shared directories
+    const cacheVolumeName = "optio-cache";
+    const cacheExtraVolume = cacheInfo
+      ? {
+          raw: {
+            name: cacheVolumeName,
+            persistentVolumeClaim: { claimName: cacheInfo.pvcName },
+          },
+        }
+      : null;
+    const cacheVolumeMounts = cacheInfo
+      ? cacheInfo.volumeMounts.map((vm) => ({
+          name: cacheVolumeName,
+          mountPath: vm.mountPath,
+          subPath: vm.subPath,
+        }))
+      : [];
 
     const spec: ContainerSpec = {
       name: podName,
@@ -366,6 +410,12 @@ spec:
       }
 
       logger.info({ podName }, "Envoy secret proxy sidecar configured");
+    }
+
+    // Add cache volume and mounts for shared directories
+    if (cacheExtraVolume && cacheVolumeMounts.length > 0) {
+      spec.extraVolumes = [...(spec.extraVolumes ?? []), cacheExtraVolume];
+      spec.extraVolumeMounts = [...(spec.extraVolumeMounts ?? []), ...cacheVolumeMounts];
     }
 
     const handle = await rt.create(spec);
@@ -625,6 +675,7 @@ export async function execTaskInRepoPod(
     `mkdir -p "$(dirname "$EXCLUDE_FILE")"`,
     `grep -qxF '.optio/' "$EXCLUDE_FILE" 2>/dev/null || echo '.optio/' >> "$EXCLUDE_FILE"`,
     `grep -qxF '.optio-run-token' "$EXCLUDE_FILE" 2>/dev/null || echo '.optio-run-token' >> "$EXCLUDE_FILE"`,
+    `grep -qxF '.optio-cache/' "$EXCLUDE_FILE" 2>/dev/null || echo '.optio-cache/' >> "$EXCLUDE_FILE"`,
     // EXIT trap: preserve the worktree — cleanup is handled by the cleanup worker
     // based on task state. Only clean up Claude Code's internal worktrees (-wt suffix).
     `trap 'cd /workspace/repo 2>/dev/null; git worktree remove --force /workspace/tasks/${taskId}-wt 2>/dev/null || true; git worktree prune 2>/dev/null || true' EXIT`,

@@ -7,6 +7,11 @@ export const DEFAULT_MAX_TURNS_CODING = 250;
 export const DEFAULT_MAX_TURNS_REVIEW = 30;
 export const DEFAULT_MAX_TICKET_PAGES = 20;
 
+// ── Shared directory (cache) defaults ─────────────────────────────────────────
+export const DEFAULT_CACHE_SIZE_GI = 10;
+export const MAX_CACHE_SIZE_PER_DIR_GI = 100;
+export const MAX_CACHE_SIZE_TOTAL_GI = 200;
+
 /**
  * Default threshold (in ms) before a running task is flagged as "stalled".
  * Override per-repo via `repos.stallThresholdMs` or globally via

@@ -1090,4 +1090,68 @@ export const api = {
 
   testPushNotification: () =>
     request<{ sent: number }>("/api/notifications/test", { method: "POST" }),
+
+  // Shared Directories (Cache)
+  listRepoSharedDirectories: (repoId: string) =>
+    request<{
+      directories: Array<{
+        id: string;
+        repoId: string;
+        name: string;
+        description: string | null;
+        mountLocation: string;
+        mountSubPath: string;
+        sizeGi: number;
+        scope: string;
+        lastClearedAt: string | null;
+        lastMountedAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+    }>(`/api/repos/${repoId}/shared-directories`),
+
+  createRepoSharedDirectory: (
+    repoId: string,
+    data: {
+      name: string;
+      description?: string;
+      mountLocation: "workspace" | "home";
+      mountSubPath: string;
+      sizeGi?: number;
+    },
+  ) =>
+    request<{ directory: any }>(`/api/repos/${repoId}/shared-directories`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateRepoSharedDirectory: (
+    repoId: string,
+    dirId: string,
+    data: { description?: string | null; sizeGi?: number },
+  ) =>
+    request<{ directory: any }>(`/api/repos/${repoId}/shared-directories/${dirId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteRepoSharedDirectory: (repoId: string, dirId: string) =>
+    request<void>(`/api/repos/${repoId}/shared-directories/${dirId}`, {
+      method: "DELETE",
+    }),
+
+  clearRepoSharedDirectory: (repoId: string, dirId: string) =>
+    request<{ ok: boolean }>(`/api/repos/${repoId}/shared-directories/${dirId}/clear`, {
+      method: "POST",
+    }),
+
+  getRepoSharedDirectoryUsage: (repoId: string, dirId: string) =>
+    request<{ usage: string | null }>(`/api/repos/${repoId}/shared-directories/${dirId}/usage`, {
+      method: "POST",
+    }),
+
+  recycleRepoPods: (repoId: string) =>
+    request<{ ok: boolean; recycled: number }>(`/api/repos/${repoId}/pods/recycle`, {
+      method: "POST",
+    }),
 };

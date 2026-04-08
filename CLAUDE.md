@@ -307,13 +307,14 @@ apps/
       routes/         health, tasks, subtasks, bulk, secrets, repos, issues, tickets, setup, auth,
                       cluster, resume, prompt-templates, analytics, webhooks, comments, schedules,
                       slack, task-templates, workspaces, dependencies, workflows, mcp-servers,
-                      sessions, skills
+                      sessions, skills, shared-directories
       services/       task-service, repo-pool-service, secret-service, auth-service, container-service,
                       prompt-template-service, repo-service, repo-detect-service, review-service,
                       subtask-service, ticket-sync-service, event-bus, agent-event-parser,
                       session-service, interactive-session-service, workspace-service, webhook-service,
                       comment-service, schedule-service, slack-service, task-template-service,
                       workflow-service, dependency-service, mcp-server-service, skill-service,
+                      shared-directory-service,
                       oauth/ (github, google, gitlab)
       plugins/        auth (session validation middleware)
       workers/        task-worker (main job processor), pr-watcher-worker, repo-cleanup-worker,
@@ -368,7 +369,8 @@ scripts/              setup-local.sh, update-local.sh, repo-init.sh, agent-entry
 **Infrastructure:**
 
 - **repos** — id, repoUrl, fullName, defaultBranch, isPrivate, imagePreset, autoMerge, claudeModel, claudeContextWindow, claudeThinking, claudeEffort, autoResume, maxConcurrentTasks, maxPodInstances, maxAgentsPerPod, reviewEnabled, reviewTrigger, slackEnabled, slackWebhookUrl, workspaceId, etc.
-- **repo_pods** — id, repoUrl, repoBranch, podName, podId, state, activeTaskCount, instanceIndex, workspaceId
+- **repo_pods** — id, repoUrl, repoBranch, podName, podId, state, activeTaskCount, instanceIndex, cachePvcName, cachePvcState, workspaceId
+- **repo_shared_directories** — id, repoId, workspaceId, name, description, mountLocation, mountSubPath, sizeGi, scope, createdBy, lastClearedAt, lastMountedAt, timestamps
 - **pod_health_events** — id, repoPodId, repoUrl, eventType, podName, message, createdAt
 - **secrets** — id, name, scope, encryptedValue (bytea), iv, authTag (AES-256-GCM), workspaceId
 
@@ -481,6 +483,44 @@ helm uninstall optio -n optio
 - **State transitions**: always go through `taskService.transitionTask()` which validates, updates DB, records event, and publishes to WebSocket
 - **Secrets**: never log or return secret values, only names/scopes. Encrypted at rest with AES-256-GCM
 - **Cost tracking**: stored as string (`costUsd`) to avoid float precision issues
+
+### Shared cache directories
+
+Per-repo persistent cache directories that survive across tasks and pod recreation. Backed by K8s PVCs with `ReadWriteOnce` access mode (works on any cluster).
+
+**Architecture**: one PVC per pod instance (`optio-cache-{repoSlug}-{instanceIndex}`), sized as the sum of all shared directory sizes. Each shared directory is a `subPath` mount within that PVC. This avoids per-node volume attach limits.
+
+**Schema**: `repo_shared_directories` table stores the logical directory entries. `repo_pods.cache_pvc_name` / `cache_pvc_state` track PVC bookkeeping.
+
+**Mount locations**:
+
+- `mountLocation: home` — mounts at `/home/agent/<mountSubPath>` (e.g., `.npm`, `.cache/pip`). Tool caches work automatically without env vars.
+- `mountLocation: workspace` — mounts at `/workspace/<mountSubPath>` (e.g., `.optio-cache/node-modules`). For build artifacts.
+
+**Routes**:
+
+- `GET /api/repos/:id/shared-directories` — list (member)
+- `POST /api/repos/:id/shared-directories` — create (admin)
+- `PATCH /api/repos/:id/shared-directories/:dirId` — update (admin)
+- `DELETE /api/repos/:id/shared-directories/:dirId` — delete + cleanup (admin)
+- `POST /api/repos/:id/shared-directories/:dirId/clear` — clear contents via exec (admin)
+- `POST /api/repos/:id/shared-directories/:dirId/usage` — check disk usage (member)
+- `POST /api/repos/:id/pods/recycle` — destroy idle pods so they recreate with new mounts (admin)
+
+**Common cache recipes**:
+
+| Tool        | Name           | Location | Sub-path                | Size |
+| ----------- | -------------- | -------- | ----------------------- | ---- |
+| npm         | npm-cache      | home     | .npm                    | 10Gi |
+| pnpm        | pnpm-store     | home     | .local/share/pnpm/store | 10Gi |
+| pip         | pip-cache      | home     | .cache/pip              | 10Gi |
+| cargo       | cargo-registry | home     | .cargo/registry         | 20Gi |
+| Go          | go-mod         | home     | go/pkg/mod              | 10Gi |
+| HuggingFace | huggingface    | home     | .cache/huggingface      | 50Gi |
+
+**Constraints**: name is a slug (1-40 chars, `^[a-z0-9](-?[a-z0-9])*$`), size 1-100Gi per dir, 200Gi total per repo. Only `per-pod` scope is supported in v1; `per-repo` (RWX) is reserved for a follow-up.
+
+**Helm config** (`values.yaml`): `agent.cache.enabled`, `agent.cache.storageClass`, `agent.cache.maxSizePerDirectoryGi`, `agent.cache.maxSizeTotalGi`, `agent.cache.defaultSizePerDirectoryGi`.
 
 ### Interactive sessions
 
