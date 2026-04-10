@@ -146,8 +146,8 @@ agent:
   # Kubernetes scheduling constraints for agent pods.
   # nodeSelector pins pods to nodes with matching labels (e.g. a dedicated node pool).
   # tolerations allow pods to schedule on tainted nodes.
-  nodeSelector: {}
-  #  cloud.google.com/gke-nodepool: agents
+  nodeSelector:
+    agent: "true"
   tolerations: []
   #  - key: optio.dev/agents
   #    operator: Equal
