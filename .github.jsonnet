@@ -98,7 +98,7 @@ local ci = base.pipeline(
     )
     for preset in agentPresets
   ],
-  event={ push: { branches: ['gynzy'] }, pull_request: { branches: ['gynzy'] } },
+  event={ pull_request: { branches: ['gynzy'] } },
 );
 
 // ── Build Agent Images ──────────────────────────────────────────────────────
@@ -212,41 +212,5 @@ local release = base.pipeline(
   event='deployment',
 );
 
-// ── Deploy Site ─────────────────────────────────────────────────────────────
-local deploySite = base.pipeline(
-  'Deploy Site',
-  [
-    base.ghJob(
-      'build',
-      image=nodeImage,
-      useCredentials=false,
-      runsOn=['ubuntu-latest'],
-      steps=[
-        checkoutAndPnpm(),
-        base.step('Build site', 'pnpm turbo build --filter=@optio/site'),
-        base.action('Upload Pages artifact', 'actions/upload-pages-artifact@v3', with={ path: 'apps/site/out' }),
-      ],
-    ),
-    base.ghJob(
-      'deploy',
-      image=nodeImage,
-      useCredentials=false,
-      runsOn=['ubuntu-latest'],
-      needs=['build'],
-      steps=[
-        base.action('Deploy to Pages', 'actions/deploy-pages@v4', id='deployment'),
-      ],
-    ),
-  ],
-  event={
-    push: {
-      branches: ['main'],
-      paths: ['apps/site/**', '.github/workflows/Deploy Site.yml'],
-    },
-    workflow_dispatch: null,
-  },
-  permissions={ contents: 'read', pages: 'write', 'id-token': 'write' },
-  concurrency={ group: 'pages', 'cancel-in-progress': false },
-);
 
-ci + buildImages + deployHook + release + deploySite
+ci + buildImages + deployHook + release
