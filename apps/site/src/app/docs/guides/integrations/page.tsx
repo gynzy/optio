@@ -5,7 +5,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Integrations",
-  description: "Integrate Optio with GitHub Issues, Linear, Jira, Notion, Slack, and webhooks.",
+  description:
+    "Integrate Optio with GitHub Issues, GitLab Issues, Linear, Jira, Notion, Slack, and webhooks.",
 };
 
 export default function IntegrationsPage() {
@@ -96,6 +97,39 @@ export default function IntegrationsPage() {
         <code className="rounded bg-bg-hover px-1.5 py-0.5 text-[13px] font-mono">ai-task</code> to
         control which issues get automatically picked up. This prevents every issue from becoming a
         task.
+      </Callout>
+
+      <h2 className="mt-10 text-2xl font-bold text-text-heading">GitLab Issues</h2>
+      <p className="mt-3 text-text-muted leading-relaxed">
+        Optio integrates with GitLab as a ticket provider, syncing GitLab issues into Optio tasks.
+      </p>
+
+      <h3 className="mt-6 text-lg font-semibold text-text-heading">Setup</h3>
+      <ol className="mt-3 list-decimal pl-5 space-y-2 text-[14px] text-text-muted">
+        <li>Generate a personal access token in GitLab with API read/write scope</li>
+        <li>Add the token as a secret in Optio</li>
+        <li>
+          Create a GitLab ticket provider in <strong className="text-text-heading">Settings</strong>
+        </li>
+        <li>Configure the GitLab instance URL and project ID</li>
+      </ol>
+      <div className="mt-3">
+        <CodeBlock title="API: Create GitLab provider">{`POST /api/tickets/providers
+{
+  "source": "gitlab",
+  "config": {
+    "baseUrl": "https://gitlab.com",
+    "token": "glpat-...",
+    "projectId": "12345"
+  },
+  "enabled": true
+}`}</CodeBlock>
+      </div>
+
+      <Callout type="info">
+        GitLab supports both GitLab.com and self-hosted instances. Set{" "}
+        <code className="rounded bg-bg-hover px-1.5 py-0.5 text-[13px] font-mono">baseUrl</code> to
+        your instance URL for self-hosted GitLab.
       </Callout>
 
       <h2 className="mt-10 text-2xl font-bold text-text-heading">Linear</h2>

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Architecture",
-  description: "How Optio works: pod-per-repo, worktree isolation, workers, and data flow.",
+  description:
+    "How Optio works under the hood: pod-per-repo isolation, git worktree concurrency, BullMQ workers, WebSocket streaming, and the full data flow.",
 };
 
 export default function ArchitecturePage() {
@@ -187,7 +188,7 @@ export default function ArchitecturePage() {
         </li>
         <li>
           <strong className="text-text-heading">@optio/agent-adapters</strong> — Claude Code, Codex,
-          and Copilot adapters (auth, environment, config)
+          Copilot, Gemini, and OpenCode adapters (auth, environment, config)
         </li>
         <li>
           <strong className="text-text-heading">@optio/ticket-providers</strong> — GitHub Issues,

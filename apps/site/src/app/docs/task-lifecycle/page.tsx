@@ -3,7 +3,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Task Lifecycle",
-  description: "Task states, transitions, the feedback loop, and PR monitoring.",
+  description:
+    "Understand the Optio task state machine — from pending to merged. Covers transitions, the autonomous feedback loop, PR monitoring, and auto-resume.",
 };
 
 export default function TaskLifecyclePage() {

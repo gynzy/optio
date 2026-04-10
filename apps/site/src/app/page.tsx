@@ -1,5 +1,27 @@
 import Link from "next/link";
 
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Optio",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Kubernetes",
+  description:
+    "Workflow orchestration system for AI coding agents. Turn tickets into merged pull requests with autonomous feedback loops.",
+  url: "https://optio.host",
+  license: "https://opensource.org/licenses/MIT",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  sourceOrganization: {
+    "@type": "Organization",
+    name: "Optio",
+    url: "https://github.com/jonwiggins/optio",
+  },
+};
+
 const features = [
   {
     title: "Autonomous Feedback Loop",
@@ -16,13 +38,13 @@ const features = [
   {
     title: "Multi-Agent Support",
     description:
-      "Run Claude Code, OpenAI Codex, or GitHub Copilot. Configure model, prompt template, and settings per repository. Launch review agents as subtasks with separate prompts.",
+      "Run Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, or OpenCode. Configure model, prompt template, and settings per repository. Launch review agents as subtasks with separate prompts.",
     color: "#34d399",
   },
   {
-    title: "GitHub, Linear, Jira & Notion Intake",
+    title: "GitHub, GitLab, Linear, Jira & Notion Intake",
     description:
-      "Pull tasks from GitHub Issues, Linear, Jira, or Notion, or create them manually. One-click assign from the web UI kicks off the full pipeline.",
+      "Pull tasks from GitHub Issues, GitLab Issues, Linear, Jira, or Notion, or create them manually. One-click assign from the web UI kicks off the full pipeline.",
     color: "#f0a040",
   },
   {
@@ -40,7 +62,11 @@ const features = [
 ];
 
 const stages = [
-  { name: "Intake", description: "GitHub, Linear, Jira, Notion, or manual", icon: "\u2192" },
+  {
+    name: "Intake",
+    description: "GitHub, GitLab, Linear, Jira, Notion, or manual",
+    icon: "\u2192",
+  },
   { name: "Queued", description: "Enters the pipeline", icon: "\u25C7" },
   { name: "Provisioning", description: "Find or create pod", icon: "\u2699" },
   { name: "Running", description: "Agent writes code", icon: "\u26A1" },
@@ -52,6 +78,10 @@ const stages = [
 export default function Home() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       {/* Hero */}
       <section className="relative overflow-hidden px-6 pt-32 pb-24">
         <div className="absolute inset-0 animated-gradient" />
@@ -472,7 +502,7 @@ export default function Home() {
                   </div>
                 </div>
                 <p className="mt-3 text-[10px] text-text-muted">
-                  {"\u26A1"} = Claude Code / Codex / Copilot
+                  {"\u26A1"} = Claude Code / Codex / Copilot / Gemini
                 </p>
               </div>
             </div>
