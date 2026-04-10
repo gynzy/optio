@@ -9,6 +9,10 @@ vi.mock("../db/client.js", () => ({
   },
 }));
 
+vi.mock("./session-service.js", () => ({
+  revokeAllUserSessions: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../db/schema.js", () => ({
   workspaces: {
     id: "workspaces.id",
@@ -31,6 +35,7 @@ vi.mock("../db/schema.js", () => ({
 }));
 
 import { db } from "../db/client.js";
+import { revokeAllUserSessions } from "./session-service.js";
 import {
   createWorkspace,
   getWorkspace,
@@ -306,9 +311,26 @@ describe("workspace-service", () => {
           where: vi.fn().mockResolvedValue(undefined),
         }),
       });
+      (db.delete as any) = vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      });
 
       await updateMemberRole("ws-1", "user-1", "admin");
       expect(db.update).toHaveBeenCalled();
+    });
+
+    it("revokes user sessions after role change", async () => {
+      (db.update as any) = vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+      (db.delete as any) = vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      });
+
+      await updateMemberRole("ws-1", "user-1", "viewer");
+      expect(revokeAllUserSessions).toHaveBeenCalledWith("user-1");
     });
   });
 
@@ -320,6 +342,15 @@ describe("workspace-service", () => {
 
       await removeMember("ws-1", "user-1");
       expect(db.delete).toHaveBeenCalled();
+    });
+
+    it("revokes user sessions after removal", async () => {
+      (db.delete as any) = vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      });
+
+      await removeMember("ws-1", "user-1");
+      expect(revokeAllUserSessions).toHaveBeenCalledWith("user-1");
     });
   });
 

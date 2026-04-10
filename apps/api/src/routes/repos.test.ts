@@ -227,6 +227,99 @@ describe("PATCH /api/repos/:id", () => {
 
     expect(res.statusCode).toBe(400);
   });
+
+  it("accepts a valid public Slack webhook URL", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+    mockUpdateRepo.mockResolvedValue({
+      ...mockRepoData,
+      slackWebhookUrl: "https://hooks.slack.com/services/T00/B00/xxxx",
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: "https://hooks.slack.com/services/T00/B00/xxxx" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockUpdateRepo).toHaveBeenCalledWith(
+      "repo-1",
+      expect.objectContaining({ slackWebhookUrl: "https://hooks.slack.com/services/T00/B00/xxxx" }),
+    );
+  });
+
+  it("accepts null slackWebhookUrl (clearing the field)", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+    mockUpdateRepo.mockResolvedValue({ ...mockRepoData, slackWebhookUrl: null });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: null },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("rejects slackWebhookUrl targeting localhost (SSRF)", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: "http://localhost:8080/hook" },
+    });
+
+    expect(res.statusCode).toBe(500); // Zod validation error
+  });
+
+  it("rejects slackWebhookUrl targeting internal K8s address (SSRF)", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: "http://postgres.default.svc.cluster.local:5432" },
+    });
+
+    expect(res.statusCode).toBe(500); // Zod validation error
+  });
+
+  it("rejects slackWebhookUrl targeting AWS metadata endpoint (SSRF)", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: "http://169.254.169.254/latest/meta-data/" },
+    });
+
+    expect(res.statusCode).toBe(500); // Zod validation error
+  });
+
+  it("rejects slackWebhookUrl targeting private IP (SSRF)", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: "http://10.0.0.1:8080/hook" },
+    });
+
+    expect(res.statusCode).toBe(500); // Zod validation error
+  });
+
+  it("rejects slackWebhookUrl that is not a valid URL", async () => {
+    mockGetRepo.mockResolvedValue(mockRepoData);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/repos/repo-1",
+      payload: { slackWebhookUrl: "not-a-url" },
+    });
+
+    expect(res.statusCode).toBe(500); // Zod validation error
+  });
 });
 
 describe("DELETE /api/repos/:id", () => {

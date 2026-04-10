@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, and, lt, sql, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { repoPods, tasks } from "../db/schema.js";
+import { repoPods, tasks, interactiveSessions, workspaces } from "../db/schema.js";
 import { getRuntime } from "./container-service.js";
 import type { ContainerHandle, ContainerSpec, ExecSession, RepoImageConfig } from "@optio/shared";
 import {
@@ -60,6 +60,7 @@ export async function getOrCreateRepoPod(
     memoryLimit?: string | null;
     dockerInDocker?: boolean;
     secretProxy?: boolean;
+    workspaceId?: string | null;
   },
 ): Promise<RepoPod> {
   const repoUrl = normalizeRepoUrl(rawRepoUrl);
@@ -164,6 +165,7 @@ export async function getOrCreateRepoPod(
       },
       opts?.dockerInDocker,
       opts?.secretProxy,
+      opts?.workspaceId,
     );
   } catch (err: any) {
     if (err?.message?.includes("unique") || err?.code === "23505") {
@@ -177,6 +179,11 @@ export async function getOrCreateRepoPod(
 export function resolveImage(imageConfig?: RepoImageConfig): string {
   if (imageConfig?.customImage) return imageConfig.customImage;
   if (imageConfig?.preset && imageConfig.preset in PRESET_IMAGES) {
+    const prefix = process.env.OPTIO_AGENT_IMAGE_PREFIX;
+    if (prefix) {
+      const tag = process.env.OPTIO_AGENT_IMAGE_TAG ?? "latest";
+      return `${prefix}${imageConfig.preset}:${tag}`;
+    }
     return PRESET_IMAGES[imageConfig.preset].tag;
   }
   return process.env.OPTIO_AGENT_IMAGE ?? DEFAULT_AGENT_IMAGE;
@@ -197,7 +204,25 @@ async function createRepoPod(
   },
   dockerInDocker?: boolean,
   secretProxy?: boolean,
+  workspaceId?: string | null,
 ): Promise<RepoPod> {
+  // Admission check: Docker-in-Docker requires explicit workspace admin opt-in
+  if (dockerInDocker) {
+    if (!workspaceId) {
+      throw new Error("Docker-in-Docker requires a workspace with allowDockerInDocker enabled");
+    }
+    const [ws] = await db
+      .select({ allowDockerInDocker: workspaces.allowDockerInDocker })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+    if (!ws?.allowDockerInDocker) {
+      throw new Error(
+        "Docker-in-Docker requires workspace admin opt-in. " +
+          "Enable allowDockerInDocker in workspace settings.",
+      );
+    }
+  }
+
   const [record] = await db
     .insert(repoPods)
     .values({ repoUrl, repoBranch, state: "provisioning", instanceIndex })
@@ -242,6 +267,32 @@ spec:
     logger.warn({ err, pvcName }, "Failed to create PVC, pod will use ephemeral storage");
   }
 
+  // Load shared directories and ensure cache PVC exists
+  let cacheInfo: {
+    pvcName: string;
+    volumeMounts: Array<{ mountPath: string; subPath: string }>;
+  } | null = null;
+  try {
+    const { getSharedDirectoriesForRepo, ensureCachePvcForPod } =
+      await import("./shared-directory-service.js");
+    const sharedDirs = await getSharedDirectoriesForRepo(repoUrl, workspaceId);
+    if (sharedDirs.length > 0) {
+      cacheInfo = await ensureCachePvcForPod(repoUrl, instanceIndex, sharedDirs);
+      if (cacheInfo) {
+        await db
+          .update(repoPods)
+          .set({
+            cachePvcName: cacheInfo.pvcName,
+            cachePvcState: "bound",
+            updatedAt: new Date(),
+          })
+          .where(eq(repoPods.id, record.id));
+      }
+    }
+  } catch (err) {
+    logger.warn({ err, repoUrl }, "Failed to set up cache PVC — continuing without cache");
+  }
+
   let podNameForCleanup: string | undefined;
   try {
     const podName = generateRepoPodName(repoUrl);
@@ -260,6 +311,24 @@ spec:
       Object.assign(agentEnv, getAgentProxyEnv());
       agentEnv.OPTIO_SECRET_PROXY = "true";
     }
+
+    // Build cache volume and mounts for shared directories
+    const cacheVolumeName = "optio-cache";
+    const cacheExtraVolume = cacheInfo
+      ? {
+          raw: {
+            name: cacheVolumeName,
+            persistentVolumeClaim: { claimName: cacheInfo.pvcName },
+          },
+        }
+      : null;
+    const cacheVolumeMounts = cacheInfo
+      ? cacheInfo.volumeMounts.map((vm) => ({
+          name: cacheVolumeName,
+          mountPath: vm.mountPath,
+          subPath: vm.subPath,
+        }))
+      : [];
 
     const spec: ContainerSpec = {
       name: podName,
@@ -281,11 +350,13 @@ spec:
         "optio.secret-proxy": secretProxy ? "true" : "false",
         "managed-by": "optio",
       },
-      // Docker-in-Docker: user namespace isolation + capabilities + tmpfs for daemon storage
+      // Docker-in-Docker (rootless): user namespace isolation + minimal capabilities + tmpfs
+      // Uses rootless Docker (runc + fuse-overlayfs) so SYS_ADMIN is NOT required.
+      // SYS_CHROOT is the only extra capability needed for rootless container runtimes.
       ...(dockerInDocker
         ? {
             hostUsers: false,
-            capabilities: ["SYS_ADMIN", "NET_ADMIN"],
+            capabilities: ["SYS_CHROOT"],
             tmpfsMounts: [{ mountPath: "/var/lib/docker", sizeLimit: "10Gi" }],
           }
         : {}),
@@ -344,6 +415,12 @@ spec:
       }
 
       logger.info({ podName }, "Envoy secret proxy sidecar configured");
+    }
+
+    // Add cache volume and mounts for shared directories
+    if (cacheExtraVolume && cacheVolumeMounts.length > 0) {
+      spec.extraVolumes = [...(spec.extraVolumes ?? []), cacheExtraVolume];
+      spec.extraVolumeMounts = [...(spec.extraVolumeMounts ?? []), ...cacheVolumeMounts];
     }
 
     const handle = await rt.create(spec);
@@ -538,6 +615,18 @@ export async function execTaskInRepoPod(
     `  chmod +x /home/agent/.local/bin/gh 2>/dev/null || true`,
     `  export PATH="/home/agent/.local/bin:$PATH"`,
     `fi`,
+    // Set up glab CLI wrapper and authenticate for GitLab repos
+    `if [ -n "\${GITLAB_TOKEN:-}" ]; then`,
+    `  if [ -f /usr/local/bin/optio-glab-wrapper ]; then`,
+    `    mkdir -p /home/agent/.local/bin`,
+    `    cp /usr/local/bin/optio-glab-wrapper /home/agent/.local/bin/glab 2>/dev/null || true`,
+    `    chmod +x /home/agent/.local/bin/glab 2>/dev/null || true`,
+    `    export PATH="/home/agent/.local/bin:$PATH"`,
+    `  fi`,
+    `  GITLAB_HOST="gitlab.com"`,
+    `  case "\${OPTIO_REPO_URL:-}" in *://*) GITLAB_HOST=$(echo "\${OPTIO_REPO_URL}" | sed -E 's|.*://([^/]+).*|\\1|');; esac`,
+    `  glab auth login --hostname "\${GITLAB_HOST}" --token "\${GITLAB_TOKEN}" 2>/dev/null || true`,
+    `fi`,
     `ENV_FRESH="true"`,
     `[ -f /home/agent/.optio-env-ready ] && ENV_FRESH="false"`,
     `export ENV_FRESH`,
@@ -591,9 +680,16 @@ export async function execTaskInRepoPod(
     `mkdir -p "$(dirname "$EXCLUDE_FILE")"`,
     `grep -qxF '.optio/' "$EXCLUDE_FILE" 2>/dev/null || echo '.optio/' >> "$EXCLUDE_FILE"`,
     `grep -qxF '.optio-run-token' "$EXCLUDE_FILE" 2>/dev/null || echo '.optio-run-token' >> "$EXCLUDE_FILE"`,
-    // EXIT trap: preserve the worktree — cleanup is handled by the cleanup worker
-    // based on task state. Only clean up Claude Code's internal worktrees (-wt suffix).
-    `trap 'cd /workspace/repo 2>/dev/null; git worktree remove --force /workspace/tasks/${taskId}-wt 2>/dev/null || true; git worktree prune 2>/dev/null || true' EXIT`,
+    `grep -qxF '.optio-cache/' "$EXCLUDE_FILE" 2>/dev/null || echo '.optio-cache/' >> "$EXCLUDE_FILE"`,
+    // EXIT trap: kill child processes (agent + watchdog) then clean up internal worktrees.
+    // This ensures orphaned agent processes are killed when the exec stream is severed
+    // (e.g. API pod restart closes the SPDY connection but kubelet doesn't send SIGHUP).
+    `_optio_main_pid=$$`,
+    `trap 'kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; cd /workspace/repo 2>/dev/null; git worktree remove --force /workspace/tasks/${taskId}-wt 2>/dev/null || true; git worktree prune 2>/dev/null || true' EXIT`,
+    // Background heartbeat: detect broken stdout pipe (EPIPE) from severed exec stream.
+    // Writes an empty line every 30s (skipped by the NDJSON parser). If stdout is broken
+    // (API pod died), sends SIGTERM to the main script which triggers the EXIT trap.
+    `(trap '' PIPE; while sleep 30; do printf '\\n' 2>/dev/null || { kill -TERM $_optio_main_pid 2>/dev/null; exit; }; done) &`,
     `set +e`,
     ...agentCommand,
     `AGENT_EXIT=$?`,
@@ -657,6 +753,20 @@ export async function cleanupIdleRepoPods(): Promise<number> {
     const sorted = repoIdlePods.sort((a, b) => b.instanceIndex - a.instanceIndex);
 
     for (const pod of sorted) {
+      // Skip pods that have active interactive sessions
+      const [activeSession] = await db
+        .select({ id: interactiveSessions.id })
+        .from(interactiveSessions)
+        .where(and(eq(interactiveSessions.podId, pod.id), eq(interactiveSessions.state, "active")))
+        .limit(1);
+      if (activeSession) {
+        logger.info(
+          { podName: pod.podName, sessionId: activeSession.id },
+          "Skipping idle pod cleanup — active session exists",
+        );
+        continue;
+      }
+
       try {
         if (pod.podName) {
           await deleteNetworkPolicy(pod.podName).catch(() => {});
@@ -838,6 +948,82 @@ export async function deleteEnvoyConfigMap(podName: string): Promise<void> {
   } catch (err) {
     logger.warn({ err, configMapName }, "Failed to delete Envoy ConfigMap");
   }
+}
+
+/**
+ * Best-effort kill of orphaned agent processes inside a repo pod and worktree cleanup.
+ *
+ * Used before stale-task re-queue and during startup reconciliation to prevent
+ * duplicate agents running in the same worktree. Identifies processes by the
+ * OPTIO_TASK_ID env var that the exec script exports.
+ *
+ * Returns true if processes were found and killed, false otherwise.
+ */
+export async function killOrphanedAgentInPod(podId: string, taskId: string): Promise<boolean> {
+  const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, podId));
+  if (!pod || !pod.podName || pod.state !== "ready") return false;
+
+  const rt = getRuntime();
+  const handle: ContainerHandle = { id: pod.podId ?? pod.podName, name: pod.podName };
+
+  try {
+    // Check pod is actually reachable
+    const status = await rt.status(handle);
+    if (status.state !== "running") return false;
+  } catch {
+    return false;
+  }
+
+  let killed = false;
+  try {
+    // Kill any processes whose environment contains OPTIO_TASK_ID=<taskId>.
+    // pgrep -f matches against the full command line; we also grep /proc/*/environ
+    // as a fallback since env vars aren't always visible in cmdline.
+    const killScript = [
+      `pids=$(grep -rl "OPTIO_TASK_ID=${taskId}" /proc/*/environ 2>/dev/null | cut -d/ -f3 | sort -u || true)`,
+      `if [ -n "$pids" ]; then`,
+      `  kill -TERM $pids 2>/dev/null || true`,
+      `  sleep 2`,
+      `  kill -9 $pids 2>/dev/null || true`,
+      `  echo "killed"`,
+      `else`,
+      `  echo "none"`,
+      `fi`,
+    ].join("\n");
+
+    const killSession = await rt.exec(handle, ["bash", "-c", killScript], { tty: false });
+    let output = "";
+    for await (const chunk of killSession.stdout as AsyncIterable<Buffer>) {
+      output += chunk.toString();
+    }
+    killSession.close();
+    killed = output.includes("killed");
+
+    if (killed) {
+      logger.info({ podId, taskId, podName: pod.podName }, "Killed orphaned agent processes");
+    }
+  } catch (err) {
+    logger.warn({ err, podId, taskId }, "Failed to kill orphaned agent processes");
+  }
+
+  // Clean up the worktree regardless of whether processes were found
+  try {
+    const cleanScript = [
+      `cd /workspace/repo`,
+      `git worktree remove --force /workspace/tasks/${taskId} 2>/dev/null || true`,
+      `rm -rf /workspace/tasks/${taskId}`,
+    ].join(" && ");
+
+    const cleanSession = await rt.exec(handle, ["bash", "-c", cleanScript], { tty: false });
+    for await (const _ of cleanSession.stdout as AsyncIterable<Buffer>) {
+      /* drain */
+    }
+    cleanSession.close();
+  } catch (err) {
+    logger.warn({ err, podId, taskId }, "Failed to clean up worktree for orphaned task");
+  }
+
+  return killed;
 }
 
 /**

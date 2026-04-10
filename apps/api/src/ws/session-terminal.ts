@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { getRuntime } from "../services/container-service.js";
 import { getSession, addSessionPr } from "../services/interactive-session-service.js";
 import { db } from "../db/client.js";
@@ -33,7 +34,7 @@ export async function sessionTerminalWs(app: FastifyInstance) {
       return;
     }
 
-    const { sessionId } = req.params as { sessionId: string };
+    const { sessionId } = z.object({ sessionId: z.string() }).parse(req.params);
     const log = logger.child({ sessionId });
 
     const session = await getSession(sessionId);
@@ -66,7 +67,12 @@ export async function sessionTerminalWs(app: FastifyInstance) {
     // Get pod info
     const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, session.podId));
     if (!pod || !pod.podName) {
-      socket.send(JSON.stringify({ error: "Pod not found or not ready" }));
+      socket.send(
+        JSON.stringify({
+          error:
+            "Session pod was cleaned up due to inactivity. Please end this session and start a new one.",
+        }),
+      );
       releaseConnection(clientIp);
       socket.close();
       return;

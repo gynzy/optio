@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { getRuntime } from "../services/container-service.js";
 import { getSession } from "../services/interactive-session-service.js";
 import { getSettings } from "../services/optio-settings-service.js";
@@ -51,7 +52,7 @@ export async function sessionChatWs(app: FastifyInstance) {
       return;
     }
 
-    const { sessionId } = req.params as { sessionId: string };
+    const { sessionId } = z.object({ sessionId: z.string() }).parse(req.params);
     const log = logger.child({ sessionId, ws: "session-chat" });
 
     // Extract the user's raw session token for auth passthrough.
@@ -89,7 +90,13 @@ export async function sessionChatWs(app: FastifyInstance) {
     // Get pod info
     const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, session.podId));
     if (!pod || !pod.podName) {
-      socket.send(JSON.stringify({ type: "error", message: "Pod not found or not ready" }));
+      socket.send(
+        JSON.stringify({
+          type: "error",
+          message:
+            "Session pod was cleaned up due to inactivity. Please end this session and start a new one.",
+        }),
+      );
       releaseConnection(clientIp);
       socket.close();
       return;

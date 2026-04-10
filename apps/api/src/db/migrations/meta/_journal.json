@@ -274,6 +274,139 @@
       "when": 1776268800000,
       "tag": "0038_workspace_scoping_idor",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1776355200000,
+      "tag": "0039_add_git_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1776441600000,
+      "tag": "0039_cautious_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1776528000000,
+      "tag": "0040_workspace_allow_dind",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1776614400000,
+      "tag": "0041_encryption_alg_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1776700800000,
+      "tag": "0042_opencode_repo_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1776787200000,
+      "tag": "0042_task_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1776873600000,
+      "tag": "0044_push_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1776873600000,
+      "tag": "0043_gemini_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1776960000000,
+      "tag": "0045_stall_detection",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1777046400000,
+      "tag": "0046_repo_shared_directories",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1775613995000,
+      "tag": "1775613995_repair_duplicate_migrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1775627754000,
+      "tag": "1775627754_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1775791846000,
+      "tag": "1775791846_replace_workflow_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1775792368000,
+      "tag": "1775792368_workflow_pods",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1775792464000,
+      "tag": "1775792464_workflow_run_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1775794444000,
+      "tag": "1775794444_workflow_trigger_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1775793000000,
+      "tag": "1775793000_workflow_run_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1775795000000,
+      "tag": "1775795000_auth_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1775809203000,
+      "tag": "1775809203_planning_mode_enabled",
+      "breakpoints": true
     }
   ]
 }

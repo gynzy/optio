@@ -7,6 +7,8 @@ import { eq, desc, and, inArray, sql } from "drizzle-orm";
 import { requireRole } from "../plugins/auth.js";
 import { getVersionInfo, isLocalDev } from "../services/version-service.js";
 
+const idParamsSchema = z.object({ id: z.string() });
+
 const healthEventsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(50),
 });
@@ -103,14 +105,25 @@ export async function clusterRoutes(app: FastifyInstance) {
     try {
       const api = getK8sApi();
 
+      // listNode requires ClusterRole — gracefully return empty when unavailable
+      // (e.g. namespace-only RBAC with no cluster-wide permissions)
+      const listNodeSafe = async () => {
+        try {
+          return await api.listNode({ limit: 50 });
+        } catch {
+          return { items: [] };
+        }
+      };
+
       const [nodeList, podList, serviceList, eventList] = await Promise.all([
-        api.listNode({ limit: 50 }),
+        listNodeSafe(),
         api.listNamespacedPod({ namespace: NAMESPACE }),
         api.listNamespacedService({ namespace: NAMESPACE }),
         api.listNamespacedEvent({ namespace: NAMESPACE, limit: 30 }),
       ]);
 
-      // Fetch metrics (gracefully fail if metrics-server not installed)
+      // Fetch metrics (gracefully fail if metrics-server not installed or
+      // ClusterRole unavailable for node metrics)
       const [nodeMetricsItems, podMetricsItems] = await Promise.all([
         fetchNodeMetrics(),
         fetchPodMetrics(NAMESPACE),
@@ -341,7 +354,7 @@ export async function clusterRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/cluster/pods/:id", { preHandler: [requireRole("admin")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, id));
     if (!pod) return reply.status(404).send({ error: "Pod not found" });
     const wsId = req.user?.workspaceId;
@@ -412,7 +425,7 @@ export async function clusterRoutes(app: FastifyInstance) {
     "/api/cluster/pods/:id/restart",
     { preHandler: [requireRole("admin")] },
     async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamsSchema.parse(req.params);
       const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, id));
       if (!pod) return reply.status(404).send({ error: "Pod not found" });
       const wsId = req.user?.workspaceId;

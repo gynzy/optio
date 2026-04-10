@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const INTERNAL_API_URL = process.env.INTERNAL_API_URL ?? "http://localhost:4000";
+const PUBLIC_URL = process.env.PUBLIC_URL ?? "http://localhost:3000";
 const SESSION_COOKIE_NAME = "optio_session";
-const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const IS_SECURE = PUBLIC_URL.startsWith("https://");
 
 /**
  * OAuth callback handler for the BFF (Backend for Frontend) pattern.
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
 
   if (!code) {
-    return NextResponse.redirect(new URL("/login?error=missing_code", request.url));
+    return NextResponse.redirect(new URL("/login?error=missing_code", PUBLIC_URL));
   }
 
   try {
@@ -32,22 +33,22 @@ export async function GET(request: NextRequest) {
     });
 
     if (!res.ok) {
-      return NextResponse.redirect(new URL("/login?error=exchange_failed", request.url));
+      return NextResponse.redirect(new URL("/login?error=exchange_failed", PUBLIC_URL));
     }
 
     const { token } = (await res.json()) as { token: string };
 
-    const response = NextResponse.redirect(new URL("/", request.url));
+    const response = NextResponse.redirect(new URL("/", PUBLIC_URL));
     response.cookies.set(SESSION_COOKIE_NAME, token, {
       path: "/",
       httpOnly: true,
       sameSite: "lax",
-      secure: IS_PRODUCTION,
+      secure: IS_SECURE,
       maxAge: 30 * 24 * 60 * 60, // 30 days
     });
 
     return response;
   } catch {
-    return NextResponse.redirect(new URL("/login?error=exchange_failed", request.url));
+    return NextResponse.redirect(new URL("/login?error=exchange_failed", PUBLIC_URL));
   }
 }

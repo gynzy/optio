@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -349,5 +350,119 @@ describe("POST /api/auth/logout", () => {
     } finally {
       process.env.NODE_ENV = origEnv;
     }
+  });
+});
+
+describe("Auth rate limiting", () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    redisStore.clear();
+    authDisabled = false;
+  });
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  async function buildRateLimitedApp(): Promise<FastifyInstance> {
+    const server = Fastify({ logger: false });
+    await server.register(rateLimit, { global: false });
+    await authRoutes(server);
+    await server.ready();
+    return server;
+  }
+
+  it("rate-limits POST /api/auth/exchange-code after 10 requests", async () => {
+    app = await buildRateLimitedApp();
+
+    // First 10 requests should succeed (status 400 because code is missing, but not 429)
+    for (let i = 0; i < 10; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/exchange-code",
+        payload: {},
+      });
+      expect(res.statusCode).toBe(400);
+    }
+
+    // 11th request should be rate-limited
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/exchange-code",
+      payload: {},
+    });
+    expect(res.statusCode).toBe(429);
+  });
+
+  it("rate-limits GET /api/auth/:provider/login after 10 requests", async () => {
+    app = await buildRateLimitedApp();
+
+    // First 10 requests — 404 because provider is unknown (mocked)
+    for (let i = 0; i < 10; i++) {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/auth/github/login",
+      });
+      expect(res.statusCode).toBe(404);
+    }
+
+    // 11th request should be rate-limited
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/auth/github/login",
+    });
+    expect(res.statusCode).toBe(429);
+  });
+
+  it("rate-limits GET /api/auth/:provider/callback after 10 requests", async () => {
+    app = await buildRateLimitedApp();
+
+    for (let i = 0; i < 10; i++) {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/auth/github/callback?code=x&state=y",
+      });
+      // Redirects to login with error (invalid state)
+      expect(res.statusCode).toBe(302);
+    }
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/auth/github/callback?code=x&state=y",
+    });
+    expect(res.statusCode).toBe(429);
+  });
+
+  it("rate-limits POST /api/auth/logout after 10 requests", async () => {
+    app = await buildRateLimitedApp();
+    mockRevokeSession.mockResolvedValue(undefined);
+
+    for (let i = 0; i < 10; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/logout",
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+    });
+    expect(res.statusCode).toBe(429);
+  });
+
+  it("includes rate limit headers in responses", async () => {
+    app = await buildRateLimitedApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/exchange-code",
+      payload: {},
+    });
+    expect(res.headers["x-ratelimit-limit"]).toBe("10");
+    expect(res.headers["x-ratelimit-remaining"]).toBe("9");
   });
 });

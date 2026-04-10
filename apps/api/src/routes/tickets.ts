@@ -1,13 +1,104 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { db } from "../db/client.js";
 import { ticketProviders } from "../db/schema.js";
 import { TaskState } from "@optio/shared";
 import * as taskService from "../services/task-service.js";
 import { syncAllTickets } from "../services/ticket-sync-service.js";
+import { storeSecret, deleteSecret } from "../services/secret-service.js";
+import { isSsrfSafeUrl, isSsrfSafeHost } from "../utils/ssrf.js";
+import { HmacSha256Verifier } from "../services/crypto/signer.js";
 import { logger } from "../logger.js";
+
+// ── Zod schema for ticket provider config ───────────────────────────────────
+
+const jiraConfigSchema = z.object({
+  source: z.literal("jira"),
+  config: z.object({
+    baseUrl: z.string().url().refine(isSsrfSafeUrl, {
+      message: "URL must not target private or internal addresses",
+    }),
+    email: z.string().email(),
+    apiToken: z.string().min(1),
+    projectKey: z.string().optional(),
+    label: z.string().optional(),
+    maxPages: z.number().int().positive().optional(),
+    doneStatusName: z.string().optional(),
+    todoStatusName: z.string().optional(),
+  }),
+  enabled: z.boolean().optional(),
+});
+
+const gitlabConfigSchema = z.object({
+  source: z.literal("gitlab"),
+  config: z.object({
+    host: z.string().min(1).refine(isSsrfSafeHost, {
+      message: "Host must not target private or internal addresses",
+    }),
+    token: z.string().min(1),
+    projectPath: z.string().min(1),
+    label: z.string().optional(),
+    maxPages: z.number().int().positive().optional(),
+  }),
+  enabled: z.boolean().optional(),
+});
+
+const githubConfigSchema = z.object({
+  source: z.literal("github"),
+  config: z.object({
+    token: z.string().optional(),
+    owner: z.string().optional(),
+    repo: z.string().optional(),
+    label: z.string().optional(),
+    maxPages: z.number().int().positive().optional(),
+  }),
+  enabled: z.boolean().optional(),
+});
+
+const linearConfigSchema = z.object({
+  source: z.literal("linear"),
+  config: z.object({
+    apiKey: z.string().min(1),
+    teamId: z.string().optional(),
+    projectId: z.string().optional(),
+    label: z.string().optional(),
+    maxPages: z.number().int().positive().optional(),
+  }),
+  enabled: z.boolean().optional(),
+});
+
+const notionConfigSchema = z.object({
+  source: z.literal("notion"),
+  config: z.object({
+    apiKey: z.string().min(1),
+    databaseId: z.string().min(1),
+    label: z.string().optional(),
+    statusProperty: z.string().optional(),
+    doneValue: z.string().optional(),
+    titleProperty: z.string().optional(),
+    maxPages: z.number().int().positive().optional(),
+  }),
+  enabled: z.boolean().optional(),
+});
+
+export const ticketProviderConfigSchema = z.discriminatedUnion("source", [
+  jiraConfigSchema,
+  gitlabConfigSchema,
+  githubConfigSchema,
+  linearConfigSchema,
+  notionConfigSchema,
+]);
+
+const idParamsSchema = z.object({ id: z.string() });
+
+/** Fields per provider type that contain credentials and must be encrypted. */
+const SENSITIVE_PROVIDER_FIELDS: Record<string, string[]> = {
+  jira: ["apiToken"],
+  linear: ["apiKey"],
+  notion: ["apiKey"],
+};
 
 /** Maximum age (in minutes) for a webhook event before it is rejected. */
 const WEBHOOK_MAX_AGE_MINUTES = 5;
@@ -15,11 +106,21 @@ const WEBHOOK_MAX_AGE_MINUTES = 5;
 /**
  * Verify the HMAC-SHA256 signature sent by GitHub in the X-Hub-Signature-256
  * header against the raw request body and the configured secret.
+ *
+ * Uses HmacSha256Verifier to centralize constant-time comparison.
  */
-export function verifyGitHubSignature(rawBody: Buffer, signature: string, secret: string): boolean {
-  const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
-  if (expected.length !== signature.length) return false;
-  return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+export async function verifyGitHubSignature(
+  rawBody: Buffer,
+  signature: string,
+  secret: string,
+): Promise<boolean> {
+  // GitHub sends "sha256=<hex>" — strip the prefix and decode the hex digest
+  const prefix = "sha256=";
+  if (!signature.startsWith(prefix)) return false;
+  const sigBytes = Buffer.from(signature.slice(prefix.length), "hex");
+
+  const verifier = new HmacSha256Verifier(secret);
+  return verifier.verify(rawBody, sigBytes);
 }
 
 /**
@@ -52,22 +153,53 @@ export async function ticketRoutes(app: FastifyInstance) {
 
   // Configure a ticket provider
   app.post("/api/tickets/providers", async (req, reply) => {
-    const body = req.body as { source: string; config: Record<string, unknown>; enabled?: boolean };
+    const parsed = ticketProviderConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: "Invalid provider config", details: parsed.error.flatten() });
+    }
+    const body = parsed.data;
+
+    // Separate sensitive fields from config — they go into encrypted secrets
+    const sensitiveFields = SENSITIVE_PROVIDER_FIELDS[body.source] ?? [];
+    const safeConfig: Record<string, unknown> = { ...body.config };
+    const sensitiveValues: Record<string, string> = {};
+
+    for (const field of sensitiveFields) {
+      if (safeConfig[field]) {
+        sensitiveValues[field] = safeConfig[field] as string;
+        delete safeConfig[field];
+      }
+    }
+
     const [provider] = await db
       .insert(ticketProviders)
       .values({
         source: body.source,
-        config: body.config,
+        config: safeConfig,
         enabled: body.enabled ?? true,
       })
       .returning();
+
+    // Store sensitive fields as encrypted secret
+    if (Object.keys(sensitiveValues).length > 0) {
+      await storeSecret(
+        `ticket-provider:${provider.id}`,
+        JSON.stringify(sensitiveValues),
+        "ticket-provider",
+      );
+    }
+
     reply.status(201).send({ provider });
   });
 
   // Delete a ticket provider
   app.delete("/api/tickets/providers/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     await db.delete(ticketProviders).where(eq(ticketProviders.id, id));
+    // Clean up associated encrypted credentials
+    await deleteSecret(`ticket-provider:${id}`, "ticket-provider");
     reply.status(204).send();
   });
 
@@ -99,7 +231,7 @@ export async function ticketRoutes(app: FastifyInstance) {
       }
 
       const rawBody = (req as any).rawBody as Buffer;
-      if (!verifyGitHubSignature(rawBody, signature, webhookSecret)) {
+      if (!(await verifyGitHubSignature(rawBody, signature, webhookSecret))) {
         logger.warn("Webhook signature verification failed");
         return reply.status(401).send({ error: "Invalid signature" });
       }
@@ -112,19 +244,29 @@ export async function ticketRoutes(app: FastifyInstance) {
       }
 
       const event = req.headers["x-github-event"];
-      const payload = req.body as any;
+      // GitHub webhook payload — already validated by HMAC signature above.
+      // We use a permissive record type since the shape depends on the event.
+      const rawPayload = req.body;
+      const payload = rawPayload as Record<string, Record<string, unknown> | string | undefined>;
 
       if (event === "issues" && payload.action === "labeled") {
-        const label = payload.label?.name;
+        const label = (payload.label as Record<string, unknown> | undefined)?.name;
         if (label === "optio") {
-          logger.info({ issue: payload.issue?.number }, "GitHub issue labeled with optio");
+          logger.info(
+            { issue: (payload.issue as Record<string, unknown> | undefined)?.number },
+            "GitHub issue labeled with optio",
+          );
           // Trigger a sync — handles deduplication
           await syncAllTickets();
         }
       }
 
-      if (event === "pull_request" && payload.action === "closed" && payload.pull_request?.merged) {
-        const prUrl = payload.pull_request.html_url;
+      if (
+        event === "pull_request" &&
+        payload.action === "closed" &&
+        (payload.pull_request as Record<string, unknown> | undefined)?.merged
+      ) {
+        const prUrl = String((payload.pull_request as Record<string, unknown>).html_url ?? "");
         const allTasks = await taskService.listTasks({ limit: 500 });
         const matchingTask = allTasks.find((t: any) => t.prUrl === prUrl);
 

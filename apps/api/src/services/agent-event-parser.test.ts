@@ -136,7 +136,7 @@ describe("parseClaudeEvent", () => {
     expect(result.entries[0].content).toContain("\u2026");
   });
 
-  it("parses result event with cost", () => {
+  it("parses result event with cost and flags it as terminal", () => {
     const line = JSON.stringify({
       type: "result",
       result: "Task completed successfully",
@@ -152,6 +152,33 @@ describe("parseClaudeEvent", () => {
     expect(result.entries[0].content).toContain("$0.0534");
     expect(result.entries[0].content).toContain("5 turns");
     expect(result.entries[0].metadata?.cost).toBe(0.0534);
+    // The task worker closes stdin on terminal events so claude exits
+    // instead of idling in stream-json input mode.
+    expect(result.isTerminal).toBe(true);
+  });
+
+  it("does not flag non-result events as terminal", () => {
+    const system = parseClaudeEvent(
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        model: "claude-sonnet-4-6",
+        tools: ["Bash"],
+        session_id: "session-abc",
+      }),
+      TASK_ID,
+    );
+    expect(system.isTerminal).toBeUndefined();
+
+    const assistant = parseClaudeEvent(
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "hi" }] },
+        session_id: "session-abc",
+      }),
+      TASK_ID,
+    );
+    expect(assistant.isTerminal).toBeUndefined();
   });
 
   it("skips rate limit events", () => {

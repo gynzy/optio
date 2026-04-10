@@ -2,17 +2,19 @@ import { Queue, Worker } from "bullmq";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { tasks, taskEvents, sessionPrs, interactiveSessions, reviewDrafts } from "../db/schema.js";
-import { TaskState } from "@optio/shared";
-import { getGitHubToken } from "../services/github-token-service.js";
+import type { GitPlatform, RepoIdentifier } from "@optio/shared";
+import { TaskState, parsePrUrl } from "@optio/shared";
+import { getGitPlatformForRepo, getGitToken } from "../services/git-token-service.js";
+import type { GitTokenContext } from "../services/git-token-service.js";
+import { createGitPlatform } from "../services/git-platform/index.js";
 import * as taskService from "../services/task-service.js";
 import { updateSessionPr } from "../services/interactive-session-service.js";
 import { taskQueue } from "./task-worker.js";
 import { logger } from "../logger.js";
 
-const connectionOpts = {
-  url: process.env.REDIS_URL ?? "redis://localhost:6379",
-  maxRetriesPerRequest: null,
-};
+import { getBullMQConnectionOptions } from "../services/redis-config.js";
+
+const connectionOpts = getBullMQConnectionOptions();
 
 /** Determine overall CI check status from GitHub check runs. */
 export function determineCheckStatus(
@@ -55,6 +57,7 @@ export function determinePrAction(opts: {
   reviewStatus: string;
   prevReviewStatus: string | null;
   autoMerge: boolean;
+  cautiousMode: boolean;
   autoResume: boolean;
   reviewEnabled: boolean;
   reviewTrigger: string;
@@ -118,8 +121,9 @@ export function determinePrAction(opts: {
     return { action: "launch_review" };
   }
 
-  // Auto-merge: CI passing + subtasks done + autoMerge enabled
-  if (opts.checksStatus === "passing" && opts.prState === "open" && opts.autoMerge) {
+  // Auto-merge: CI passing (or no checks) + subtasks done + autoMerge enabled
+  const checksOk = opts.checksStatus === "passing" || opts.checksStatus === "none";
+  if (checksOk && opts.prState === "open" && opts.autoMerge && !opts.cautiousMode) {
     if (opts.blockingSubtasksComplete) return { action: "auto_merge" };
   }
 
@@ -148,38 +152,23 @@ export function startPrWatcherWorker() {
   const worker = new Worker(
     "pr-watcher",
     async () => {
-      // Cache GitHub tokens by userId (not taskId) to avoid redundant DB lookups
-      // when multiple tasks from the same user are in pr_opened state.
-      const tokenCache = new Map<string, string | null>();
-      const getGithubTokenForTask = async (task: {
-        id: string;
-        createdBy: string | null;
-      }): Promise<string | null> => {
-        const cacheKey = task.createdBy ?? "__server__";
-        if (tokenCache.has(cacheKey)) return tokenCache.get(cacheKey)!;
+      // Per-cycle cache to avoid redundant token lookups / secret decryption
+      const platformCache = new Map<string, { platform: GitPlatform; ri: RepoIdentifier }>();
+      async function getCachedPlatform(
+        repoUrl: string,
+        context: GitTokenContext,
+      ): Promise<{ platform: GitPlatform; ri: RepoIdentifier } | null> {
+        const key = `${repoUrl}::${context.userId ?? "server"}`;
+        const cached = platformCache.get(key);
+        if (cached) return cached;
         try {
-          const token = task.createdBy
-            ? await getGitHubToken({ userId: task.createdBy })
-            : await getGitHubToken({ server: true });
-          tokenCache.set(cacheKey, token);
-          return token;
+          const result = await getGitPlatformForRepo(repoUrl, context);
+          platformCache.set(key, result);
+          return result;
         } catch {
-          tokenCache.set(cacheKey, null);
           return null;
         }
-      };
-      const getServerGithubToken = async (): Promise<string | null> => {
-        const cacheKey = "__server__";
-        if (tokenCache.has(cacheKey)) return tokenCache.get(cacheKey)!;
-        try {
-          const token = await getGitHubToken({ server: true });
-          tokenCache.set(cacheKey, token);
-          return token;
-        } catch {
-          tokenCache.set(cacheKey, null);
-          return null;
-        }
-      };
+      }
 
       // --- Task PR watching ---
       // Find all tasks with open PRs
@@ -194,92 +183,51 @@ export function startPrWatcherWorker() {
 
       if (openPrTasks.length > 0) {
         for (const task of openPrTasks) {
-          const githubToken = await getGithubTokenForTask(task);
-          if (!githubToken) continue;
-
-          const headers = {
-            Authorization: `Bearer ${githubToken}`,
-            "User-Agent": "Optio",
-            Accept: "application/vnd.github.v3+json",
-          };
           if (!task.prUrl) continue;
 
           try {
-            // Parse owner/repo/number from PR URL
-            const match = task.prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-            if (!match) continue;
-            const [, owner, repo, prNumStr] = match;
-            const prNumber = parseInt(prNumStr, 10);
+            // Parse owner/repo/number from PR URL (works for both GitHub and GitLab)
+            const parsed = parsePrUrl(task.prUrl);
+            if (!parsed) continue;
+            const { prNumber } = parsed;
+            const prLabel = parsed.platform === "gitlab" ? "MR" : "PR";
+
+            // Get platform instance for this repo (cached per poll cycle)
+            const platformResult = await getCachedPlatform(task.repoUrl, {
+              userId: task.createdBy ?? undefined,
+            });
+            if (!platformResult) continue;
+            const { platform, ri } = platformResult;
 
             // Fetch PR data
-            const prRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
-              { headers },
-            );
-            if (!prRes.ok) continue;
-            const prData = (await prRes.json()) as any;
+            const prData = await platform.getPullRequest(ri, prNumber).catch(() => null);
+            if (!prData) continue;
 
             // Fetch check runs
-            const checksRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/commits/${prData.head.sha}/check-runs`,
-              { headers },
-            );
-            const checksData = checksRes.ok
-              ? ((await checksRes.json()) as any)
-              : { check_runs: [] };
+            const checkRuns = await platform.getCIChecks(ri, prData.headSha).catch(() => []);
 
             // Fetch reviews
-            const reviewsRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
-              { headers },
-            );
-            const reviewsData = reviewsRes.ok ? ((await reviewsRes.json()) as any[]) : [];
+            const reviewsData = await platform.getReviews(ri, prNumber).catch(() => []);
 
             // Determine check status
-            let checksStatus = "none";
-            if (checksData.check_runs?.length > 0) {
-              const runs = checksData.check_runs;
-              const allComplete = runs.every((r: any) => r.status === "completed");
-              const allSuccess = runs.every(
-                (r: any) => r.conclusion === "success" || r.conclusion === "skipped",
-              );
-              if (!allComplete) checksStatus = "pending";
-              else if (allSuccess) checksStatus = "passing";
-              else checksStatus = "failing";
-            }
+            const checksStatus = determineCheckStatus(checkRuns);
 
             // Determine review status
-            let reviewStatus = "none";
-            let reviewComments = "";
-            if (reviewsData.length > 0) {
-              // Get the latest non-comment review
-              const substantiveReviews = reviewsData.filter(
-                (r: any) => r.state !== "COMMENTED" && r.state !== "DISMISSED",
-              );
-              const latest = substantiveReviews[substantiveReviews.length - 1];
-              if (latest) {
-                if (latest.state === "APPROVED") reviewStatus = "approved";
-                else if (latest.state === "CHANGES_REQUESTED") {
-                  reviewStatus = "changes_requested";
-                  reviewComments = latest.body || "";
-                  // Also fetch review comments (inline)
-                  const commentsRes = await fetch(
-                    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/comments`,
-                    { headers },
-                  );
-                  if (commentsRes.ok) {
-                    const comments = (await commentsRes.json()) as any[];
-                    const recent = comments.slice(-5);
-                    if (recent.length > 0) {
-                      reviewComments +=
-                        "\n\nInline comments:\n" +
-                        recent.map((c: any) => `${c.path}:${c.line ?? ""} — ${c.body}`).join("\n");
-                    }
-                  }
+            const reviewResult = determineReviewStatus(reviewsData);
+            const reviewStatus = reviewResult.status;
+            let reviewComments = reviewResult.comments;
+
+            // If changes requested, also fetch inline comments for context
+            if (reviewStatus === "changes_requested") {
+              try {
+                const inlineComments = await platform.getInlineComments(ri, prNumber);
+                const recent = inlineComments.slice(-5);
+                if (recent.length > 0) {
+                  reviewComments +=
+                    "\n\nInline comments:\n" +
+                    recent.map((c) => `${c.path}:${c.line ?? ""} — ${c.body}`).join("\n");
                 }
-              } else if (reviewsData.some((r: any) => r.state === "COMMENTED")) {
-                reviewStatus = "pending";
-              }
+              } catch {}
             }
 
             // Update task status fields (except prChecksStatus — deferred until
@@ -318,6 +266,7 @@ export function startPrWatcherWorker() {
               reviewStatus,
               prevReviewStatus: task.prReviewStatus,
               autoMerge: repoConfig?.autoMerge ?? false,
+              cautiousMode: repoConfig?.cautiousMode ?? false,
               autoResume: repoConfig?.autoResume ?? false,
               reviewEnabled: repoConfig?.reviewEnabled ?? false,
               reviewTrigger: repoConfig?.reviewTrigger ?? "manual",
@@ -327,9 +276,9 @@ export function startPrWatcherWorker() {
             });
 
             // --- Execute the action ---
-            const failedChecks = (checksData.check_runs ?? [])
-              .filter((r: any) => r.conclusion === "failure")
-              .map((r: any) => r.name)
+            const failedChecks = checkRuns
+              .filter((r) => r.conclusion === "failure")
+              .map((r) => r.name)
               .join(", ");
 
             const resumeAgent = async (
@@ -425,20 +374,13 @@ export function startPrWatcherWorker() {
                     task.id,
                     TaskState.FAILED,
                     "pr_closed",
-                    "PR was closed without merging",
+                    `${prLabel} was closed without merging`,
                   );
                   continue;
 
                 case "auto_merge": {
-                  const mergeRes = await fetch(
-                    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/merge`,
-                    {
-                      method: "PUT",
-                      headers: { ...headers, "Content-Type": "application/json" },
-                      body: JSON.stringify({ merge_method: "squash" }),
-                    },
-                  );
-                  if (mergeRes.ok) {
+                  try {
+                    await platform.mergePullRequest(ri, prNumber, "squash");
                     await db
                       .update(tasks)
                       .set({ prChecksStatus: effectiveChecksStatus, prState: "merged" })
@@ -447,17 +389,14 @@ export function startPrWatcherWorker() {
                       task.id,
                       TaskState.COMPLETED,
                       "auto_merged",
-                      `PR #${prNumber} auto-merged`,
+                      `${prLabel} ${parsed.platform === "gitlab" ? "!" : "#"}${prNumber} auto-merged`,
                     );
                     logger.info({ taskId: task.id, prNumber }, "PR auto-merged");
                     continue;
+                  } catch (mergeErr) {
+                    logger.warn({ taskId: task.id, err: mergeErr }, "Auto-merge failed");
+                    break;
                   }
-                  const body = (await mergeRes.json().catch(() => ({}))) as any;
-                  logger.warn(
-                    { taskId: task.id, status: mergeRes.status, msg: body.message },
-                    "Auto-merge failed",
-                  );
-                  break;
                 }
 
                 case "launch_review": {
@@ -474,7 +413,7 @@ export function startPrWatcherWorker() {
                     .where(eq(tasks.id, task.id));
                   await resumeAgent(
                     "merge_conflicts",
-                    `Your PR has merge conflicts with the base branch. Please:\n1. Run \`git fetch origin && git rebase origin/main\`\n2. Resolve any conflicts\n3. Run the tests to make sure everything still works\n4. Force-push: \`git push --force-with-lease\``,
+                    `Your ${prLabel} has merge conflicts with the base branch. Please:\n1. Run \`git fetch origin && git rebase origin/main\`\n2. Resolve any conflicts\n3. Run the tests to make sure everything still works\n4. Force-push: \`git push --force-with-lease\``,
                     "conflicts",
                     { freshSession: true },
                   );
@@ -484,7 +423,7 @@ export function startPrWatcherWorker() {
                 case "resume_ci_failure":
                   await resumeAgent(
                     "ci_failing",
-                    `CI checks are failing on your PR. The following checks failed: ${failedChecks}\n\nPlease investigate the failures, fix the issues, and push the fixes.`,
+                    `CI checks are failing on your ${prLabel}. The following checks failed: ${failedChecks}\n\nPlease investigate the failures, fix the issues, and push the fixes.`,
                     "ci-fix",
                   );
                   logger.info(
@@ -496,7 +435,7 @@ export function startPrWatcherWorker() {
                 case "resume_review":
                   await resumeAgent(
                     "review_changes_requested",
-                    `A reviewer requested changes on the PR. Please address the following feedback:\n\n${reviewComments}`,
+                    `A reviewer requested changes on the ${prLabel}. Please address the following feedback:\n\n${reviewComments}`,
                     "review",
                   );
                   logger.info({ taskId: task.id }, "Auto-resuming agent with review feedback");
@@ -550,57 +489,39 @@ export function startPrWatcherWorker() {
               sql`${sessionPrs.sessionId} IN ${sessionIds} AND (${sessionPrs.prState} IS NULL OR ${sessionPrs.prState} = 'open')`,
             );
 
-          const sessionGithubToken = await getServerGithubToken();
-          if (openSessionPrs.length > 0 && sessionGithubToken) {
-            const sessionHeaders = {
-              Authorization: `Bearer ${sessionGithubToken}`,
-              "User-Agent": "Optio",
-              Accept: "application/vnd.github.v3+json",
-            };
+          for (const spr of openSessionPrs) {
+            try {
+              const sprParsed = parsePrUrl(spr.prUrl);
+              if (!sprParsed) continue;
 
-            for (const spr of openSessionPrs) {
-              try {
-                const match = spr.prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-                if (!match) continue;
-                const [, sprOwner, sprRepo, sprNumStr] = match;
-                const sprNumber = parseInt(sprNumStr, 10);
+              // Infer repo URL from PR URL for platform resolution
+              const sprRepoUrl = `https://${sprParsed.host}/${sprParsed.owner}/${sprParsed.repo}`;
+              const sprResult = await getCachedPlatform(sprRepoUrl, { server: true });
+              if (!sprResult) continue;
+              const { platform: sprPlatform, ri: sprRi } = sprResult;
 
-                const sprRes = await fetch(
-                  `https://api.github.com/repos/${sprOwner}/${sprRepo}/pulls/${sprNumber}`,
-                  { headers: sessionHeaders },
-                );
-                if (!sprRes.ok) continue;
-                const sprData = (await sprRes.json()) as any;
+              const sprData = await sprPlatform
+                .getPullRequest(sprRi, sprParsed.prNumber)
+                .catch(() => null);
+              if (!sprData) continue;
 
-                // Check runs
-                const sprChecksRes = await fetch(
-                  `https://api.github.com/repos/${sprOwner}/${sprRepo}/commits/${sprData.head.sha}/check-runs`,
-                  { headers: sessionHeaders },
-                );
-                const sprChecksData = sprChecksRes.ok
-                  ? ((await sprChecksRes.json()) as any)
-                  : { check_runs: [] };
+              const sprCheckRuns = await sprPlatform
+                .getCIChecks(sprRi, sprData.headSha)
+                .catch(() => []);
+              const sprChecksStatus = determineCheckStatus(sprCheckRuns);
 
-                const sprChecksStatus = determineCheckStatus(sprChecksData.check_runs ?? []);
+              const sprReviewsData = await sprPlatform
+                .getReviews(sprRi, sprParsed.prNumber)
+                .catch(() => []);
+              const sprReviewResult = determineReviewStatus(sprReviewsData);
 
-                // Reviews
-                const sprReviewsRes = await fetch(
-                  `https://api.github.com/repos/${sprOwner}/${sprRepo}/pulls/${sprNumber}/reviews`,
-                  { headers: sessionHeaders },
-                );
-                const sprReviewsData = sprReviewsRes.ok
-                  ? ((await sprReviewsRes.json()) as any[])
-                  : [];
-                const sprReviewResult = determineReviewStatus(sprReviewsData);
-
-                await updateSessionPr(spr.id, {
-                  prState: sprData.merged ? "merged" : sprData.state,
-                  prChecksStatus: sprChecksStatus,
-                  prReviewStatus: sprReviewResult.status,
-                });
-              } catch (err) {
-                logger.warn({ err, sessionPrId: spr.id }, "Failed to check session PR status");
-              }
+              await updateSessionPr(spr.id, {
+                prState: sprData.merged ? "merged" : sprData.state,
+                prChecksStatus: sprChecksStatus,
+                prReviewStatus: sprReviewResult.status,
+              });
+            } catch (err) {
+              logger.warn({ err, sessionPrId: spr.id }, "Failed to check session PR status");
             }
           }
         }
@@ -616,41 +537,38 @@ export function startPrWatcherWorker() {
           .from(reviewDrafts)
           .where(eq(reviewDrafts.state, "ready"));
 
-        if (readyDrafts.length > 0) {
-          const staleToken = await getServerGithubToken();
-          if (staleToken) {
-            const staleHeaders = {
-              Authorization: `Bearer ${staleToken}`,
-              "User-Agent": "Optio",
-              Accept: "application/vnd.github.v3+json",
-            };
+        for (const draft of readyDrafts) {
+          try {
+            // Construct repo URL from draft fields for platform resolution
+            const draftPrUrl = draft.prUrl;
+            const draftParsed = draftPrUrl ? parsePrUrl(draftPrUrl) : null;
+            if (!draftParsed) continue;
 
-            for (const draft of readyDrafts) {
-              try {
-                const prRes = await fetch(
-                  `https://api.github.com/repos/${draft.repoOwner}/${draft.repoName}/pulls/${draft.prNumber}`,
-                  { headers: staleHeaders },
-                );
-                if (!prRes.ok) continue;
-                const prData = (await prRes.json()) as any;
+            const draftRepoUrl = `https://${draftParsed.host}/${draftParsed.owner}/${draftParsed.repo}`;
+            const draftResult = await getCachedPlatform(draftRepoUrl, { server: true });
+            if (!draftResult) continue;
+            const { platform: draftPlatform, ri: draftRi } = draftResult;
 
-                if (prData.head?.sha && prData.head.sha !== draft.headSha) {
-                  const { markDraftStale } = await import("../services/pr-review-service.js");
-                  await markDraftStale(draft.id);
-                  logger.info(
-                    {
-                      draftId: draft.id,
-                      taskId: draft.taskId,
-                      oldSha: draft.headSha,
-                      newSha: prData.head.sha,
-                    },
-                    "Review draft marked stale — PR has new commits",
-                  );
-                }
-              } catch (err) {
-                logger.warn({ err, draftId: draft.id }, "Failed to check draft staleness");
-              }
+            const prData = await draftPlatform
+              .getPullRequest(draftRi, draft.prNumber)
+              .catch(() => null);
+            if (!prData) continue;
+
+            if (prData.headSha && prData.headSha !== draft.headSha) {
+              const { markDraftStale } = await import("../services/pr-review-service.js");
+              await markDraftStale(draft.id);
+              logger.info(
+                {
+                  draftId: draft.id,
+                  taskId: draft.taskId,
+                  oldSha: draft.headSha,
+                  newSha: prData.headSha,
+                },
+                "Review draft marked stale — PR has new commits",
+              );
             }
+          } catch (err) {
+            logger.warn({ err, draftId: draft.id }, "Failed to check draft staleness");
           }
         }
       } catch (err) {

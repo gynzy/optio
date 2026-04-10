@@ -27,7 +27,7 @@ rules:
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list"]
@@ -59,8 +59,10 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.serviceAccount.name }}
     namespace: {{ .Values.namespace }}
+{{- if .Values.rbac.clusterRole.create }}
 ---
-# ClusterRole for node metrics (needed for cluster overview)
+# ClusterRole for node metrics (needed for cluster overview).
+# Disable with rbac.clusterRole.create=false for namespace-only deployments.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -92,4 +94,5 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.serviceAccount.name }}
     namespace: {{ .Values.namespace }}
+{{- end }}
 {{- end }}

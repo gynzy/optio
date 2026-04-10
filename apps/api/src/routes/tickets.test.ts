@@ -10,27 +10,27 @@ describe("verifyGitHubSignature", () => {
     return "sha256=" + createHmac("sha256", key).update(payload).digest("hex");
   }
 
-  it("accepts a valid signature", () => {
+  it("accepts a valid signature", async () => {
     const signature = sign(body, secret);
-    expect(verifyGitHubSignature(body, signature, secret)).toBe(true);
+    expect(await verifyGitHubSignature(body, signature, secret)).toBe(true);
   });
 
-  it("rejects a signature computed with the wrong secret", () => {
+  it("rejects a signature computed with the wrong secret", async () => {
     const signature = sign(body, "wrong-secret");
-    expect(verifyGitHubSignature(body, signature, secret)).toBe(false);
+    expect(await verifyGitHubSignature(body, signature, secret)).toBe(false);
   });
 
-  it("rejects a completely invalid signature string", () => {
-    expect(verifyGitHubSignature(body, "sha256=invalid", secret)).toBe(false);
+  it("rejects a completely invalid signature string", async () => {
+    expect(await verifyGitHubSignature(body, "sha256=invalid", secret)).toBe(false);
   });
 
-  it("rejects when body differs from what was signed", () => {
+  it("rejects when body differs from what was signed", async () => {
     const signature = sign(Buffer.from("different body"), secret);
-    expect(verifyGitHubSignature(body, signature, secret)).toBe(false);
+    expect(await verifyGitHubSignature(body, signature, secret)).toBe(false);
   });
 
-  it("rejects a signature with wrong length", () => {
-    expect(verifyGitHubSignature(body, "sha256=abc", secret)).toBe(false);
+  it("rejects a signature with wrong length", async () => {
+    expect(await verifyGitHubSignature(body, "sha256=abc", secret)).toBe(false);
   });
 });
 

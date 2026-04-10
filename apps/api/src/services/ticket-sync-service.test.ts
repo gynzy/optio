@@ -11,6 +11,9 @@ vi.mock("../db/schema.js", () => ({
   ticketProviders: {
     enabled: "ticket_providers.enabled",
   },
+  repos: {
+    repoUrl: "repos.repoUrl",
+  },
 }));
 
 vi.mock("@optio/ticket-providers", () => ({
@@ -33,6 +36,10 @@ vi.mock("./repo-service.js", () => ({
   getRepoByUrl: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("./secret-service.js", () => ({
+  retrieveSecret: vi.fn(),
+}));
+
 vi.mock("../logger.js", () => ({
   logger: {
     info: vi.fn(),
@@ -42,27 +49,45 @@ vi.mock("../logger.js", () => ({
 }));
 
 import { db } from "../db/client.js";
+import { ticketProviders, repos } from "../db/schema.js";
 import { getTicketProvider } from "@optio/ticket-providers";
 import * as taskService from "./task-service.js";
 import { taskQueue } from "../workers/task-worker.js";
+import { retrieveSecret } from "./secret-service.js";
 import { syncAllTickets } from "./ticket-sync-service.js";
+
+/**
+ * Mock db.select() to handle two query patterns, matching on the .from() argument:
+ * - db.select().from(ticketProviders).where(...) — returns providers
+ * - db.select({...}).from(repos) — returns configured repos (no .where())
+ */
+function mockDbSelect(providers: any[], configuredRepos: any[] = []) {
+  (db.select as any) = vi.fn().mockImplementation(() => ({
+    from: vi.fn().mockImplementation((table: any) => {
+      if (table === ticketProviders) {
+        return {
+          where: vi.fn().mockResolvedValue(providers),
+        };
+      }
+      if (table === repos) {
+        return Promise.resolve(configuredRepos);
+      }
+      return { where: vi.fn().mockResolvedValue([]) };
+    }),
+  }));
+}
 
 describe("ticket-sync-service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no secrets stored
+    vi.mocked(retrieveSecret).mockRejectedValue(new Error("Secret not found"));
   });
 
   it("syncs new tickets and creates tasks", async () => {
-    // Provider config from DB
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi
-          .fn()
-          .mockResolvedValue([
-            { source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
-          ]),
-      }),
-    });
+    mockDbSelect([
+      { id: "p1", source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
+    ]);
 
     const mockProvider = {
       fetchActionableTickets: vi.fn().mockResolvedValue([
@@ -107,15 +132,9 @@ describe("ticket-sync-service", () => {
   });
 
   it("skips tickets that already have tasks", async () => {
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi
-          .fn()
-          .mockResolvedValue([
-            { source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
-          ]),
-      }),
-    });
+    mockDbSelect([
+      { id: "p1", source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
+    ]);
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockResolvedValue([
@@ -143,15 +162,9 @@ describe("ticket-sync-service", () => {
   });
 
   it("uses codex agent type when ticket has codex label", async () => {
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi
-          .fn()
-          .mockResolvedValue([
-            { source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
-          ]),
-      }),
-    });
+    mockDbSelect([
+      { id: "p1", source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
+    ]);
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockResolvedValue([
@@ -180,17 +193,17 @@ describe("ticket-sync-service", () => {
   });
 
   it("uses ticket repo URL when available", async () => {
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([
-          {
-            source: "github",
-            config: { repoUrl: "https://github.com/fallback/repo" },
-            enabled: true,
-          },
-        ]),
-      }),
-    });
+    mockDbSelect(
+      [
+        {
+          id: "p1",
+          source: "github",
+          config: { repoUrl: "https://github.com/fallback/repo" },
+          enabled: true,
+        },
+      ],
+      [{ repoUrl: "https://github.com/owner/specific-repo" }],
+    );
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockResolvedValue([
@@ -221,11 +234,7 @@ describe("ticket-sync-service", () => {
   });
 
   it("skips tickets without repo URL", async () => {
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([{ source: "github", config: {}, enabled: true }]),
-      }),
-    });
+    mockDbSelect([{ id: "p1", source: "github", config: {}, enabled: true }]);
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockResolvedValue([
@@ -250,11 +259,7 @@ describe("ticket-sync-service", () => {
   });
 
   it("handles provider errors gracefully", async () => {
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([{ source: "github", config: {}, enabled: true }]),
-      }),
-    });
+    mockDbSelect([{ id: "p1", source: "github", config: {}, enabled: true }]);
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockRejectedValue(new Error("API error")),
@@ -265,15 +270,9 @@ describe("ticket-sync-service", () => {
   });
 
   it("continues syncing when comment fails", async () => {
-    (db.select as any) = vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi
-          .fn()
-          .mockResolvedValue([
-            { source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
-          ]),
-      }),
-    });
+    mockDbSelect([
+      { id: "p1", source: "github", config: { repoUrl: "https://github.com/o/r" }, enabled: true },
+    ]);
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockResolvedValue([
@@ -296,5 +295,106 @@ describe("ticket-sync-service", () => {
 
     const count = await syncAllTickets();
     expect(count).toBe(1); // Task still synced despite comment failure
+  });
+
+  it("queries configuredRepos only once even with multiple providers", async () => {
+    mockDbSelect(
+      [
+        {
+          id: "p1",
+          source: "github",
+          config: { repoUrl: "https://github.com/o/r" },
+          enabled: true,
+        },
+        {
+          id: "p2",
+          source: "jira",
+          config: { baseUrl: "https://j.example.com", email: "a@b.com" },
+          enabled: true,
+        },
+      ],
+      [{ repoUrl: "https://github.com/o/r" }],
+    );
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    } as any);
+
+    await syncAllTickets();
+
+    // db.select() should be called exactly twice:
+    // 1. providers query (from ticketProviders)
+    // 2. configuredRepos query (from repos) — only once, not per provider
+    expect(db.select).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses provider config baseUrl for GitLab instead of hardcoded default", async () => {
+    mockDbSelect(
+      [
+        {
+          id: "p1",
+          source: "gitlab",
+          config: { baseUrl: "https://gitlab.corp.example.com" },
+          enabled: true,
+        },
+      ],
+      [], // no configured repos — forces URL construction fallback
+    );
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([
+        {
+          title: "GL task",
+          body: "",
+          source: "gitlab",
+          externalId: "42",
+          url: "",
+          labels: [],
+          repo: "team/project",
+        },
+      ]),
+      fetchTicketComments: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn(),
+    } as any);
+
+    vi.mocked(taskService.listTasks).mockResolvedValue([] as any);
+    vi.mocked(taskService.createTask).mockResolvedValue({ id: "t-1", maxRetries: 3 } as any);
+
+    await syncAllTickets();
+
+    expect(taskService.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoUrl: "https://gitlab.corp.example.com/team/project",
+      }),
+    );
+  });
+
+  it("merges encrypted credentials from secrets store into provider config", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "jira",
+        config: { baseUrl: "https://j.example.com", email: "a@b.com", label: "optio" },
+        enabled: true,
+      },
+    ]);
+
+    // Secret contains the sensitive credentials
+    vi.mocked(retrieveSecret).mockResolvedValue(JSON.stringify({ apiToken: "secret-token" }));
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    } as any);
+
+    await syncAllTickets();
+
+    // The provider should receive the merged config with credentials
+    const provider = vi.mocked(getTicketProvider).mock.results[0].value;
+    const configPassedToProvider = provider.fetchActionableTickets.mock.calls[0][0];
+    expect(configPassedToProvider.apiToken).toBe("secret-token");
+    expect(configPassedToProvider.baseUrl).toBe("https://j.example.com");
+
+    // Secret should be retrieved with the provider ID
+    expect(retrieveSecret).toHaveBeenCalledWith("ticket-provider:p1", "ticket-provider");
   });
 });

@@ -119,6 +119,82 @@ describe("DEFAULT_PROMPT_TEMPLATE", () => {
     expect(result).toContain("Implements task abc-123");
     expect(result).not.toContain("Closes #");
   });
+
+  it("includes --draft flag when DRAFT_PR is true", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      DRAFT_PR: "true",
+      ISSUE_NUMBER: "",
+    });
+    expect(result).toContain("--draft");
+    expect(result).toContain("opened as a draft");
+  });
+
+  it("does not include --draft flag when DRAFT_PR is false", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      DRAFT_PR: "false",
+      ISSUE_NUMBER: "",
+    });
+    expect(result).not.toContain("--draft");
+    expect(result).not.toContain("opened as a draft");
+  });
+});
+
+describe("PLANNING_MODE in DEFAULT_PROMPT_TEMPLATE", () => {
+  it("includes planning mode instructions when PLANNING_MODE is truthy", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      ISSUE_NUMBER: "",
+      PLANNING_MODE: "true",
+    });
+    expect(result).toContain("PLANNING MODE");
+    expect(result).toContain("DO NOT create/modify source files");
+    expect(result).toContain("implementation plan");
+  });
+
+  it("does not include planning mode instructions when PLANNING_MODE is empty", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      ISSUE_NUMBER: "",
+      PLANNING_MODE: "",
+    });
+    expect(result).not.toContain("PLANNING MODE");
+    expect(result).not.toContain("DO NOT create/modify source files");
+  });
+
+  it("does not include planning mode instructions when PLANNING_MODE is not set", () => {
+    const result = renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, {
+      TASK_FILE: ".optio/task.md",
+      BRANCH_NAME: "optio/task-abc",
+      TASK_ID: "abc-123",
+      TASK_TITLE: "Fix login bug",
+      REPO_NAME: "org/repo",
+      AUTO_MERGE: "false",
+      ISSUE_NUMBER: "",
+    });
+    expect(result).not.toContain("PLANNING MODE");
+  });
 });
 
 describe("TASK_FILE_PATH", () => {

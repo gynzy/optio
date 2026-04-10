@@ -11,6 +11,8 @@ export enum TaskState {
   CANCELLED = "cancelled",
 }
 
+export type TaskActivitySubstate = "active" | "stalled" | "recovered";
+
 export interface Task {
   id: string;
   title: string;
@@ -28,10 +30,19 @@ export interface Task {
   metadata?: Record<string, unknown>;
   retryCount: number;
   maxRetries: number;
+  lastActivityAt?: Date;
+  activitySubstate?: TaskActivitySubstate;
   createdAt: Date;
   updatedAt: Date;
   startedAt?: Date;
   completedAt?: Date;
+}
+
+export interface StallInfo {
+  isStalled: boolean;
+  silentForMs: number;
+  thresholdMs: number;
+  lastLogSummary?: string;
 }
 
 export interface TaskEvent {
@@ -52,6 +63,26 @@ export interface TaskComment {
   content: string;
   createdAt: Date;
   updatedAt: Date;
+  user?: {
+    id: string;
+    displayName: string;
+    avatarUrl?: string;
+  };
+}
+
+export type TaskMessageMode = "soft" | "interrupt";
+
+export interface TaskMessage {
+  id: string;
+  taskId: string;
+  userId?: string;
+  content: string;
+  mode: TaskMessageMode;
+  workspaceId?: string;
+  createdAt: Date;
+  deliveredAt?: Date | null;
+  ackedAt?: Date | null;
+  deliveryError?: string | null;
   user?: {
     id: string;
     displayName: string;
@@ -98,41 +129,4 @@ export interface ReviewDraft {
   submittedAt: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface WorkflowStep {
-  id: string;
-  title: string;
-  prompt: string;
-  repoUrl?: string;
-  agentType?: string;
-  dependsOn?: string[];
-  condition?: {
-    type: "always" | "if_pr_opened" | "if_ci_passes" | "if_cost_under";
-    value?: string;
-  };
-}
-
-export interface WorkflowTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  workspaceId?: string;
-  steps: WorkflowStep[];
-  status: "draft" | "active" | "archived";
-  createdBy?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface WorkflowRun {
-  id: string;
-  workflowTemplateId: string;
-  workspaceId?: string;
-  status: "running" | "paused" | "completed" | "failed" | "cancelled";
-  taskMapping?: Record<string, string>;
-  createdBy?: string;
-  createdAt: Date;
-  updatedAt: Date;
-  completedAt?: Date;
 }

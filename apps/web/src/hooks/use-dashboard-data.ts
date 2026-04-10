@@ -20,37 +20,19 @@ export function useDashboardData() {
 
   const refresh = useCallback(() => {
     Promise.all([
-      api.listTasks({ limit: 100 }),
+      api.getTaskStats(),
+      api.listTasks({ limit: 5 }),
       api.getClusterOverview().catch(() => null),
       api.listRepos().catch(() => ({ repos: [] })),
       api
         .listSessions({ state: "active", limit: 5 })
         .catch(() => ({ sessions: [], activeCount: 0 })),
     ])
-      .then(([tasksRes, clusterRes, reposRes, sessionsRes]) => {
+      .then(([statsRes, tasksRes, clusterRes, reposRes, sessionsRes]) => {
         setActiveSessions(sessionsRes.sessions);
         setActiveSessionCount(sessionsRes.activeCount);
-        const tasks = tasksRes.tasks;
-        const prOpenedTasks = tasks.filter((t: any) => t.state === "pr_opened");
-        const ciCount = prOpenedTasks.filter((t: any) => {
-          const checks = t.prChecksStatus;
-          const review = t.prReviewStatus;
-          if (review && !["none", "pending"].includes(review)) return false;
-          return !checks || ["none", "pending", "failing"].includes(checks);
-        }).length;
-        const reviewCount = prOpenedTasks.length - ciCount;
-        setTaskStats({
-          total: tasks.length,
-          queued: tasks.filter((t: any) => ["pending", "queued", "provisioning"].includes(t.state))
-            .length,
-          running: tasks.filter((t: any) => t.state === "running").length,
-          ci: ciCount,
-          review: reviewCount,
-          needsAttention: tasks.filter((t: any) => t.state === "needs_attention").length,
-          failed: tasks.filter((t: any) => t.state === "failed").length,
-          completed: tasks.filter((t: any) => t.state === "completed").length,
-        });
-        setRecentTasks(tasks.slice(0, 5));
+        setTaskStats(statsRes.stats);
+        setRecentTasks(tasksRes.tasks);
         setRepoCount(reposRes.repos.length);
         if (clusterRes) {
           setCluster(clusterRes);
@@ -116,10 +98,18 @@ export function useDashboardData() {
     };
     window.addEventListener("optio:auth-failed", onAuthFailed);
 
+    // Listen for auth:status_changed (token updated via secrets page) to immediately
+    // re-fetch usage so the banner disappears as soon as the watermark moves forward
+    const onAuthStatusChanged = () => {
+      refreshUsage();
+    };
+    window.addEventListener("optio:auth-status-changed", onAuthStatusChanged);
+
     return () => {
       clearInterval(interval);
       clearInterval(usageInterval);
       window.removeEventListener("optio:auth-failed", onAuthFailed);
+      window.removeEventListener("optio:auth-status-changed", onAuthStatusChanged);
     };
   }, [refresh, refreshUsage]);
 
