@@ -38,7 +38,8 @@ api:
   # ""     = disabled
   antiAffinity: soft
   # Kubernetes nodeSelector for API pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   # Pod disruption budget. Enable when running multiple replicas to ensure
   # availability during voluntary disruptions (rolling updates, node drains).
   pdb:
@@ -83,7 +84,8 @@ web:
   # Pod anti-affinity (same options as api.antiAffinity)
   antiAffinity: soft
   # Kubernetes nodeSelector for web pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   # Pod disruption budget (same options as api.pdb)
   pdb:
     enabled: false
@@ -109,7 +111,8 @@ optio:
     tag: latest
     pullPolicy: IfNotPresent
   # Kubernetes nodeSelector for the optio assistant pod (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   resources:
     requests:
       cpu: 100m
@@ -206,7 +209,8 @@ postgresql:
       cpu: 500m
       memory: 512Mi
   # Kubernetes nodeSelector for PostgreSQL pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   storage:
     size: 5Gi
   auth:
@@ -230,7 +234,8 @@ redis:
     repository: redis
     tag: 7-alpine
   # Kubernetes nodeSelector for Redis pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   resources:
     requests:
       cpu: 50m
