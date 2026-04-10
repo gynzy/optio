@@ -15,7 +15,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 api:
   image:
-    repository: ghcr.io/jonwiggins/optio-api
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-api
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
@@ -63,7 +63,7 @@ api:
 # ──────────────────────────────────────────────────────────────────────────────
 web:
   image:
-    repository: ghcr.io/jonwiggins/optio-web
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-web
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
@@ -101,7 +101,7 @@ web:
 optio:
   enabled: true
   image:
-    repository: ghcr.io/jonwiggins/optio-optio
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-optio
     tag: latest
     pullPolicy: IfNotPresent
   resources:
@@ -117,14 +117,14 @@ optio:
 # ──────────────────────────────────────────────────────────────────────────────
 agent:
   image:
-    repository: ghcr.io/jonwiggins/optio-agent-base
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base
     tag: latest
     pullPolicy: IfNotPresent
     # Prefix used to resolve preset images (base, node, python, go, rust, full, dind).
     # The full image name is: {prefix}{preset}:{tag}
-    # GHCR: ghcr.io/jonwiggins/optio-agent-  →  ghcr.io/jonwiggins/optio-agent-node:latest
+    # GAR: europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-  →  .../optio-agent-node:latest
     # Local: optio-                           →  optio-node:latest
-    prefix: "ghcr.io/jonwiggins/optio-agent-"
+    prefix: "europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-"
   imagePullPolicy: IfNotPresent
   # Envoy sidecar proxy for secret isolation.
   # When repos.secretProxy is enabled, this image is added as a sidecar to agent pods.
@@ -171,6 +171,17 @@ agent:
 # ──────────────────────────────────────────────────────────────────────────────
 networkPolicy:
   enabled: false  # Set to true when your cluster supports NetworkPolicy
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cloud SQL Proxy sidecar (for GCP Cloud SQL connections)
+# ──────────────────────────────────────────────────────────────────────────────
+cloudSqlProxy:
+  enabled: false
+  image:
+    repository: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+    tag: "2.15.0"
+  instanceConnectionName: ""  # e.g. project:region:instance
+  credentialsSecret: cloudsql-proxy  # K8s secret name containing service_json key
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PostgreSQL (built-in)
@@ -326,7 +337,6 @@ credentialSecret: ""
 # ──────────────────────────────────────────────────────────────────────────────
 ingress:
   enabled: false
-  className: nginx
   # The ingress template automatically blocks /api/internal/* from public traffic
   # via an nginx server-snippet. These endpoints use bearer token auth (not session
   # auth) and must only be reachable within the cluster. If using a non-nginx ingress
@@ -350,6 +360,15 @@ ingress:
         - path: /ws
           pathType: Prefix
           service: api
+  # GKE-native ingress. Uses Google-managed SSL certificates and static IP
+  # instead of cert-manager. Set className to "gce" when using this.
+  gke:
+    enabled: false
+    staticIpName: ""
+    cloudArmorPolicy: ""
+    managedCertificate:
+      enabled: false
+      domains: []
   # Manual TLS configuration. When certManager is enabled, TLS entries are
   # generated automatically from hosts — this field is only needed for
   # manual certificate management.
