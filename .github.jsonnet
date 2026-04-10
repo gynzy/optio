@@ -94,7 +94,7 @@ local ci = base.pipeline(
     )
     for preset in agentPresets
   ],
-  event={ push: { branches: ['main'] }, pull_request: { branches: ['main'] } },
+  event={ push: { branches: ['gynzy'] }, pull_request: { branches: ['gynzy'] } },
 );
 
 // ── Build Agent Images ──────────────────────────────────────────────────────

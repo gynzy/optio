@@ -927,7 +927,7 @@
 "on":
   "pull_request":
     "branches":
-    - "main"
+    - "gynzy"
   "push":
     "branches":
-    - "main"
+    - "gynzy"
