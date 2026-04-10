@@ -27,6 +27,10 @@ export interface ContainerSpec {
   extraVolumes?: ExtraVolume[];
   /** Optional extra volume mounts for the main container. */
   extraVolumeMounts?: ExtraVolumeMount[];
+  /** Kubernetes nodeSelector for pod scheduling (e.g. pin to a node pool). */
+  nodeSelector?: Record<string, string>;
+  /** Kubernetes tolerations for pod scheduling (raw V1Toleration objects). */
+  tolerations?: unknown[];
 }
 
 export interface VolumeMount {

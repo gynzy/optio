@@ -235,6 +235,14 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
       podSpec.hostUsers = false;
     }
 
+    // Node scheduling constraints (e.g. pin agent pods to a dedicated node pool)
+    if (spec.nodeSelector && Object.keys(spec.nodeSelector).length > 0) {
+      podSpec.nodeSelector = spec.nodeSelector;
+    }
+    if (spec.tolerations && spec.tolerations.length > 0) {
+      podSpec.tolerations = spec.tolerations as V1PodSpec["tolerations"];
+    }
+
     const metadata = new V1ObjectMeta();
     metadata.name = podName;
     metadata.namespace = this.namespace;

@@ -143,6 +143,16 @@ agent:
     size: 10Gi
     accessModes:
       - ReadWriteOnce
+  # Kubernetes scheduling constraints for agent pods.
+  # nodeSelector pins pods to nodes with matching labels (e.g. a dedicated node pool).
+  # tolerations allow pods to schedule on tainted nodes.
+  nodeSelector: {}
+  #  cloud.google.com/gke-nodepool: agents
+  tolerations: []
+  #  - key: optio.dev/agents
+  #    operator: Equal
+  #    value: "true"
+  #    effect: NoSchedule
   # Shared cache directory PVCs (opt-in per repo).
   # Controls storage class and size limits for cache directories.
   cache:
