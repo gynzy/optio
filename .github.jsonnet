@@ -31,6 +31,7 @@ local pnpmJob(name, commands) =
     name,
     image=nodeImage,
     useCredentials=false,
+    runsOn=['ubuntu-latest'],
     steps=[
       checkoutAndPnpm(),
     ] + [
@@ -61,6 +62,7 @@ local ci = base.pipeline(
       'build-' + svc.name,
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       steps=[
         misc.checkout(ref=imageRef),
         buildImage('optio-' + svc.name, svc.dockerfile),
@@ -72,6 +74,7 @@ local ci = base.pipeline(
       'build-agent-base',
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       steps=[
         misc.checkout(ref=imageRef),
         buildImage('optio-agent-base', 'images/base.Dockerfile'),
@@ -82,6 +85,7 @@ local ci = base.pipeline(
       'build-agent-' + preset,
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       needs=['build-agent-base'],
       steps=[
         misc.checkout(ref=imageRef),
@@ -106,6 +110,7 @@ local buildImages = base.pipeline(
       'build-base',
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       steps=[
         misc.checkout(),
         buildImage('optio-agent-base', 'images/base.Dockerfile'),
@@ -116,6 +121,7 @@ local buildImages = base.pipeline(
       'build-' + preset,
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       needs=['build-base'],
       steps=[
         misc.checkout(),
@@ -148,6 +154,7 @@ local release = base.pipeline(
       'deploy',
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       ifClause=prodIfClause,
       steps=[
         misc.checkout(),
@@ -213,6 +220,7 @@ local deploySite = base.pipeline(
       'build',
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       steps=[
         checkoutAndPnpm(),
         base.step('Build site', 'pnpm turbo build --filter=@optio/site'),
@@ -223,6 +231,7 @@ local deploySite = base.pipeline(
       'deploy',
       image=nodeImage,
       useCredentials=false,
+      runsOn=['ubuntu-latest'],
       needs=['build'],
       steps=[
         base.action('Deploy to Pages', 'actions/deploy-pages@v4', id='deployment'),

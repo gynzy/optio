@@ -3,7 +3,8 @@
   "build-agent-base":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -77,7 +78,8 @@
       "image": "mirror.gcr.io/node:22"
     "needs":
     - "build-agent-base"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -152,7 +154,8 @@
       "image": "mirror.gcr.io/node:22"
     "needs":
     - "build-agent-base"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -227,7 +230,8 @@
       "image": "mirror.gcr.io/node:22"
     "needs":
     - "build-agent-base"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -302,7 +306,8 @@
       "image": "mirror.gcr.io/node:22"
     "needs":
     - "build-agent-base"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -377,7 +382,8 @@
       "image": "mirror.gcr.io/node:22"
     "needs":
     - "build-agent-base"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -450,7 +456,8 @@
   "build-api":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -522,7 +529,8 @@
   "build-optio":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -594,7 +602,8 @@
   "build-site":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -659,7 +668,8 @@
   "build-web":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -731,7 +741,8 @@
   "format":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -796,7 +807,8 @@
   "test":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
@@ -861,7 +873,8 @@
   "typecheck":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"

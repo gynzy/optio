@@ -4,7 +4,8 @@
     "container":
       "image": "mirror.gcr.io/node:22"
     "if": "${{ github.event.deployment.environment == 'production' }}"
-    "runs-on": "arc-runner-2"
+    "runs-on":
+    - "ubuntu-latest"
     "steps":
     - "id": "check-binaries"
       "name": "check for ssh/git binaries"
