@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { TaskState } from "@optio/shared";
+import { TaskState, isTaskStalled, getSilentDuration } from "@optio/shared";
 import * as taskService from "../services/task-service.js";
 import * as dependencyService from "../services/dependency-service.js";
 import { taskQueue } from "../workers/task-worker.js";
@@ -30,6 +30,18 @@ const searchQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).optional(),
 });
 
+const exportLogsQuerySchema = z.object({
+  format: z.string().optional(),
+  search: z.string().optional(),
+  logType: z.string().optional(),
+});
+
+const reorderTasksSchema = z.object({
+  taskIds: z.array(z.string()),
+});
+
+const idParamsSchema = z.object({ id: z.string() });
+
 const logsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(10000).default(200),
   offset: z.coerce.number().int().min(0).default(0),
@@ -45,7 +57,7 @@ const createTaskSchema = z.object({
     .string()
     .regex(/^[a-zA-Z0-9._\/-]+$/, "Invalid branch name")
     .optional(),
-  agentType: z.enum(["claude-code", "codex", "copilot"]).optional(),
+  agentType: z.enum(["claude-code", "codex", "copilot", "opencode"]).optional(),
   ticketSource: z.string().optional(),
   ticketExternalId: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -69,7 +81,23 @@ export async function taskRoutes(app: FastifyInstance) {
       offset,
       workspaceId,
     });
-    reply.send({ tasks: taskList, limit, offset });
+
+    // Enrich running tasks with isStalled flag (lightweight — no lastLogSummary)
+    const globalThreshold = parseInt(process.env.OPTIO_STALL_THRESHOLD_MS ?? "300000", 10);
+    const now = new Date();
+    const enriched = taskList.map((t) => ({
+      ...t,
+      isStalled: isTaskStalled(t, now, globalThreshold),
+    }));
+
+    reply.send({ tasks: enriched, limit, offset });
+  });
+
+  // Aggregated pipeline stats (server-side counts — no pagination limits)
+  app.get("/api/tasks/stats", async (req, reply) => {
+    const workspaceId = req.user?.workspaceId ?? null;
+    const stats = await taskService.getTaskStats(workspaceId);
+    reply.send({ stats });
   });
 
   // Search tasks with advanced filtering and cursor-based pagination
@@ -99,7 +127,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Get task (enriched with pendingReason and pipelineProgress)
   app.get("/api/tasks/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const task = await taskService.getTask(id);
     if (!task) return reply.status(404).send({ error: "Task not found" });
     const wsId = req.user?.workspaceId;
@@ -119,7 +147,27 @@ export async function taskRoutes(app: FastifyInstance) {
     const { getPipelineProgress } = await import("../services/subtask-service.js");
     pipelineProgress = await getPipelineProgress(id);
 
-    reply.send({ task, pendingReason, pipelineProgress });
+    // Compute stall info for running tasks
+    let stallInfo = null;
+    if (task.state === "running" && task.lastActivityAt) {
+      const repoConfig = await taskService.getRepoConfig(task.repoUrl);
+      const thresholdMs = taskService.getStallThresholdForRepo(repoConfig);
+      const now = new Date();
+      const stalled = isTaskStalled(task, now, thresholdMs);
+      const silentForMs = getSilentDuration(task, now);
+
+      // Only fetch last log summary for stalled tasks (expensive query)
+      const lastLogSummary = stalled ? await taskService.getLastLogSummary(id) : undefined;
+
+      stallInfo = {
+        isStalled: stalled,
+        silentForMs,
+        thresholdMs,
+        lastLogSummary,
+      };
+    }
+
+    reply.send({ task, pendingReason, pipelineProgress, stallInfo });
   });
 
   // Create task — member+
@@ -190,7 +238,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Cancel task — member+
   app.post("/api/tasks/:id/cancel", { preHandler: [requireRole("member")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await taskService.getTask(id);
     if (!existing) return reply.status(404).send({ error: "Task not found" });
     const wsId = req.user?.workspaceId;
@@ -209,7 +257,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Retry task — member+
   app.post("/api/tasks/:id/retry", { preHandler: [requireRole("member")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await taskService.getTask(id);
     if (!existing) return reply.status(404).send({ error: "Task not found" });
     const wsId = req.user?.workspaceId;
@@ -242,7 +290,7 @@ export async function taskRoutes(app: FastifyInstance) {
     "/api/tasks/:id/force-redo",
     { preHandler: [requireRole("member")] },
     async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamsSchema.parse(req.params);
       const existing = await taskService.getTask(id);
       if (!existing) return reply.status(404).send({ error: "Task not found" });
       const wsId = req.user?.workspaceId;
@@ -273,7 +321,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Get task logs
   app.get("/api/tasks/:id/logs", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const task = await taskService.getTask(id);
     if (!task) return reply.status(404).send({ error: "Task not found" });
     const wsId = req.user?.workspaceId;
@@ -296,8 +344,8 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Export task logs — verify workspace
   app.get("/api/tasks/:id/logs/export", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const query = req.query as { format?: string; search?: string; logType?: string };
+    const { id } = idParamsSchema.parse(req.params);
+    const query = exportLogsQuerySchema.parse(req.query);
     const format = query.format ?? "json";
 
     const task = await taskService.getTask(id);
@@ -405,7 +453,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Get task events
   app.get("/api/tasks/:id/events", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const task = await taskService.getTask(id);
     if (!task) return reply.status(404).send({ error: "Task not found" });
     const wsId = req.user?.workspaceId;
@@ -418,7 +466,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Launch a review for a task — member+
   app.post("/api/tasks/:id/review", { preHandler: [requireRole("member")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await taskService.getTask(id);
     if (!existing) return reply.status(404).send({ error: "Task not found" });
     const wsId = req.user?.workspaceId;
@@ -439,7 +487,7 @@ export async function taskRoutes(app: FastifyInstance) {
     "/api/tasks/:id/run-now",
     { preHandler: [requireRole("member")] },
     async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamsSchema.parse(req.params);
       const existing = await taskService.getTask(id);
       if (!existing) return reply.status(404).send({ error: "Task not found" });
       const wsId = req.user?.workspaceId;
@@ -479,10 +527,11 @@ export async function taskRoutes(app: FastifyInstance) {
 
   // Reorder tasks (update priorities) — member+, workspace-scoped
   app.post("/api/tasks/reorder", { preHandler: [requireRole("member")] }, async (req, reply) => {
-    const body = req.body as { taskIds: string[] };
-    if (!Array.isArray(body.taskIds)) {
+    const reorderParsed = reorderTasksSchema.safeParse(req.body);
+    if (!reorderParsed.success) {
       return reply.status(400).send({ error: "taskIds array required" });
     }
+    const body = reorderParsed.data;
     const wsId = req.user?.workspaceId;
     // Verify all tasks belong to the user's workspace before reordering
     if (wsId) {

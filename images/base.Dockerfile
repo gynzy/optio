@@ -17,10 +17,20 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# GitLab CLI
+ARG GLAB_VERSION=1.91.0
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_${ARCH}.deb" -o /tmp/glab.deb \
+    && dpkg -i /tmp/glab.deb \
+    && rm /tmp/glab.deb
+
 # Node.js 22 (needed for Claude Code)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Verify Node ships OpenSSL >= 3.5 for post-quantum TLS (X25519MLKEM768)
+RUN node -e 'const [maj,min] = process.versions.openssl.split(".").map(Number); if (maj < 3 || (maj === 3 && min < 5)) { console.error("OpenSSL " + process.versions.openssl + " too old; need >= 3.5"); process.exit(1); }'
 
 # pnpm (installed globally before switching to non-root user)
 RUN corepack enable && corepack prepare pnpm@10 --activate
@@ -28,8 +38,17 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 # Claude Code
 RUN npm install -g @anthropic-ai/claude-code
 
-# GitHub Copilot CLI
-RUN npm install -g @github/copilot
+# GitHub Copilot CLI (pinned + best-effort — package may be temporarily unavailable)
+RUN npm install -g @github/copilot@1.0.20 || echo "WARN: @github/copilot install failed; copilot agent will not be available in this image"
+
+# OpenCode CLI (experimental — pinned version for stable JSON output)
+ARG OPENCODE_VERSION=latest
+RUN curl -fsSL https://opencode.ai/install | bash \
+  && mv /root/.opencode/bin/opencode /usr/local/bin/ \
+  && rm -rf /root/.opencode
+
+# Google Gemini CLI
+RUN npm install -g @google/gemini-cli
 
 # Python 3 (minimal — needed for setup file injection)
 RUN apt-get update && apt-get install -y python3 \
@@ -41,10 +60,11 @@ COPY scripts/agent-entrypoint.sh /opt/optio/entrypoint.sh
 COPY scripts/repo-init.sh /opt/optio/repo-init.sh
 RUN chmod +x /opt/optio/entrypoint.sh /opt/optio/repo-init.sh
 
-# Optio credential helpers for dynamic GitHub token refresh
+# Optio credential helpers for dynamic token refresh (GitHub + GitLab)
 COPY scripts/optio-git-credential /usr/local/bin/optio-git-credential
 COPY scripts/optio-gh-wrapper /usr/local/bin/optio-gh-wrapper
-RUN chmod +x /usr/local/bin/optio-git-credential /usr/local/bin/optio-gh-wrapper
+COPY scripts/optio-glab-wrapper /usr/local/bin/optio-glab-wrapper
+RUN chmod +x /usr/local/bin/optio-git-credential /usr/local/bin/optio-gh-wrapper /usr/local/bin/optio-glab-wrapper
 
 # Non-root user
 RUN useradd -m -s /bin/bash agent \

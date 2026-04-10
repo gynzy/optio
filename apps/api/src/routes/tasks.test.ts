@@ -13,6 +13,7 @@ const mockForceRedoTask = vi.fn();
 const mockGetTaskLogs = vi.fn();
 const mockGetAllTaskLogs = vi.fn();
 const mockGetTaskEvents = vi.fn();
+const mockGetTaskStats = vi.fn();
 
 vi.mock("../services/task-service.js", () => ({
   listTasks: (...args: unknown[]) => mockListTasks(...args),
@@ -24,6 +25,7 @@ vi.mock("../services/task-service.js", () => ({
   getTaskLogs: (...args: unknown[]) => mockGetTaskLogs(...args),
   getAllTaskLogs: (...args: unknown[]) => mockGetAllTaskLogs(...args),
   getTaskEvents: (...args: unknown[]) => mockGetTaskEvents(...args),
+  getTaskStats: (...args: unknown[]) => mockGetTaskStats(...args),
 }));
 
 const mockAddDependencies = vi.fn();
@@ -549,5 +551,59 @@ describe("POST /api/tasks/reorder", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe("taskIds array required");
+  });
+});
+
+describe("GET /api/tasks/stats", () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    app = await buildTestApp();
+  });
+
+  it("returns aggregated task stats", async () => {
+    mockGetTaskStats.mockResolvedValue({
+      total: 42,
+      queued: 3,
+      running: 2,
+      ci: 1,
+      review: 1,
+      needsAttention: 1,
+      failed: 5,
+      completed: 30,
+    });
+
+    const res = await app.inject({ method: "GET", url: "/api/tasks/stats" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.stats.total).toBe(42);
+    expect(body.stats.queued).toBe(3);
+    expect(body.stats.running).toBe(2);
+    expect(body.stats.ci).toBe(1);
+    expect(body.stats.review).toBe(1);
+    expect(body.stats.needsAttention).toBe(1);
+    expect(body.stats.failed).toBe(5);
+    expect(body.stats.completed).toBe(30);
+    expect(mockGetTaskStats).toHaveBeenCalledWith("ws-1");
+  });
+
+  it("passes workspace ID from the authenticated user", async () => {
+    mockGetTaskStats.mockResolvedValue({
+      total: 0,
+      queued: 0,
+      running: 0,
+      ci: 0,
+      review: 0,
+      needsAttention: 0,
+      failed: 0,
+      completed: 0,
+    });
+
+    const res = await app.inject({ method: "GET", url: "/api/tasks/stats" });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockGetTaskStats).toHaveBeenCalledWith("ws-1");
   });
 });

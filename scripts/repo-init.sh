@@ -5,10 +5,19 @@ echo "[optio] Initializing repo pod"
 echo "[optio] Repo: ${OPTIO_REPO_URL} (branch: ${OPTIO_REPO_BRANCH})"
 
 # Configure git author for initial clone (overridden per-worktree at task exec time)
-git config --global user.name "${GITHUB_APP_BOT_NAME:-Optio Agent}"
-git config --global user.email "${GITHUB_APP_BOT_EMAIL:-optio-agent@noreply.github.com}"
+git config --global user.name "${GIT_BOT_NAME:-${GITHUB_APP_BOT_NAME:-Optio Agent}}"
+git config --global user.email "${GIT_BOT_EMAIL:-${GITHUB_APP_BOT_EMAIL:-optio-agent@noreply.github.com}}"
 
-# Set up GitHub credentials for initial clone.
+# Detect git platform from repo URL
+OPTIO_GIT_HOST=""
+case "${OPTIO_REPO_URL}" in
+  *gitlab*) OPTIO_GIT_HOST="gitlab" ;;
+  *github*) OPTIO_GIT_HOST="github" ;;
+  *)        OPTIO_GIT_HOST="github" ;; # default
+esac
+echo "[optio] Detected git platform: ${OPTIO_GIT_HOST}"
+
+# Set up git credentials for initial clone.
 # Priority: Envoy secret proxy > dynamic credential helper > static PAT fallback.
 # Dynamic credential helpers are re-configured per-task at exec time by the API server.
 if [ "${OPTIO_SECRET_PROXY:-}" = "true" ]; then
@@ -33,16 +42,45 @@ elif [ -n "${OPTIO_GIT_CREDENTIAL_URL:-}" ] && [ -f /usr/local/bin/optio-git-cre
   # Dynamic credential helper — fetches token from Optio API
   git config --global credential.helper '/usr/local/bin/optio-git-credential'
   echo "[optio] Dynamic git credential helper configured"
+  # Authenticate glab CLI if GitLab token is available
+  if [ -n "${GITLAB_TOKEN:-}" ] && command -v glab >/dev/null 2>&1; then
+    GITLAB_HOST="gitlab.com"
+    case "${OPTIO_REPO_URL}" in
+      *://*) GITLAB_HOST=$(echo "${OPTIO_REPO_URL}" | sed -E 's|.*://([^/]+).*|\1|') ;;
+    esac
+    glab auth login --hostname "${GITLAB_HOST}" --token "${GITLAB_TOKEN}" 2>/dev/null || true
+    echo "[optio] GitLab CLI authenticated (host: ${GITLAB_HOST})"
+  fi
 
-elif [ -n "${GITHUB_TOKEN:-}" ]; then
-  # Static PAT fallback
+elif [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GITLAB_TOKEN:-}" ]; then
+  # Static PAT fallback — configure credentials for the detected platform
   git config --global credential.helper store
-  echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+  : > ~/.git-credentials
   chmod 600 ~/.git-credentials
-  echo "[optio] Git credentials configured (static token)"
 
-  echo "${GITHUB_TOKEN}" | gh auth login --with-token 2>/dev/null || true
-  echo "[optio] GitHub CLI configured"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    echo "https://x-access-token:${GITHUB_TOKEN}@github.com" >> ~/.git-credentials
+    echo "${GITHUB_TOKEN}" | gh auth login --with-token 2>/dev/null || true
+    echo "[optio] GitHub credentials configured"
+  fi
+
+  if [ -n "${GITLAB_TOKEN:-}" ]; then
+    # Extract GitLab host from repo URL, default to gitlab.com
+    GITLAB_HOST="gitlab.com"
+    case "${OPTIO_REPO_URL}" in
+      *://*)
+        GITLAB_HOST=$(echo "${OPTIO_REPO_URL}" | sed -E 's|.*://([^/]+).*|\1|')
+        ;;
+    esac
+    echo "https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}" >> ~/.git-credentials
+    # Authenticate glab CLI if available
+    if command -v glab >/dev/null 2>&1; then
+      glab auth login --hostname "${GITLAB_HOST}" --token "${GITLAB_TOKEN}" 2>/dev/null || true
+    fi
+    echo "[optio] GitLab credentials configured (host: ${GITLAB_HOST})"
+  fi
+
+  echo "[optio] Git credentials configured (static token)"
 fi
 
 # Rewrite SSH URLs to HTTPS so submodules using SSH can authenticate via HTTPS credentials

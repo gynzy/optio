@@ -32,16 +32,18 @@ vi.mock("../logger.js", () => ({
 
 // Mock encrypt/decrypt from secret-service
 const mockEncrypt = vi.fn().mockImplementation((plaintext: string) => ({
-  encrypted: Buffer.from(`enc:${plaintext}`),
+  alg: 1,
+  ciphertext: Buffer.from(`enc:${plaintext}`),
   iv: Buffer.from("mock-iv-1234567"),
   authTag: Buffer.from("mock-auth-tag12"),
 }));
-const mockDecrypt = vi.fn().mockImplementation((encrypted: Buffer) => {
-  const str = encrypted.toString();
+const mockDecrypt = vi.fn().mockImplementation((blob: { ciphertext: Buffer }) => {
+  const str = blob.ciphertext.toString();
   return str.startsWith("enc:") ? str.slice(4) : str;
 });
 
 vi.mock("./secret-service.js", () => ({
+  ALG_AES_256_GCM_V1: 1,
   encrypt: (...args: unknown[]) => mockEncrypt(...args),
   decrypt: (...args: unknown[]) => mockDecrypt(...args),
 }));
@@ -89,31 +91,31 @@ function makeDbRowWithSecret(secret: string, overrides: Record<string, unknown> 
 }
 
 describe("signPayload", () => {
-  it("produces a valid HMAC-SHA256 hex signature", () => {
+  it("produces a valid HMAC-SHA256 hex signature", async () => {
     const payload = JSON.stringify({ event: "task.completed", data: { taskId: "123" } });
     const secret = "test-secret-key";
-    const signature = signPayload(payload, secret);
+    const signature = await signPayload(payload, secret);
 
     const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
     expect(signature).toBe(expected);
   });
 
-  it("produces different signatures for different secrets", () => {
+  it("produces different signatures for different secrets", async () => {
     const payload = JSON.stringify({ event: "task.completed" });
-    const sig1 = signPayload(payload, "secret-1");
-    const sig2 = signPayload(payload, "secret-2");
+    const sig1 = await signPayload(payload, "secret-1");
+    const sig2 = await signPayload(payload, "secret-2");
     expect(sig1).not.toBe(sig2);
   });
 
-  it("produces different signatures for different payloads", () => {
+  it("produces different signatures for different payloads", async () => {
     const secret = "same-secret";
-    const sig1 = signPayload(JSON.stringify({ event: "task.completed" }), secret);
-    const sig2 = signPayload(JSON.stringify({ event: "task.failed" }), secret);
+    const sig1 = await signPayload(JSON.stringify({ event: "task.completed" }), secret);
+    const sig2 = await signPayload(JSON.stringify({ event: "task.failed" }), secret);
     expect(sig1).not.toBe(sig2);
   });
 
-  it("returns a 64-character hex string", () => {
-    const signature = signPayload("test", "secret");
+  it("returns a 64-character hex string", async () => {
+    const signature = await signPayload("test", "secret");
     expect(signature).toMatch(/^[0-9a-f]{64}$/);
   });
 });
@@ -149,7 +151,10 @@ describe("webhook CRUD", () => {
         secret: "my-secret",
       });
 
-      expect(mockEncrypt).toHaveBeenCalledWith("my-secret");
+      expect(mockEncrypt).toHaveBeenCalledWith(
+        "my-secret",
+        Buffer.from("webhook:https://example.com/hook:secret"),
+      );
       expect(result.secret).toBe("my-secret");
       expect(result.id).toBe("wh-1");
     });

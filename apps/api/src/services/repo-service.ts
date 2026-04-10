@@ -1,12 +1,13 @@
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { repos, workspaces } from "../db/schema.js";
-import { encrypt, decrypt } from "./secret-service.js";
-import { normalizeRepoUrl } from "@optio/shared";
+import { encrypt, decrypt, ALG_AES_256_GCM_V1 } from "./secret-service.js";
+import { normalizeRepoUrl, parseRepoUrl } from "@optio/shared";
 
 export interface RepoRecord {
   id: string;
   repoUrl: string;
+  gitPlatform: string;
   workspaceId: string | null;
   fullName: string;
   defaultBranch: string;
@@ -16,6 +17,7 @@ export interface RepoRecord {
   setupCommands: string | null;
   customDockerfile: string | null;
   autoMerge: boolean;
+  cautiousMode: boolean;
   defaultAgentType: string;
   promptTemplateOverride: string | null;
   claudeModel: string | null;
@@ -24,9 +26,15 @@ export interface RepoRecord {
   claudeEffort: string | null;
   copilotModel: string | null;
   copilotEffort: string | null;
+  opencodeModel: string | null;
+  opencodeAgent: string | null;
+  opencodeProvider: string | null;
+  geminiModel: string | null;
+  geminiApprovalMode: string | null;
   maxTurnsCoding: number | null;
   maxTurnsReview: number | null;
   autoResume: boolean;
+  planningModeEnabled: boolean;
   maxConcurrentTasks: number;
   maxPodInstances: number;
   maxAgentsPerPod: number;
@@ -58,16 +66,22 @@ export interface RepoRecord {
 function decryptRepoRow(row: typeof repos.$inferSelect): RepoRecord {
   let slackWebhookUrl: string | null = null;
   if (row.encryptedSlackWebhookUrl && row.slackWebhookUrlIv && row.slackWebhookUrlAuthTag) {
+    const aad = Buffer.from(`repo:${row.id}:slackWebhookUrl`);
     slackWebhookUrl = decrypt(
-      row.encryptedSlackWebhookUrl,
-      row.slackWebhookUrlIv,
-      row.slackWebhookUrlAuthTag,
+      {
+        alg: row.slackWebhookUrlAlg ?? ALG_AES_256_GCM_V1,
+        iv: row.slackWebhookUrlIv,
+        ciphertext: row.encryptedSlackWebhookUrl,
+        authTag: row.slackWebhookUrlAuthTag,
+      },
+      aad,
     );
   }
   const {
     encryptedSlackWebhookUrl: _e,
     slackWebhookUrlIv: _iv,
     slackWebhookUrlAuthTag: _tag,
+    slackWebhookUrlAlg: _alg,
     ...rest
   } = row;
   return { ...rest, slackWebhookUrl } as RepoRecord;
@@ -134,10 +148,14 @@ export async function createRepo(data: {
   // rows which bypass the (repo_url, workspace_id) unique constraint
   const workspaceId = data.workspaceId || (await getDefaultWorkspaceId()) || undefined;
 
+  const parsedUrl = parseRepoUrl(data.repoUrl);
+  const gitPlatform = parsedUrl?.platform ?? "github";
+
   const [repo] = await db
     .insert(repos)
     .values({
       repoUrl: normalizeRepoUrl(data.repoUrl),
+      gitPlatform,
       fullName: data.fullName,
       defaultBranch: data.defaultBranch ?? "main",
       isPrivate: data.isPrivate ?? false,
@@ -206,10 +224,12 @@ export async function updateRepo(
       setData.slackWebhookUrlIv = null;
       setData.slackWebhookUrlAuthTag = null;
     } else {
-      const { encrypted, iv, authTag } = encrypt(slackWebhookUrl);
-      setData.encryptedSlackWebhookUrl = encrypted;
-      setData.slackWebhookUrlIv = iv;
-      setData.slackWebhookUrlAuthTag = authTag;
+      const aad = Buffer.from(`repo:${id}:slackWebhookUrl`);
+      const blob = encrypt(slackWebhookUrl, aad);
+      setData.encryptedSlackWebhookUrl = blob.ciphertext;
+      setData.slackWebhookUrlIv = blob.iv;
+      setData.slackWebhookUrlAuthTag = blob.authTag;
+      setData.slackWebhookUrlAlg = blob.alg;
     }
   }
 
@@ -219,5 +239,17 @@ export async function updateRepo(
 }
 
 export async function deleteRepo(id: string): Promise<void> {
+  // Look up the repo URL before deletion for PVC cleanup
+  const repo = await getRepo(id);
+  if (repo) {
+    try {
+      const { cleanupCachePvcsForRepo, cleanupHomePvcsForRepo } =
+        await import("./shared-directory-service.js");
+      await cleanupCachePvcsForRepo(repo.repoUrl);
+      await cleanupHomePvcsForRepo(repo.repoUrl);
+    } catch {
+      // PVC cleanup is best-effort — don't block repo deletion
+    }
+  }
   await db.delete(repos).where(eq(repos.id, id));
 }

@@ -16,7 +16,7 @@ import type { AgentLogEntry } from "@optio/shared";
 export function parseCopilotEvent(
   line: string,
   taskId: string,
-): { entries: AgentLogEntry[]; sessionId?: string } {
+): { entries: AgentLogEntry[]; sessionId?: string; isTerminal?: boolean } {
   let event: any;
   try {
     event = JSON.parse(line);

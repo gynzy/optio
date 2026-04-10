@@ -6,6 +6,7 @@ export interface Workspace {
   slug: string;
   description?: string | null;
   createdBy?: string | null;
+  allowDockerInDocker: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

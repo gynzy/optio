@@ -10,11 +10,15 @@ import {
   type PresetImageId,
   msUntilOffPeak,
   classifyError,
+  parseRepoUrl,
+  parsePrUrl,
 } from "@optio/shared";
 import { getAdapter } from "@optio/agent-adapters";
 import { parseClaudeEvent } from "../services/agent-event-parser.js";
 import { parseCodexEvent } from "../services/codex-event-parser.js";
 import { parseCopilotEvent } from "../services/copilot-event-parser.js";
+import { parseOpenCodeEvent } from "../services/opencode-event-parser.js";
+import { parseGeminiEvent } from "../services/gemini-event-parser.js";
 import { checkExistingPr } from "../services/pr-detection-service.js";
 import { db } from "../db/client.js";
 import { tasks } from "../db/schema.js";
@@ -26,10 +30,13 @@ import { resolveSecretsForTask, retrieveSecretWithFallback } from "../services/s
 import { getPromptTemplate } from "../services/prompt-template-service.js";
 import { isGitHubAppConfigured } from "../services/github-app-service.js";
 import { getCredentialSecret } from "../services/credential-secret-service.js";
+import { subscribeToTaskMessages } from "../services/task-message-bus.js";
+import * as messageService from "../services/task-message-service.js";
 import { logger } from "../logger.js";
 
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
-const connectionOpts = { url: redisUrl, maxRetriesPerRequest: null };
+import { getBullMQConnectionOptions } from "../services/redis-config.js";
+
+const connectionOpts = getBullMQConnectionOptions();
 
 export const taskQueue = new Queue("tasks", { connection: connectionOpts });
 
@@ -230,6 +237,26 @@ export function startTaskWorker() {
                 taskWorkspaceId,
               ).catch(() => null)) as any) ?? undefined)
             : undefined;
+        const geminiAuthMode =
+          ((await retrieveSecretWithFallback("GEMINI_AUTH_MODE", "global", taskWorkspaceId).catch(
+            () => null,
+          )) as any) ?? "api-key";
+        const googleCloudProject =
+          geminiAuthMode === "vertex-ai"
+            ? (((await retrieveSecretWithFallback(
+                "GOOGLE_CLOUD_PROJECT",
+                "global",
+                taskWorkspaceId,
+              ).catch(() => null)) as any) ?? undefined)
+            : undefined;
+        const googleCloudLocation =
+          geminiAuthMode === "vertex-ai"
+            ? (((await retrieveSecretWithFallback(
+                "GOOGLE_CLOUD_LOCATION",
+                "global",
+                taskWorkspaceId,
+              ).catch(() => null)) as any) ?? undefined)
+            : undefined;
         const optioApiUrl = `http://${process.env.API_HOST ?? "host.docker.internal"}:${process.env.API_PORT ?? "4000"}`;
 
         // Load and render prompt template
@@ -237,9 +264,17 @@ export function startTaskWorker() {
 
         // repoConfig already loaded above for concurrency check
 
-        const repoName = task.repoUrl.replace(/.*github\.com[/:]/, "").replace(/\.git$/, "");
+        const parsedRepo = parseRepoUrl(task.repoUrl);
+        const repoName = parsedRepo
+          ? `${parsedRepo.owner}/${parsedRepo.repo}`
+          : task.repoUrl.replace(/.*[/:]([^/]+\/[^/.]+).*/, "$1");
+        const isGitLab = parsedRepo?.platform === "gitlab";
         const branchName = `${TASK_BRANCH_PREFIX}${task.id}`;
         const taskFilePath = TASK_FILE_PATH;
+
+        // Enable planning mode for fresh runs (not resumed) when repo has it enabled
+        const isPlanningRun =
+          !!repoConfig?.planningModeEnabled && !resumeSessionId && !reviewOverride;
 
         const renderedPrompt = renderPromptTemplate(promptConfig.template, {
           TASK_FILE: taskFilePath,
@@ -248,7 +283,10 @@ export function startTaskWorker() {
           TASK_TITLE: task.title,
           REPO_NAME: repoName,
           AUTO_MERGE: String(promptConfig.autoMerge),
+          DRAFT_PR: String(promptConfig.cautiousMode),
           ISSUE_NUMBER: task.ticketExternalId ?? "",
+          GIT_PLATFORM_GITLAB: isGitLab ? "true" : "",
+          PLANNING_MODE: isPlanningRun ? "true" : "",
         });
 
         const taskFileContent = renderTaskFile({
@@ -284,6 +322,16 @@ export function startTaskWorker() {
           claudeEffort: repoConfig?.claudeEffort ?? undefined,
           copilotModel: repoConfig?.copilotModel ?? undefined,
           copilotEffort: repoConfig?.copilotEffort ?? undefined,
+          opencodeModel: repoConfig?.opencodeModel ?? undefined,
+          opencodeAgent: repoConfig?.opencodeAgent ?? undefined,
+          geminiAuthMode,
+          geminiModel: repoConfig?.geminiModel ?? undefined,
+          geminiApprovalMode:
+            (repoConfig?.geminiApprovalMode as "default" | "auto_edit" | "yolo") ?? undefined,
+          maxTurnsCoding: repoConfig?.maxTurnsCoding ?? undefined,
+          maxTurnsReview: repoConfig?.maxTurnsReview ?? undefined,
+          googleCloudProject,
+          googleCloudLocation,
         });
 
         // ── MCP servers & custom skills injection ────────────────────
@@ -327,12 +375,31 @@ export function startTaskWorker() {
         }
 
         // Resolve secrets (workspace → repo-scoped → global fallback)
+        // Only require GITHUB_TOKEN when GitHub App auth is not configured
+        const secretNames = [
+          ...new Set([
+            ...agentConfig.requiredSecrets,
+            ...(!isGitHubAppConfigured() ? ["GITHUB_TOKEN"] : []),
+          ]),
+        ];
         const resolvedSecrets = await resolveSecretsForTask(
-          agentConfig.requiredSecrets,
+          secretNames,
           task.repoUrl,
           taskWorkspaceId,
         );
         const allEnv: Record<string, string> = { ...agentConfig.env, ...resolvedSecrets };
+
+        // Resolve git platform tokens (not part of adapter requiredSecrets since they're infra-level)
+        for (const secretName of ["GITHUB_TOKEN", "GITLAB_TOKEN", "GITLAB_HOST"]) {
+          if (!allEnv[secretName]) {
+            const val = await retrieveSecretWithFallback(
+              secretName,
+              "global",
+              taskWorkspaceId,
+            ).catch(() => null);
+            if (val) allEnv[secretName] = val as string;
+          }
+        }
 
         // Inject credential URLs for dynamic GitHub token resolution.
         // OPTIO_API_INTERNAL_URL is the K8s service URL (set by Helm chart).
@@ -405,6 +472,8 @@ export function startTaskWorker() {
           OPTIO_GIT_CREDENTIAL_URL: allEnv.OPTIO_GIT_CREDENTIAL_URL,
           OPTIO_CREDENTIAL_SECRET: allEnv.OPTIO_CREDENTIAL_SECRET,
           ...(allEnv.GITHUB_TOKEN ? { GITHUB_TOKEN: allEnv.GITHUB_TOKEN } : {}),
+          ...(allEnv.GITLAB_TOKEN ? { GITLAB_TOKEN: allEnv.GITLAB_TOKEN } : {}),
+          ...(allEnv.GITLAB_HOST ? { GITLAB_HOST: allEnv.GITLAB_HOST } : {}),
           ...(process.env.GITHUB_APP_BOT_NAME
             ? { GITHUB_APP_BOT_NAME: process.env.GITHUB_APP_BOT_NAME }
             : {}),
@@ -441,6 +510,7 @@ export function startTaskWorker() {
             memoryLimit: repoConfig?.memoryLimit,
             dockerInDocker: repoConfig?.dockerInDocker ?? false,
             secretProxy: repoConfig?.secretProxy ?? false,
+            workspaceId: taskWorkspaceId,
           },
         );
         repoPodId = pod.id;
@@ -493,6 +563,18 @@ export function startTaskWorker() {
           resetWorktree: shouldResetWorktree,
         });
 
+        // Claude runs with `--input-format stream-json`, which means the initial
+        // user message must come in over stdin — the -p/--print positional arg is
+        // ignored in that mode. The pipe buffer holds this line until bash finishes
+        // its setup and execs claude, so it's safe to write immediately.
+        if (task.agentType === "claude-code") {
+          try {
+            execSession.stdin.write(buildInitialClaudeStreamMessage(allEnv.OPTIO_PROMPT ?? ""));
+          } catch (err) {
+            log.warn({ err }, "Failed to write initial prompt to claude stdin");
+          }
+        }
+
         // Stream stdout with structured parsing
         let allLogs = "";
         let sessionId: string | undefined;
@@ -503,8 +585,61 @@ export function startTaskWorker() {
           : undefined;
         let lastHeartbeat = Date.now();
         const HEARTBEAT_INTERVAL_MS = 60_000;
+        // Stall detection: debounced activity timestamp flush
+        let pendingActivityAt: Date | null = null;
+        let lastActivityFlushAt = 0;
+        const ACTIVITY_FLUSH_INTERVAL_MS = 5_000;
         // Buffer for partial NDJSON lines split across chunks
         let lineBuf = "";
+
+        // Subscribe to mid-task messages from users (only for claude-code)
+        let messageSubscription: { unsubscribe: () => void } | undefined;
+        if (task.agentType === "claude-code") {
+          messageSubscription = subscribeToTaskMessages(taskId, async (payload) => {
+            try {
+              // Format the message text — prefix with interrupt marker if needed
+              let text = payload.content;
+              if (payload.mode === "interrupt") {
+                text = `[URGENT INTERRUPT FROM USER — stop what you are doing and address this immediately] ${text}`;
+              }
+
+              // Write stream-json NDJSON line to stdin
+              const streamJsonMsg = JSON.stringify({
+                type: "user",
+                message: {
+                  role: "user",
+                  content: [{ type: "text", text }],
+                },
+              });
+              execSession.stdin.write(streamJsonMsg + "\n");
+
+              // Mark as delivered
+              await messageService.markDelivered(payload.messageId);
+              await publishEvent({
+                type: "task:message_delivered",
+                taskId,
+                messageId: payload.messageId,
+                timestamp: new Date().toISOString(),
+              });
+            } catch (err) {
+              log.warn({ messageId: payload.messageId, err }, "Failed to deliver task message");
+              await messageService
+                .markDeliveryError(
+                  payload.messageId,
+                  err instanceof Error ? err.message : "delivery failed",
+                )
+                .catch(() => {});
+            }
+          });
+        }
+
+        // Capture stderr for diagnostics (e.g. bash parse errors, git warnings)
+        let stderrData = "";
+        (async () => {
+          for await (const chunk of execSession.stderr as AsyncIterable<Buffer>) {
+            stderrData += chunk.toString();
+          }
+        })().catch(() => {});
 
         for await (const chunk of execSession.stdout as AsyncIterable<Buffer>) {
           const text = chunk.toString();
@@ -531,11 +666,27 @@ export function startTaskWorker() {
                 ? parseCodexEvent(line, taskId)
                 : task.agentType === "copilot"
                   ? parseCopilotEvent(line, taskId)
-                  : parseClaudeEvent(line, taskId);
+                  : task.agentType === "opencode"
+                    ? parseOpenCodeEvent(line, taskId)
+                    : task.agentType === "gemini"
+                      ? parseGeminiEvent(line, taskId)
+                      : parseClaudeEvent(line, taskId);
             if (parsed.sessionId && !sessionId) {
               sessionId = parsed.sessionId;
               await taskService.updateTaskSession(taskId, sessionId);
               log.info({ sessionId }, "Session ID captured");
+            }
+            // Terminal event (e.g. claude's `result` event) means the agent has
+            // finished the turn. With --input-format stream-json claude keeps
+            // stdin open waiting for another user message; closing stdin here
+            // lets it exit cleanly so the task can transition to pr_opened /
+            // completed / failed.
+            if (parsed.isTerminal) {
+              try {
+                execSession.stdin.end();
+              } catch (err) {
+                log.warn({ err }, "Failed to close agent stdin on terminal event");
+              }
             }
             for (const entry of parsed.entries) {
               await taskService.appendTaskLog(
@@ -546,29 +697,35 @@ export function startTaskWorker() {
                 entry.metadata,
               );
 
+              // Stall detection: mark activity on meaningful parsed events
+              if (["text", "tool_use", "tool_result", "thinking", "system"].includes(entry.type)) {
+                pendingActivityAt = new Date();
+              }
+
               // Check for PR URL — only capture the first PR URL from agent output
               // that matches the task's own repo. Without repo validation, the
               // agent referencing another repo's PR (e.g. via gh pr list on a
               // dependency) would store the wrong URL.
               if (!capturedPrUrl) {
-                const prUrlPattern = /https:\/\/github\.com\/[^\s"]+\/pull\/\d+/g;
+                // Match both GitHub PR URLs and GitLab MR URLs (web URLs only, not API URLs)
+                const prUrlPattern =
+                  /https:\/\/(?![\w.-]+\/api\/)[^\s"]+\/(?:pull\/\d+|-\/merge_requests\/\d+)/g;
                 const prMatches = entry.content.match(prUrlPattern);
                 if (prMatches) {
                   const taskBranch = `optio/task-${taskId}`;
                   const content = entry.content.trim();
                   const looksLikeJsonArray =
                     content.startsWith("[") && content.includes('"number"');
-                  // Filter to only URLs matching the task's repo
-                  const expectedRepo = task.repoUrl
-                    .replace(/.*github\.com[/:]/, "")
-                    .replace(/\.git$/, "")
-                    .toLowerCase();
+                  // Filter to only URLs matching the task's repo using parsePrUrl
+                  const taskRepo = parseRepoUrl(task.repoUrl);
                   const repoMatches = prMatches.filter((url) => {
-                    const urlRepo = url
-                      .replace(/.*github\.com\//, "")
-                      .replace(/\/pull\/.*/, "")
-                      .toLowerCase();
-                    return urlRepo === expectedRepo;
+                    const parsed = parsePrUrl(url);
+                    if (!parsed || !taskRepo) return false;
+                    return (
+                      parsed.owner.toLowerCase() === taskRepo.owner.toLowerCase() &&
+                      parsed.repo.toLowerCase() === taskRepo.repo.toLowerCase() &&
+                      parsed.host === taskRepo.host
+                    );
                   });
                   if (repoMatches.length > 0) {
                     if (!looksLikeJsonArray) {
@@ -587,6 +744,19 @@ export function startTaskWorker() {
               }
             }
           }
+
+          // Debounced flush of lastActivityAt to avoid per-event DB writes
+          if (pendingActivityAt && Date.now() - lastActivityFlushAt > ACTIVITY_FLUSH_INTERVAL_MS) {
+            await taskService.updateTaskActivity(taskId, pendingActivityAt);
+            lastActivityFlushAt = Date.now();
+            pendingActivityAt = null;
+          }
+        }
+
+        // Final flush of pending activity timestamp
+        if (pendingActivityAt) {
+          await taskService.updateTaskActivity(taskId, pendingActivityAt);
+          pendingActivityAt = null;
         }
 
         // Flush any remaining partial line in the buffer
@@ -596,7 +766,11 @@ export function startTaskWorker() {
               ? parseCodexEvent(lineBuf, taskId)
               : task.agentType === "copilot"
                 ? parseCopilotEvent(lineBuf, taskId)
-                : parseClaudeEvent(lineBuf, taskId);
+                : task.agentType === "opencode"
+                  ? parseOpenCodeEvent(lineBuf, taskId)
+                  : task.agentType === "gemini"
+                    ? parseGeminiEvent(lineBuf, taskId)
+                    : parseClaudeEvent(lineBuf, taskId);
           for (const entry of parsed.entries) {
             await taskService.appendTaskLog(
               taskId,
@@ -608,7 +782,13 @@ export function startTaskWorker() {
           }
         }
 
+        // Exec finished — clean up message subscription
+        messageSubscription?.unsubscribe();
+
         // Exec finished — determine result
+        if (stderrData) {
+          log.warn({ stderrPreview: stderrData.slice(0, 500) }, "Exec stderr output");
+        }
         // Before processing results, verify this worker still owns the task.
         // A force-redo may have reset the task while we were streaming.
         const taskAfterExec = await taskService.getTask(taskId);
@@ -645,17 +825,17 @@ export function startTaskWorker() {
         //      inside code the agent wrote, or PRs from other repos).
         let fallbackPrUrl = result.prUrl;
         if (fallbackPrUrl) {
-          const expectedRepo = task.repoUrl
-            .replace(/.*github\.com[/:]/, "")
-            .replace(/\.git$/, "")
-            .toLowerCase();
-          const urlRepo = fallbackPrUrl
-            .replace(/.*github\.com\//, "")
-            .replace(/\/pull\/.*/, "")
-            .toLowerCase();
-          if (urlRepo !== expectedRepo) {
+          const parsedPr = parsePrUrl(fallbackPrUrl);
+          const taskRepo = parseRepoUrl(task.repoUrl);
+          if (
+            !parsedPr ||
+            !taskRepo ||
+            parsedPr.owner.toLowerCase() !== taskRepo.owner.toLowerCase() ||
+            parsedPr.repo.toLowerCase() !== taskRepo.repo.toLowerCase() ||
+            parsedPr.host !== taskRepo.host
+          ) {
             log.info(
-              { resultPrUrl: fallbackPrUrl, expectedRepo },
+              { resultPrUrl: fallbackPrUrl, expectedRepo: task.repoUrl },
               "Ignoring result.prUrl — wrong repo",
             );
             fallbackPrUrl = undefined;
@@ -697,14 +877,26 @@ export function startTaskWorker() {
               log.warn({ err }, "Failed to parse pr_review output — draft may need manual editing");
             }
           }
-          await repoPool.updateWorktreeState(taskId, "removed");
-          await taskService.transitionTask(
-            taskId,
-            TaskState.COMPLETED,
-            "agent_success",
-            result.summary,
-          );
-          log.info("Task completed");
+          // Planning mode: agent finished planning — wait for human approval
+          if (isPlanningRun && !isReviewTask) {
+            await repoPool.updateWorktreeState(taskId, "preserved");
+            await taskService.transitionTask(
+              taskId,
+              TaskState.NEEDS_ATTENTION,
+              "plan_review",
+              "Agent has created an implementation plan and is waiting for approval",
+            );
+            log.info("Planning phase complete — awaiting human review");
+          } else {
+            await repoPool.updateWorktreeState(taskId, "removed");
+            await taskService.transitionTask(
+              taskId,
+              TaskState.COMPLETED,
+              "agent_success",
+              result.summary,
+            );
+            log.info("Task completed");
+          }
         } else {
           await repoPool.updateWorktreeState(taskId, "dirty");
           await taskService.transitionTask(taskId, TaskState.FAILED, "agent_failure", result.error);
@@ -752,13 +944,6 @@ export function startTaskWorker() {
             await depSvc
               .cascadeFailure(taskId)
               .catch((err) => log.warn({ err }, "Failed to cascade failure to dependents"));
-          }
-          // Update workflow run status if part of a workflow
-          if (completedTask.workflowRunId) {
-            const { checkWorkflowRunCompletion } = await import("../services/workflow-service.js");
-            await checkWorkflowRunCompletion(completedTask.workflowRunId).catch((err) =>
-              log.warn({ err }, "Failed to update workflow run status"),
-            );
           }
         }
       } catch (err) {
@@ -902,7 +1087,24 @@ export async function reconcileOrphanedTasks() {
     .where(eq(tasks.state, "running" as any));
 
   // Provisioning/running tasks lost their exec session.
-  // Before failing and re-queuing, check if a PR was already opened —
+  // Before failing and re-queuing, kill any orphaned agent processes
+  // left inside repo pods (the API restart severed the exec stream but
+  // kubelet doesn't send SIGHUP to in-pod processes).
+  for (const task of [...orphanedProvisioning, ...orphanedRunning]) {
+    if ((task as any).lastPodId) {
+      try {
+        await repoPool.killOrphanedAgentInPod((task as any).lastPodId, task.id);
+        await repoPool.updateWorktreeState(task.id, "removed");
+      } catch (err) {
+        logger.warn(
+          { err, taskId: task.id, podId: (task as any).lastPodId },
+          "Failed to kill orphaned agent during startup reconciliation",
+        );
+      }
+    }
+  }
+
+  // Check if a PR was already opened —
   // if so, transition directly to pr_opened to avoid redoing work.
   for (const task of [...orphanedProvisioning, ...orphanedRunning]) {
     const taskWsId = task.workspaceId ?? null;
@@ -1034,6 +1236,26 @@ export async function reconcileOrphanedTasks() {
   }
 }
 
+/**
+ * Build the initial user message NDJSON line that gets written to claude's stdin
+ * when running with `--input-format stream-json`. In that mode the positional
+ * `-p <prompt>` arg is ignored — the first user message must arrive via stdin.
+ *
+ * The trailing newline is required: stream-json is NDJSON (one JSON object per
+ * line) and claude won't process a message until it sees the line terminator.
+ */
+export function buildInitialClaudeStreamMessage(prompt: string): string {
+  return (
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: prompt }],
+      },
+    }) + "\n"
+  );
+}
+
 export function buildAgentCommand(
   agentType: string,
   env: Record<string, string>,
@@ -1045,9 +1267,14 @@ export function buildAgentCommand(
     maxTurnsReview?: number;
   },
 ): string[] {
-  const prompt = opts?.resumePrompt
-    ? `${opts.resumePrompt}\n\n---\n\nOriginal task prompt for context:\n${env.OPTIO_PROMPT}`
-    : env.OPTIO_PROMPT;
+  // Build the final prompt. For resume, prepend the resume text to the original.
+  // The prompt is passed via $OPTIO_PROMPT env var (set by the base64-decoded env block)
+  // to avoid bash interpreting command substitutions in the prompt text (e.g. heredocs).
+  if (opts?.resumePrompt) {
+    // Override OPTIO_PROMPT with the combined resume + original prompt
+    const combined = `${opts.resumePrompt}\n\n---\n\nOriginal task prompt for context:\n${env.OPTIO_PROMPT}`;
+    env.OPTIO_PROMPT = combined;
+  }
   const maxTurns = opts?.isReview
     ? (opts.maxTurnsReview ?? DEFAULT_MAX_TURNS_REVIEW)
     : (opts?.maxTurnsCoding ?? DEFAULT_MAX_TURNS_CODING);
@@ -1066,15 +1293,30 @@ export function buildAgentCommand(
         ? `--resume ${JSON.stringify(opts.resumeSessionId)}`
         : "";
 
+      // Build --model flag from env vars set by the adapter
+      const modelName = env.OPTIO_CLAUDE_MODEL;
+      const ctxWindow = env.OPTIO_CLAUDE_CONTEXT_WINDOW;
+      let modelFlag = "";
+      if (modelName) {
+        const ctx = ctxWindow === "1m" ? "[1m]" : "";
+        modelFlag = `--model ${modelName}${ctx}`;
+      }
+
       return [
         ...authSetup,
         `echo "[optio] Running Claude Code${opts?.isReview ? " (review)" : ""}..."`,
-        `claude -p ${JSON.stringify(prompt)} \\`,
+        // --input-format stream-json makes claude read user messages from stdin.
+        // In this mode the -p positional arg is ignored, so we intentionally use
+        // the boolean --print flag and deliver the initial prompt to stdin from
+        // the task worker (see writeInitialClaudeMessage).
+        `claude --print \\`,
         `  --dangerously-skip-permissions \\`,
+        `  --input-format stream-json \\`,
         `  --output-format stream-json \\`,
+        `  --replay-user-messages \\`,
         `  --verbose \\`,
         `  --max-turns ${maxTurns} \\`,
-        `  ${resumeFlag}`.trim(),
+        `  ${modelFlag} ${resumeFlag}`.trim(),
       ];
     }
     case "codex": {
@@ -1084,7 +1326,7 @@ export function buildAgentCommand(
           : "";
       return [
         `echo "[optio] Running OpenAI Codex${appServerFlag ? " (app-server)" : ""}..."`,
-        `codex exec --full-auto ${JSON.stringify(prompt)}${appServerFlag} --json`,
+        `codex exec --full-auto "$OPTIO_PROMPT"${appServerFlag} --json`,
       ];
     }
     case "copilot": {
@@ -1094,7 +1336,33 @@ export function buildAgentCommand(
         `echo "[optio] Running GitHub Copilot..."`,
         `copilot --autopilot --yolo --max-autopilot-continues ${maxTurns} \\`,
         `  --output-format json --no-ask-user${modelFlag}${effortFlag} \\`,
-        `  -p ${JSON.stringify(prompt)}`,
+        `  -p "$OPTIO_PROMPT"`,
+      ];
+    }
+    case "opencode": {
+      const modelFlag = env.OPTIO_OPENCODE_MODEL
+        ? ` --model ${JSON.stringify(env.OPTIO_OPENCODE_MODEL)}`
+        : "";
+      const agentFlag = env.OPTIO_OPENCODE_AGENT
+        ? ` --agent ${JSON.stringify(env.OPTIO_OPENCODE_AGENT)}`
+        : "";
+      const resumeFlag = opts?.resumeSessionId
+        ? ` --session ${JSON.stringify(opts.resumeSessionId)}`
+        : "";
+      return [
+        `echo "[optio] Running OpenCode (experimental)..."`,
+        `opencode run --format json${modelFlag}${agentFlag}${resumeFlag} "$OPTIO_PROMPT"`,
+      ];
+    }
+    case "gemini": {
+      const geminiModelFlag = env.OPTIO_GEMINI_MODEL
+        ? ` -m ${JSON.stringify(env.OPTIO_GEMINI_MODEL)}`
+        : "";
+      return [
+        `echo "[optio] Running Google Gemini${opts?.isReview ? " (review)" : ""}..."`,
+        `gemini -p "$OPTIO_PROMPT" \\`,
+        `  --output-format stream-json \\`,
+        `  --approval-mode yolo${geminiModelFlag}`,
       ];
     }
     default:
@@ -1132,14 +1400,39 @@ export function inferExitCode(agentType: string, logs: string): number {
         logs.includes("fatal:") || logs.includes("Error: authentication_failed");
       return hasResultError || hasErrorEvent || hasAuthError || hasFatalError ? 1 : 0;
     }
+    case "opencode": {
+      // OpenCode: similar to Codex — look for error events and provider-specific failures
+      const hasErrorEvent = logs.includes('"type":"error"') || logs.includes('"type": "error"');
+      const hasApiErrorEnvelope = /"error"\s*:\s*\{\s*"message"/.test(logs);
+      const hasAuthError =
+        /ANTHROPIC_API_KEY|OPENAI_API_KEY|GROQ_API_KEY|invalid.*api.?key|unauthorized|authentication.*failed/i.test(
+          logs,
+        );
+      const hasModelError = /model_not_found|model.*not found|does not exist.*model/i.test(logs);
+      const hasFatalError =
+        logs.includes("fatal:") || logs.includes("Error: authentication_failed");
+      return hasErrorEvent || hasApiErrorEnvelope || hasAuthError || hasModelError || hasFatalError
+        ? 1
+        : 0;
+    }
+    case "gemini": {
+      const hasErrorEvent = logs.includes('"type":"error"') || logs.includes('"type": "error"');
+      const hasAuthError = /GEMINI_API_KEY|GOOGLE_API_KEY|permission denied|unauthorized/i.test(
+        logs,
+      );
+      const hasQuotaError = /quota|resource.?exhausted|rate.?limit/i.test(logs);
+      const hasModelError = /model.*not found|model_not_found|does not exist.*model/i.test(logs);
+      const hasTurnLimit = /turn.?limit|exit code 53/i.test(logs);
+      return hasErrorEvent || hasAuthError || hasQuotaError || hasModelError || hasTurnLimit
+        ? 1
+        : 0;
+    }
     case "claude-code":
     default: {
       // Claude: check for is_error in result event, or fatal errors
       const hasResultError = logs.includes('"is_error":true');
       const hasFatalError =
-        logs.includes("fatal:") ||
-        logs.includes("Error: authentication_failed") ||
-        logs.includes("exit 1");
+        logs.includes("fatal:") || logs.includes("Error: authentication_failed");
       return hasResultError || hasFatalError ? 1 : 0;
     }
   }

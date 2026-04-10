@@ -92,6 +92,7 @@ describe("determinePrAction", () => {
     reviewStatus: "none",
     prevReviewStatus: null as string | null,
     autoMerge: false,
+    cautiousMode: false,
     autoResume: false,
     reviewEnabled: false,
     reviewTrigger: "on_ci_pass",
@@ -210,6 +211,17 @@ describe("determinePrAction", () => {
     ).toEqual({ action: "auto_merge" });
   });
 
+  it("auto-merges when no CI checks and autoMerge on", () => {
+    expect(
+      determinePrAction({
+        ...defaults,
+        checksStatus: "none",
+        autoMerge: true,
+        blockingSubtasksComplete: true,
+      }),
+    ).toEqual({ action: "auto_merge" });
+  });
+
   it("does not auto-merge when blocking subtasks pending", () => {
     const result = determinePrAction({
       ...defaults,
@@ -274,5 +286,42 @@ describe("determinePrAction", () => {
 
   it("returns none when nothing actionable", () => {
     expect(determinePrAction(defaults)).toEqual({ action: "none" });
+  });
+
+  it("does not auto-merge when cautiousMode is on even if autoMerge is true", () => {
+    expect(
+      determinePrAction({
+        ...defaults,
+        checksStatus: "passing",
+        autoMerge: true,
+        cautiousMode: true,
+        blockingSubtasksComplete: true,
+      }),
+    ).toEqual({ action: "none" });
+  });
+
+  it("still allows resume_ci_failure in cautious mode", () => {
+    expect(
+      determinePrAction({
+        ...defaults,
+        checksStatus: "failing",
+        prevChecksStatus: "passing",
+        autoResume: true,
+        cautiousMode: true,
+      }),
+    ).toEqual({ action: "resume_ci_failure" });
+  });
+
+  it("still allows launch_review in cautious mode", () => {
+    expect(
+      determinePrAction({
+        ...defaults,
+        checksStatus: "passing",
+        prevChecksStatus: "pending",
+        reviewEnabled: true,
+        reviewTrigger: "on_ci_pass",
+        cautiousMode: true,
+      }),
+    ).toEqual({ action: "launch_review" });
   });
 });

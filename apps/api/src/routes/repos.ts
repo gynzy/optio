@@ -10,6 +10,7 @@ import {
 } from "@optio/shared";
 import { requireRole } from "../plugins/auth.js";
 import { getGitHubToken } from "../services/github-token-service.js";
+import { isSsrfSafeUrl } from "../utils/ssrf.js";
 
 const createRepoSchema = z.object({
   repoUrl: z.string().min(1),
@@ -24,7 +25,8 @@ const updateRepoSchema = z.object({
   setupCommands: z.string().optional(),
   customDockerfile: z.string().nullable().optional(),
   autoMerge: z.boolean().optional(),
-  defaultAgentType: z.enum(["claude-code", "codex", "copilot"]).optional(),
+  cautiousMode: z.boolean().optional(),
+  defaultAgentType: z.enum(["claude-code", "codex", "copilot", "opencode", "gemini"]).optional(),
   promptTemplateOverride: z.string().nullable().optional(),
   defaultBranch: z.string().optional(),
   claudeModel: z.string().optional(),
@@ -33,9 +35,15 @@ const updateRepoSchema = z.object({
   claudeEffort: z.string().optional(),
   copilotModel: z.string().optional(),
   copilotEffort: z.string().optional(),
+  opencodeModel: z.string().optional(),
+  opencodeAgent: z.string().optional(),
+  opencodeProvider: z.string().optional(),
+  geminiModel: z.string().optional(),
+  geminiApprovalMode: z.string().optional(),
   maxTurnsCoding: z.number().int().min(1).max(10000).optional(),
   maxTurnsReview: z.number().int().min(1).max(10000).optional(),
   autoResume: z.boolean().optional(),
+  planningModeEnabled: z.boolean().optional(),
   maxConcurrentTasks: z.number().int().min(1).max(50).optional(),
   maxPodInstances: z.number().int().min(1).max(20).optional(),
   maxAgentsPerPod: z.number().int().min(1).max(50).optional(),
@@ -45,7 +53,12 @@ const updateRepoSchema = z.object({
   testCommand: z.string().optional(),
   reviewModel: z.string().optional(),
   maxAutoResumes: z.number().int().min(1).max(100).nullable().optional(),
-  slackWebhookUrl: z.string().nullable().optional(),
+  slackWebhookUrl: z
+    .string()
+    .url()
+    .refine(isSsrfSafeUrl, "Slack webhook URL must not target private/internal addresses")
+    .nullable()
+    .optional(),
   slackChannel: z.string().nullable().optional(),
   slackNotifyOn: z
     .array(z.enum(["completed", "failed", "needs_attention", "pr_opened"]))
@@ -61,6 +74,8 @@ const updateRepoSchema = z.object({
   dockerInDocker: z.boolean().optional(),
 });
 
+const idParamsSchema = z.object({ id: z.string() });
+
 export async function repoRoutes(app: FastifyInstance) {
   app.get("/api/repos", async (req, reply) => {
     const workspaceId = req.user?.workspaceId ?? null;
@@ -69,7 +84,7 @@ export async function repoRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/repos/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const repo = await repoService.getRepo(id);
     if (!repo) return reply.status(404).send({ error: "Repo not found" });
     const wsId = req.user?.workspaceId;
@@ -113,7 +128,7 @@ export async function repoRoutes(app: FastifyInstance) {
   });
 
   app.patch("/api/repos/:id", { preHandler: [requireRole("admin")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await repoService.getRepo(id);
     if (!existing) return reply.status(404).send({ error: "Repo not found" });
     const wsId = req.user?.workspaceId;
@@ -165,7 +180,7 @@ export async function repoRoutes(app: FastifyInstance) {
   });
 
   app.delete("/api/repos/:id", { preHandler: [requireRole("admin")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await repoService.getRepo(id);
     if (!existing) return reply.status(404).send({ error: "Repo not found" });
     const wsId = req.user?.workspaceId;
@@ -178,7 +193,7 @@ export async function repoRoutes(app: FastifyInstance) {
 
   // Auto-detect repo configuration — admin only
   app.post("/api/repos/:id/detect", { preHandler: [requireRole("admin")] }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const repo = await repoService.getRepo(id);
     if (!repo) return reply.status(404).send({ error: "Repo not found" });
     const wsId = req.user?.workspaceId;

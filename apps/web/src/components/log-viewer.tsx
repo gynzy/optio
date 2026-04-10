@@ -21,6 +21,9 @@ import {
   X,
   Download,
   Filter,
+  User,
+  Check,
+  Loader2,
 } from "lucide-react";
 
 const TOOL_ICONS: Record<string, any> = {
@@ -99,8 +102,26 @@ function HighlightedText({ text, search }: { text: string; search: string }) {
   );
 }
 
-export function LogViewer({ taskId }: { taskId: string }) {
-  const { logs, connected, capped, clear } = useLogs(taskId);
+export interface UserMessage {
+  text: string;
+  timestamp: string;
+  status: "sending" | "sent" | "failed";
+}
+
+interface LogViewerProps {
+  taskId?: string;
+  externalLogs?: {
+    logs: LogEntry[];
+    connected: boolean;
+    capped: boolean;
+    clear: () => void;
+  };
+  userMessages?: UserMessage[];
+}
+
+export function LogViewer({ taskId, externalLogs, userMessages }: LogViewerProps) {
+  const internal = useLogs(taskId ?? "");
+  const { logs, connected, capped, clear } = externalLogs ?? internal;
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [showThinking, setShowThinking] = useState(false);
@@ -218,6 +239,7 @@ export function LogViewer({ taskId }: { taskId: string }) {
 
   const handleExport = useCallback(
     (format: string) => {
+      if (!taskId) return;
       const url = api.exportTaskLogs(taskId, { format });
       window.open(url, "_blank");
       setShowExportMenu(false);
@@ -408,41 +430,43 @@ export function LogViewer({ taskId }: { taskId: string }) {
           >
             <Search className="w-3.5 h-3.5" />
           </button>
-          {/* Export dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowExportMenu(!showExportMenu)}
-              className="p-1.5 rounded-md hover:bg-bg-hover text-text-muted/50 hover:text-text-muted transition-colors"
-              title="Export logs"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
-            {showExportMenu && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
-                <div className="absolute right-0 top-full mt-1 z-20 glass-tooltip rounded-lg py-1 min-w-[140px]">
-                  <button
-                    onClick={() => handleExport("json")}
-                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-bg-hover transition-colors"
-                  >
-                    Export as JSON
-                  </button>
-                  <button
-                    onClick={() => handleExport("plaintext")}
-                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-bg-hover transition-colors"
-                  >
-                    Export as Text
-                  </button>
-                  <button
-                    onClick={() => handleExport("markdown")}
-                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-bg-hover transition-colors"
-                  >
-                    Export as Markdown
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          {/* Export dropdown (only available when taskId is set) */}
+          {taskId && (
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="p-1.5 rounded-md hover:bg-bg-hover text-text-muted/50 hover:text-text-muted transition-colors"
+                title="Export logs"
+              >
+                <Download className="w-3.5 h-3.5" />
+              </button>
+              {showExportMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-20 glass-tooltip rounded-lg py-1 min-w-[140px]">
+                    <button
+                      onClick={() => handleExport("json")}
+                      className="w-full px-3 py-1.5 text-left text-xs hover:bg-bg-hover transition-colors"
+                    >
+                      Export as JSON
+                    </button>
+                    <button
+                      onClick={() => handleExport("plaintext")}
+                      className="w-full px-3 py-1.5 text-left text-xs hover:bg-bg-hover transition-colors"
+                    >
+                      Export as Text
+                    </button>
+                    <button
+                      onClick={() => handleExport("markdown")}
+                      className="w-full px-3 py-1.5 text-left text-xs hover:bg-bg-hover transition-colors"
+                    >
+                      Export as Markdown
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <button
             onClick={clear}
             className="p-1.5 rounded-md hover:bg-bg-hover text-text-muted/50 hover:text-text-muted transition-colors"
@@ -519,6 +543,33 @@ export function LogViewer({ taskId }: { taskId: string }) {
             );
           })
         )}
+        {/* Inline user message markers */}
+        {userMessages &&
+          userMessages.map((msg, i) => (
+            <div
+              key={`user-msg-${i}`}
+              className="flex gap-2.5 my-1 -mx-2 px-2 rounded bg-primary/5 border border-primary/10"
+            >
+              <span
+                className="text-[10px] leading-6 text-text-muted/25 tabular-nums shrink-0 select-none w-[54px] text-right"
+                title={new Date(msg.timestamp).toLocaleString()}
+              >
+                {formatTime(msg.timestamp)}
+              </span>
+              <div className="flex items-center gap-2 py-1 flex-1 min-w-0">
+                <User className="w-3 h-3 text-primary shrink-0" />
+                <span className="text-xs font-medium text-primary font-sans">You:</span>
+                <span className="text-xs text-text/80 truncate">{msg.text}</span>
+                <span className="ml-auto shrink-0">
+                  {msg.status === "sending" && (
+                    <Loader2 className="w-3 h-3 text-text-muted/40 animate-spin" />
+                  )}
+                  {msg.status === "sent" && <Check className="w-3 h-3 text-success/60" />}
+                  {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-error/60" />}
+                </span>
+              </div>
+            </div>
+          ))}
       </div>
 
       {/* Scroll to bottom */}

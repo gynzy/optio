@@ -1,0 +1,19 @@
+#!/bin/bash
+# Wrapper for glab CLI — injects GITLAB_TOKEN before each invocation.
+# Intended to be called as an alias/function, not as a replacement binary.
+export GITLAB_TOKEN="${GITLAB_TOKEN:-}"
+
+# Resolve a path to its real target, with fallback if realpath is unavailable
+resolve_path() {
+  realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || echo "$1"
+}
+
+# Find the real glab binary, skipping this wrapper
+SELF="$(resolve_path "$0")"
+for candidate in /usr/bin/glab /usr/local/bin/glab; do
+  if [ -x "$candidate" ] && [ "$(resolve_path "$candidate")" != "$SELF" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+echo "Error: glab CLI not found" >&2
+exit 1

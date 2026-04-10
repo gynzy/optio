@@ -16,7 +16,7 @@ import type { AgentLogEntry } from "@optio/shared";
 export function parseClaudeEvent(
   line: string,
   taskId: string,
-): { entries: AgentLogEntry[]; sessionId?: string } {
+): { entries: AgentLogEntry[]; sessionId?: string; isTerminal?: boolean } {
   let event: any;
   try {
     event = JSON.parse(line);
@@ -104,7 +104,9 @@ export function parseClaudeEvent(
             : Array.isArray(block.content)
               ? block.content.map((c: any) => c.text ?? c.content ?? "").join("")
               : "";
-        const trimmed = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+        // Use a higher limit for structured JSON output (e.g. review drafts)
+        const limit = raw.includes('"verdict"') ? 5000 : 300;
+        const trimmed = raw.length > limit ? raw.slice(0, limit) + "…" : raw;
         if (trimmed.trim()) {
           entries.push({
             taskId,
@@ -119,7 +121,10 @@ export function parseClaudeEvent(
     return { entries, sessionId };
   }
 
-  // Result event (final summary)
+  // Result event (final summary) — terminal: after this claude has finished
+  // the turn and, with --input-format stream-json, will sit idle waiting for
+  // another user message. The task worker closes stdin when it sees this so
+  // claude exits cleanly.
   if (event.type === "result") {
     const parts: string[] = [];
     if (event.result) parts.push(event.result);
@@ -142,7 +147,7 @@ export function parseClaudeEvent(
         isError: event.is_error,
       },
     });
-    return { entries, sessionId };
+    return { entries, sessionId, isTerminal: true };
   }
 
   // Skip rate_limit_event, stream_event, etc.

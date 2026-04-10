@@ -1,9 +1,9 @@
-import crypto from "node:crypto";
 import { eq, desc } from "drizzle-orm";
 import { assertSsrfSafe } from "../utils/ssrf.js";
 import { db } from "../db/client.js";
 import { webhooks, webhookDeliveries } from "../db/schema.js";
-import { encrypt, decrypt } from "./secret-service.js";
+import { encrypt, decrypt, ALG_AES_256_GCM_V1 } from "./secret-service.js";
+import { HmacSha256Signer } from "./crypto/signer.js";
 import { logger } from "../logger.js";
 
 export type WebhookEvent =
@@ -40,7 +40,16 @@ export interface WebhookRecord {
 function decryptWebhookRow(row: typeof webhooks.$inferSelect): WebhookRecord {
   let secret: string | null = null;
   if (row.encryptedSecret && row.secretIv && row.secretAuthTag) {
-    secret = decrypt(row.encryptedSecret, row.secretIv, row.secretAuthTag);
+    const aad = Buffer.from(`webhook:${row.url}:secret`);
+    secret = decrypt(
+      {
+        alg: row.secretAlg ?? ALG_AES_256_GCM_V1,
+        iv: row.secretIv,
+        ciphertext: row.encryptedSecret,
+        authTag: row.secretAuthTag,
+      },
+      aad,
+    );
   }
   return {
     id: row.id,
@@ -72,11 +81,15 @@ export async function createWebhook(
   let secretIv: Buffer | null = null;
   let secretAuthTag: Buffer | null = null;
 
+  let secretAlg: number = ALG_AES_256_GCM_V1;
+
   if (input.secret) {
-    const { encrypted, iv, authTag } = encrypt(input.secret);
-    encryptedSecret = encrypted;
-    secretIv = iv;
-    secretAuthTag = authTag;
+    const aad = Buffer.from(`webhook:${input.url}:secret`);
+    const blob = encrypt(input.secret, aad);
+    encryptedSecret = blob.ciphertext;
+    secretIv = blob.iv;
+    secretAuthTag = blob.authTag;
+    secretAlg = blob.alg;
   }
 
   const [webhook] = await db
@@ -87,6 +100,7 @@ export async function createWebhook(
       encryptedSecret,
       secretIv,
       secretAuthTag,
+      secretAlg,
       description: input.description ?? null,
       createdBy: createdBy ?? null,
       workspaceId: workspaceId ?? null,
@@ -132,8 +146,10 @@ export async function getWebhookDeliveries(webhookId: string, opts?: { limit?: n
 /**
  * Sign a payload using HMAC-SHA256 with the webhook's secret.
  */
-export function signPayload(payload: string, secret: string): string {
-  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+export async function signPayload(payload: string, secret: string): Promise<string> {
+  const signer = new HmacSha256Signer(secret);
+  const sig = await signer.sign(Buffer.from(payload));
+  return sig.toString("hex");
 }
 
 /**
@@ -245,7 +261,7 @@ export async function deliverWebhook(
   };
 
   if (webhook.secret) {
-    headers["X-Optio-Signature"] = signPayload(payloadStr, webhook.secret);
+    headers["X-Optio-Signature"] = await signPayload(payloadStr, webhook.secret);
   }
 
   let statusCode: number | undefined;

@@ -4,6 +4,7 @@ import {
   text,
   timestamp,
   integer,
+  smallint,
   jsonb,
   pgEnum,
   boolean,
@@ -39,6 +40,7 @@ export const workspaces = pgTable("workspaces", {
   slug: text("slug").notNull().unique(),
   description: text("description"),
   createdBy: uuid("created_by"),
+  allowDockerInDocker: boolean("allow_docker_in_docker").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -64,6 +66,12 @@ export const workspaceMembers = pgTable(
 );
 
 // ── Task enums ──────────────────────────────────────────────────────────────
+
+export const taskActivitySubstateEnum = pgEnum("task_activity_substate", [
+  "active",
+  "stalled",
+  "recovered",
+]);
 
 export const taskStateEnum = pgEnum("task_state", [
   "pending",
@@ -117,7 +125,10 @@ export const tasks = pgTable(
     workflowRunId: uuid("workflow_run_id"), // nullable FK to workflow_runs
     createdBy: uuid("created_by"), // nullable FK to users (null when auth is disabled)
     ignoreOffPeak: boolean("ignore_off_peak").notNull().default(false),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }), // stall detection: last parsed agent event
+    activitySubstate: taskActivitySubstateEnum("activity_substate").notNull().default("active"),
     workspaceId: uuid("workspace_id"), // nullable for backward compat; new tasks should always set this
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -162,9 +173,13 @@ export const taskLogs = pgTable(
     content: text("content").notNull(),
     logType: text("log_type"), // "text" | "tool_use" | "tool_result" | "thinking" | "system" | "error" | "info"
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    workflowRunId: uuid("workflow_run_id"), // nullable FK to workflow_runs for aggregating logs across a run
     timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("task_logs_task_id_timestamp_idx").on(table.taskId, table.timestamp)],
+  (table) => [
+    index("task_logs_task_id_timestamp_idx").on(table.taskId, table.timestamp),
+    index("task_logs_workflow_run_id_idx").on(table.workflowRunId),
+  ],
 );
 
 const bytea = customType<{ data: Buffer }>({
@@ -182,6 +197,7 @@ export const secrets = pgTable(
     encryptedValue: bytea("encrypted_value").notNull(),
     iv: bytea("iv").notNull(),
     authTag: bytea("auth_tag").notNull(),
+    alg: smallint("alg").notNull().default(1), // 1 = AES_256_GCM_V1
     workspaceId: uuid("workspace_id"), // nullable for backward compat
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -192,11 +208,26 @@ export const secrets = pgTable(
   ],
 );
 
+// ── Auth Events ─────────────────────────────────────────────────────────────
+// Lightweight table for recording auth failures from non-task contexts
+// (e.g. ticket-sync, pr-watcher) so the failure detector can surface them.
+export const authEvents = pgTable(
+  "auth_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenType: text("token_type").notNull(), // "claude" | "github"
+    errorMessage: text("error_message").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("auth_events_token_type_created_idx").on(table.tokenType, table.createdAt)],
+);
+
 export const repos = pgTable(
   "repos",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     repoUrl: text("repo_url").notNull(),
+    gitPlatform: text("git_platform").notNull().default("github"),
     workspaceId: uuid("workspace_id"), // nullable for backward compat
     fullName: text("full_name").notNull(),
     defaultBranch: text("default_branch").notNull().default("main"),
@@ -206,6 +237,7 @@ export const repos = pgTable(
     setupCommands: text("setup_commands"), // shell commands run at pod startup after clone
     customDockerfile: text("custom_dockerfile"), // full Dockerfile override (advanced)
     autoMerge: boolean("auto_merge").notNull().default(false),
+    cautiousMode: boolean("cautious_mode").notNull().default(false),
     defaultAgentType: text("default_agent_type").notNull().default("claude-code"),
     promptTemplateOverride: text("prompt_template_override"), // null = use global default
     claudeModel: text("claude_model").default("opus"),
@@ -214,9 +246,15 @@ export const repos = pgTable(
     claudeEffort: text("claude_effort").default("high"), // "low", "medium", "high"
     copilotModel: text("copilot_model"), // null = use copilot default
     copilotEffort: text("copilot_effort"), // "low", "medium", "high"
+    opencodeModel: text("opencode_model"), // e.g. "anthropic/claude-sonnet-4", null = OpenCode default
+    opencodeAgent: text("opencode_agent"), // e.g. "build", "plan", null = default
+    opencodeProvider: text("opencode_provider"), // "anthropic" | "openai" | ... for default provider inference
+    geminiModel: text("gemini_model").default("gemini-2.5-pro"),
+    geminiApprovalMode: text("gemini_approval_mode").default("yolo"), // "default" | "auto_edit" | "yolo"
     maxTurnsCoding: integer("max_turns_coding"), // null = use global default (250)
     maxTurnsReview: integer("max_turns_review"), // null = use global default (10)
     autoResume: boolean("auto_resume").notNull().default(false),
+    planningModeEnabled: boolean("planning_mode_enabled").notNull().default(false),
     maxConcurrentTasks: integer("max_concurrent_tasks").notNull().default(2),
     maxPodInstances: integer("max_pod_instances").notNull().default(1),
     maxAgentsPerPod: integer("max_agents_per_pod").notNull().default(2),
@@ -229,11 +267,13 @@ export const repos = pgTable(
     encryptedSlackWebhookUrl: bytea("encrypted_slack_webhook_url"), // AES-256-GCM encrypted Slack webhook URL
     slackWebhookUrlIv: bytea("slack_webhook_url_iv"),
     slackWebhookUrlAuthTag: bytea("slack_webhook_url_auth_tag"),
+    slackWebhookUrlAlg: smallint("slack_webhook_url_alg").notNull().default(1), // 1 = AES_256_GCM_V1
     slackChannel: text("slack_channel"), // override channel (optional)
     slackNotifyOn: jsonb("slack_notify_on").$type<string[]>(), // e.g. ["completed","failed","pr_opened","needs_attention"]
     slackEnabled: boolean("slack_enabled").notNull().default(false),
     networkPolicy: text("network_policy").notNull().default("unrestricted"), // "unrestricted" | "restricted"
     secretProxy: boolean("secret_proxy").notNull().default(false), // Envoy sidecar proxy for secret isolation
+    stallThresholdMs: integer("stall_threshold_ms"), // per-repo override for stall detection (null = use global default)
     offPeakOnly: boolean("off_peak_only").notNull().default(false),
     cpuRequest: text("cpu_request"), // e.g. "500m", "1000m", "2000m" — K8s CPU request
     cpuLimit: text("cpu_limit"), // e.g. "2000m", "4000m" — K8s CPU limit
@@ -279,6 +319,8 @@ export const repoPods = pgTable(
     activeTaskCount: integer("active_task_count").notNull().default(0),
     lastTaskAt: timestamp("last_task_at", { withTimezone: true }),
     errorMessage: text("error_message"),
+    cachePvcName: text("cache_pvc_name"),
+    cachePvcState: text("cache_pvc_state"), // "pending" | "bound" | "error"
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -326,6 +368,7 @@ export const webhooks = pgTable(
     encryptedSecret: bytea("encrypted_secret"), // AES-256-GCM encrypted signing secret
     secretIv: bytea("secret_iv"),
     secretAuthTag: bytea("secret_auth_tag"),
+    secretAlg: smallint("secret_alg").notNull().default(1), // 1 = AES_256_GCM_V1
     description: text("description"),
     active: boolean("active").notNull().default(true),
     createdBy: uuid("created_by"),
@@ -455,6 +498,32 @@ export const taskComments = pgTable(
   (table) => [index("task_comments_task_id_idx").on(table.taskId)],
 );
 
+// ── Task Messages (user → agent mid-task messaging) ──────────────────────────
+
+export const taskMessageModeEnum = pgEnum("task_message_mode", ["soft", "interrupt"]);
+
+export const taskMessages = pgTable(
+  "task_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id),
+    content: text("content").notNull(),
+    mode: taskMessageModeEnum("mode").notNull().default("soft"),
+    workspaceId: uuid("workspace_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    ackedAt: timestamp("acked_at", { withTimezone: true }),
+    deliveryError: text("delivery_error"),
+  },
+  (table) => [
+    index("task_messages_task_id_idx").on(table.taskId),
+    index("task_messages_task_created_idx").on(table.taskId, table.createdAt),
+  ],
+);
+
 export const taskTemplates = pgTable(
   "task_templates",
   {
@@ -493,48 +562,105 @@ export const taskDependencies = pgTable(
   ],
 );
 
-// ── Workflow Templates & Runs ────────────────────────────────────────────────
+// ── Workflows ────────────────────────────────────────────────────────────────
 
-export const workflowTemplates = pgTable("workflow_templates", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: text("name").notNull(),
-  description: text("description"),
-  workspaceId: uuid("workspace_id"),
-  steps: jsonb("steps")
-    .$type<
-      Array<{
-        id: string;
-        title: string;
-        prompt: string;
-        repoUrl?: string;
-        agentType?: string;
-        dependsOn?: string[];
-        condition?: { type: string; value?: string };
-      }>
-    >()
-    .notNull(),
-  status: text("status").notNull().default("draft"), // "draft" | "active" | "archived"
-  createdBy: uuid("created_by"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflows = pgTable(
+  "workflows",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    environmentSpec: jsonb("environment_spec").$type<Record<string, unknown>>(),
+    promptTemplate: text("prompt_template").notNull(),
+    paramsSchema: jsonb("params_schema").$type<Record<string, unknown>>(),
+    agentRuntime: text("agent_runtime").notNull().default("claude-code"),
+    model: text("model"),
+    maxTurns: integer("max_turns"),
+    budgetUsd: text("budget_usd"),
+    maxConcurrent: integer("max_concurrent").notNull().default(2),
+    maxRetries: integer("max_retries").notNull().default(1),
+    warmPoolSize: integer("warm_pool_size").notNull().default(0),
+    enabled: boolean("enabled").notNull().default(true),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("workflows_workspace_name_key").on(table.workspaceId, table.name),
+    index("workflows_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
+export const workflowTriggers = pgTable(
+  "workflow_triggers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workflowId: uuid("workflow_id")
+      .notNull()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    type: text("type").notNull(), // "manual" | "schedule" | "webhook"
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    paramMapping: jsonb("param_mapping").$type<Record<string, unknown>>(),
+    enabled: boolean("enabled").notNull().default(true),
+    lastFiredAt: timestamp("last_fired_at", { withTimezone: true }),
+    nextFireAt: timestamp("next_fire_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("workflow_triggers_workflow_id_idx").on(table.workflowId),
+    index("workflow_triggers_schedule_due_idx").on(table.enabled, table.nextFireAt),
+  ],
+);
 
 export const workflowRuns = pgTable(
   "workflow_runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    workflowTemplateId: uuid("workflow_template_id")
+    workflowId: uuid("workflow_id")
       .notNull()
-      .references(() => workflowTemplates.id, { onDelete: "cascade" }),
-    workspaceId: uuid("workspace_id"),
-    status: text("status").notNull().default("running"), // "running" | "paused" | "completed" | "failed" | "cancelled"
-    taskMapping: jsonb("task_mapping").$type<Record<string, string>>(), // stepId → taskId
-    createdBy: uuid("created_by"),
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    triggerId: uuid("trigger_id").references(() => workflowTriggers.id),
+    params: jsonb("params").$type<Record<string, unknown>>(),
+    state: text("state").notNull().default("queued"), // "queued" | "running" | "completed" | "failed"
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    costUsd: text("cost_usd"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    modelUsed: text("model_used"),
+    errorMessage: text("error_message"),
+    sessionId: text("session_id"),
+    podName: text("pod_name"),
+    retryCount: integer("retry_count").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
   },
-  (table) => [index("workflow_runs_template_id_idx").on(table.workflowTemplateId)],
+  (table) => [
+    index("workflow_runs_workflow_id_idx").on(table.workflowId),
+    index("workflow_runs_trigger_id_idx").on(table.triggerId),
+    index("workflow_runs_state_idx").on(table.state),
+  ],
+);
+
+export const workflowRunLogs = pgTable(
+  "workflow_run_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workflowRunId: uuid("workflow_run_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    stream: text("stream").notNull().default("stdout"),
+    content: text("content").notNull(),
+    logType: text("log_type"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("workflow_run_logs_run_id_timestamp_idx").on(table.workflowRunId, table.timestamp),
+  ],
 );
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────
@@ -580,6 +706,29 @@ export const customSkills = pgTable(
   (table) => [
     index("custom_skills_scope_idx").on(table.scope),
     index("custom_skills_repo_url_idx").on(table.repoUrl),
+  ],
+);
+
+// ── API Keys (CLI personal access tokens + user-created keys) ─────────────────
+
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // "CLI (jane-macbook)" or user-set
+    prefix: text("prefix").notNull(), // first 12 chars, e.g. "optio_pat_ab"
+    hashedKey: text("hashed_key").notNull().unique(), // SHA-256 hex of full token
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("api_keys_user_id_idx").on(table.userId),
+    index("api_keys_prefix_idx").on(table.prefix),
   ],
 );
 
@@ -660,6 +809,50 @@ export const reviewDrafts = pgTable(
   ],
 );
 
+// ── Push Subscriptions (Web Push API) ────────────────────────────────────────
+
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+    failureCount: integer("failure_count").notNull().default(0),
+  },
+  (table) => [
+    unique("push_subscriptions_user_endpoint_key").on(table.userId, table.endpoint),
+    index("push_subscriptions_user_id_idx").on(table.userId),
+  ],
+);
+
+// ── Notification Preferences ─────────────────────────────────────────────────
+
+export const notificationPreferences = pgTable(
+  "notification_preferences",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id"), // reserved for future per-workspace prefs
+    preferences: jsonb("preferences").$type<Record<string, { push: boolean }>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("notification_preferences_user_key").on(table.userId),
+    index("notification_preferences_user_id_idx").on(table.userId),
+  ],
+);
+
 export const promptTemplates = pgTable(
   "prompt_templates",
   {
@@ -674,4 +867,65 @@ export const promptTemplates = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("prompt_templates_workspace_id_idx").on(table.workspaceId)],
+);
+
+// ── Repo Shared Directories (persistent cache) ───────────────────────────────
+
+export const repoSharedDirectories = pgTable(
+  "repo_shared_directories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id"),
+    name: text("name").notNull(),
+    description: text("description"),
+    mountLocation: text("mount_location").notNull(), // "workspace" | "home"
+    mountSubPath: text("mount_sub_path").notNull(),
+    sizeGi: integer("size_gi").notNull().default(10),
+    scope: text("scope").notNull().default("per-pod"), // "per-pod" | "per-repo" (future)
+    createdBy: uuid("created_by"),
+    lastClearedAt: timestamp("last_cleared_at", { withTimezone: true }),
+    lastMountedAt: timestamp("last_mounted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("repo_shared_dirs_repo_name_key").on(table.repoId, table.name),
+    index("repo_shared_dirs_repo_id_idx").on(table.repoId),
+    index("repo_shared_dirs_workspace_idx").on(table.workspaceId),
+  ],
+);
+
+// ── Workflow Pods ──────────────────────────────────────────────────────────────
+
+export const workflowPodStateEnum = pgEnum("workflow_pod_state", [
+  "provisioning",
+  "ready",
+  "error",
+  "terminating",
+]);
+
+export const workflowPods = pgTable(
+  "workflow_pods",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workflowRunId: uuid("workflow_run_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id"),
+    podName: text("pod_name"),
+    podId: text("pod_id"),
+    state: workflowPodStateEnum("state").notNull().default("provisioning"),
+    activeRunCount: integer("active_run_count").notNull().default(0),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("workflow_pods_run_id_idx").on(table.workflowRunId),
+    index("workflow_pods_workspace_id_idx").on(table.workspaceId),
+  ],
 );

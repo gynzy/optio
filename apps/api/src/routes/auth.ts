@@ -5,6 +5,10 @@ import {
   getClaudeUsage,
   invalidateCredentialsCache,
 } from "../services/auth-service.js";
+import {
+  hasRecentClaudeAuthFailure,
+  getRecentAuthFailures,
+} from "../services/auth-failure-detector.js";
 import { getOAuthProvider, getEnabledProviders, isAuthDisabled } from "../services/oauth/index.js";
 import {
   createSession,
@@ -12,6 +16,7 @@ import {
   revokeSession,
   validateSession,
 } from "../services/session-service.js";
+import { createApiKey, listApiKeys, revokeApiKey } from "../services/api-key-service.js";
 import { storeUserGitHubTokens } from "../services/github-token-service.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth.js";
 import { getRedisClient } from "../services/event-bus.js";
@@ -61,6 +66,16 @@ async function deleteAuthCode(code: string): Promise<void> {
   const redis = getRedisClient();
   await redis.del(`${AUTH_CODE_PREFIX}${code}`);
 }
+
+// Stricter rate limit for auth endpoints (10 req/min vs 100 req/min global)
+const AUTH_RATE_LIMIT = {
+  config: {
+    rateLimit: {
+      max: 10,
+      timeWindow: "1 minute",
+    },
+  },
+};
 
 export async function authRoutes(app: FastifyInstance) {
   // ─── Existing Claude auth endpoints ───
@@ -117,19 +132,29 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/auth/usage", async (_req, reply) => {
-    const usage = await getClaudeUsage();
-    reply.send({ usage });
+    const [usage, authFailures] = await Promise.all([
+      getClaudeUsage(),
+      getRecentAuthFailures().catch(() => ({ claude: false, github: false })),
+    ]);
+    // hasRecentAuthFailure kept for backward compat (true if either token type has failures)
+    const hasRecentAuthFailure = authFailures.claude || authFailures.github;
+    reply.send({ usage: { ...usage, hasRecentAuthFailure, authFailures } });
   });
 
   app.post("/api/auth/refresh", async (_req, reply) => {
     invalidateCredentialsCache();
     const result = getClaudeAuthToken();
+    const authFailures = await getRecentAuthFailures().catch(() => ({
+      claude: false,
+      github: false,
+    }));
     reply.send({
       subscription: {
         available: result.available,
         expiresAt: result.expiresAt,
         error: result.error,
       },
+      authFailures,
     });
   });
 
@@ -144,25 +169,29 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   /** Initiate OAuth flow — redirects to provider. */
-  app.get<{ Params: { provider: string } }>("/api/auth/:provider/login", async (req, reply) => {
-    const providerName = req.params.provider;
-    const provider = getOAuthProvider(providerName);
-    if (!provider) {
-      return reply.status(404).send({ error: `Unknown provider: ${providerName}` });
-    }
+  app.get<{ Params: { provider: string } }>(
+    "/api/auth/:provider/login",
+    AUTH_RATE_LIMIT,
+    async (req, reply) => {
+      const providerName = req.params.provider;
+      const provider = getOAuthProvider(providerName);
+      if (!provider) {
+        return reply.status(404).send({ error: `Unknown provider: ${providerName}` });
+      }
 
-    const state = randomBytes(16).toString("hex");
-    await addOAuthState(state, providerName);
+      const state = randomBytes(16).toString("hex");
+      await addOAuthState(state, providerName);
 
-    const url = provider.authorizeUrl(state);
-    reply.redirect(url);
-  });
+      const url = provider.authorizeUrl(state);
+      reply.redirect(url);
+    },
+  );
 
   /** OAuth callback — exchange code, create session, redirect to web. */
   app.get<{
     Params: { provider: string };
     Querystring: { code?: string; state?: string; error?: string };
-  }>("/api/auth/:provider/callback", async (req, reply) => {
+  }>("/api/auth/:provider/callback", AUTH_RATE_LIMIT, async (req, reply) => {
     const { provider: providerName } = req.params;
     const { code, state, error } = req.query;
 
@@ -200,7 +229,41 @@ export async function authRoutes(app: FastifyInstance) {
         });
       }
 
-      // Generate a short-lived auth code and redirect to the web app's callback.
+      // Check if this is a CLI flow (state contains a dot separator with cliState suffix)
+      const dotIdx = state.indexOf(".");
+      if (dotIdx > 0) {
+        const cliState = state.slice(dotIdx + 1);
+        const redis = getRedisClient();
+        const cliRaw = await redis.get(`cli_flow:${cliState}`);
+        if (cliRaw) {
+          await redis.del(`cli_flow:${cliState}`);
+          const cliFlow = JSON.parse(cliRaw) as {
+            callback: string;
+            codeChallenge: string;
+            codeChallengeMethod: string;
+          };
+
+          // Mint a one-time CLI auth code
+          const cliCode = randomBytes(32).toString("hex");
+          await redis.setex(
+            `cli_code:${cliCode}`,
+            300, // 5 minutes
+            JSON.stringify({
+              sessionToken: session.token,
+              codeChallenge: cliFlow.codeChallenge,
+              codeChallengeMethod: cliFlow.codeChallengeMethod,
+            }),
+          );
+
+          // Redirect to the CLI's loopback callback
+          const callbackUrl = new URL(cliFlow.callback);
+          callbackUrl.searchParams.set("code", cliCode);
+          callbackUrl.searchParams.set("state", cliState);
+          return reply.redirect(callbackUrl.toString());
+        }
+      }
+
+      // Standard web flow: generate a short-lived auth code and redirect to the web app's callback.
       // The web app exchanges the code for the session token server-side and
       // sets the HttpOnly cookie on its own origin — avoiding cross-origin
       // cookie issues when API and web run on different origins.
@@ -214,7 +277,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   /** Exchange a short-lived auth code for the session token. */
-  app.post("/api/auth/exchange-code", async (req, reply) => {
+  app.post("/api/auth/exchange-code", AUTH_RATE_LIMIT, async (req, reply) => {
     const { code } = (req.body ?? {}) as { code?: string };
     if (!code) {
       return reply.status(400).send({ error: "Missing code" });
@@ -287,8 +350,174 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ token });
   });
 
+  // ─── CLI login flow ───
+
+  const CLI_STATE_PREFIX = "cli_flow:";
+  const CLI_STATE_TTL_SECS = 600; // 10 minutes
+  const CLI_CODE_PREFIX = "cli_code:";
+  const CLI_CODE_TTL_SECS = 300; // 5 minutes
+
+  const CLI_RATE_LIMIT = {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: "1 minute",
+      },
+    },
+  };
+
+  /**
+   * Start a CLI login flow. Stores PKCE challenge in Redis and returns
+   * the URL the CLI should open in the browser.
+   */
+  app.post("/api/auth/cli/start", CLI_RATE_LIMIT, async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      provider?: string;
+      callback?: string;
+      state?: string;
+      code_challenge?: string;
+      code_challenge_method?: string;
+      client_name?: string;
+      client_version?: string;
+    };
+
+    const { provider, callback, state: cliState, code_challenge, code_challenge_method } = body;
+
+    if (!provider || !callback || !cliState || !code_challenge) {
+      return reply
+        .status(400)
+        .send({ error: "Missing required fields: provider, callback, state, code_challenge" });
+    }
+
+    const oauthProvider = getOAuthProvider(provider);
+    if (!oauthProvider) {
+      return reply.status(404).send({ error: `Unknown provider: ${provider}` });
+    }
+
+    // Store CLI flow data in Redis
+    const redis = getRedisClient();
+    await redis.setex(
+      `${CLI_STATE_PREFIX}${cliState}`,
+      CLI_STATE_TTL_SECS,
+      JSON.stringify({
+        provider,
+        callback,
+        codeChallenge: code_challenge,
+        codeChallengeMethod: code_challenge_method ?? "S256",
+      }),
+    );
+
+    // Create the OAuth state that embeds the CLI state
+    const oauthState = randomBytes(16).toString("hex") + "." + cliState;
+    await addOAuthState(oauthState, provider);
+
+    const url = oauthProvider.authorizeUrl(oauthState);
+    reply.send({ url });
+  });
+
+  /**
+   * Exchange a CLI auth code + PKCE verifier for a personal access token.
+   */
+  app.post("/api/auth/cli/token", CLI_RATE_LIMIT, async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      code?: string;
+      code_verifier?: string;
+    };
+
+    const { code, code_verifier } = body;
+    if (!code || !code_verifier) {
+      return reply.status(400).send({ error: "Missing required fields: code, code_verifier" });
+    }
+
+    // Look up the CLI code entry in Redis
+    const redis = getRedisClient();
+    const raw = await redis.get(`${CLI_CODE_PREFIX}${code}`);
+    if (!raw) {
+      return reply.status(400).send({ error: "Invalid or expired code" });
+    }
+    await redis.del(`${CLI_CODE_PREFIX}${code}`); // one-time use
+
+    const entry = JSON.parse(raw) as {
+      sessionToken: string;
+      codeChallenge: string;
+      codeChallengeMethod: string;
+    };
+
+    // Verify PKCE: hash the verifier and compare with the stored challenge
+    const { createHash } = await import("node:crypto");
+    const computedChallenge = createHash("sha256").update(code_verifier).digest("base64url");
+    if (computedChallenge !== entry.codeChallenge) {
+      return reply.status(400).send({ error: "PKCE verification failed" });
+    }
+
+    // Validate the underlying session to get the user
+    const user = await validateSession(entry.sessionToken);
+    if (!user) {
+      return reply.status(400).send({ error: "Session expired" });
+    }
+
+    // Revoke the temporary web session — the CLI will use the PAT instead
+    await revokeSession(entry.sessionToken);
+
+    // Create a PAT for the CLI
+    const result = await createApiKey(user.id, `CLI (${new Date().toISOString().slice(0, 10)})`);
+
+    reply.send({
+      token: result.token,
+      tokenId: result.tokenId,
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+      },
+    });
+  });
+
+  // ─── API Key management ───
+
+  /** Create an API key (authenticated users). */
+  app.post("/api/auth/api-keys", async (req, reply) => {
+    if (!req.user) {
+      return reply.status(401).send({ error: "Not authenticated" });
+    }
+
+    const body = (req.body ?? {}) as {
+      name?: string;
+      expiresAt?: string;
+    };
+
+    const name = body.name || `API Key (${new Date().toISOString().slice(0, 10)})`;
+    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : undefined;
+
+    const result = await createApiKey(req.user.id, name, expiresAt);
+    reply.status(201).send(result);
+  });
+
+  /** List API keys for the current user. */
+  app.get("/api/auth/api-keys", async (req, reply) => {
+    if (!req.user) {
+      return reply.status(401).send({ error: "Not authenticated" });
+    }
+
+    const keys = await listApiKeys(req.user.id);
+    reply.send({ keys });
+  });
+
+  /** Revoke an API key. */
+  app.delete<{ Params: { id: string } }>("/api/auth/api-keys/:id", async (req, reply) => {
+    if (!req.user) {
+      return reply.status(401).send({ error: "Not authenticated" });
+    }
+
+    const revoked = await revokeApiKey(req.params.id, req.user.id);
+    if (!revoked) {
+      return reply.status(404).send({ error: "API key not found" });
+    }
+    reply.send({ ok: true });
+  });
+
   /** Logout — revoke session and clear cookie. */
-  app.post("/api/auth/logout", async (req, reply) => {
+  app.post("/api/auth/logout", AUTH_RATE_LIMIT, async (req, reply) => {
     // Resolve token: Bearer header (BFF proxy) → session cookie (direct)
     const authHeader = req.headers.authorization;
     let token: string | undefined;

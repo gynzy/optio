@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Gauge, Clock, Moon } from "lucide-react";
 import { getOffPeakInfo } from "@optio/shared";
-import { TokenRefreshBanner } from "@/components/token-refresh-banner";
+import { TokenRefreshBanner, GitHubTokenBanner } from "@/components/token-refresh-banner";
 import type { UsageData } from "./types.js";
 
 function UsageMeter({
@@ -59,11 +59,26 @@ function UsageMeter({
 export function UsagePanel({ usage }: { usage: UsageData | null }) {
   if (!usage) return null;
 
-  if (!usage.available) {
-    const isAuthError = usage.error?.includes("401") || usage.error?.includes("expired");
-    if (!isAuthError) return null;
-    return <TokenRefreshBanner />;
+  // Determine which auth banners to show using per-token-type failure status.
+  // Falls back to the legacy hasRecentAuthFailure for backward compat.
+  const claudeFailure =
+    usage.authFailures?.claude ??
+    (usage.hasRecentAuthFailure ||
+      (!usage.available && (usage.error?.includes("401") || usage.error?.includes("expired"))));
+  const githubFailure = usage.authFailures?.github ?? false;
+
+  if (claudeFailure || githubFailure) {
+    return (
+      <div className="space-y-3">
+        {claudeFailure && <TokenRefreshBanner />}
+        {githubFailure && <GitHubTokenBanner />}
+      </div>
+    );
   }
+
+  // Usage endpoint hit a non-auth issue (e.g. 429, network) and there's no
+  // evidence of token failure — just hide the panel.
+  if (!usage.available) return null;
 
   return (
     <div className="rounded-xl border border-border/50 bg-bg-card p-4">

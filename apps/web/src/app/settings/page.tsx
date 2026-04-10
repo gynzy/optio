@@ -20,8 +20,13 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Trash2,
+  Ticket,
+  Github,
+  KeyRound,
 } from "lucide-react";
 import { OPTIO_TOOL_CATEGORIES, ALL_OPTIO_TOOL_NAMES } from "@optio/shared";
+import { NotificationPreferences } from "@/components/notifications/notification-preferences";
 
 function PromptTemplateEditor() {
   const [template, setTemplate] = useState("");
@@ -987,30 +992,209 @@ function OptioAgentSettings() {
   );
 }
 
-export default function SettingsPage() {
-  usePageTitle("Settings");
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [providers, setProviders] = useState<any[]>([]);
+function GitHubTokenManager() {
+  const [status, setStatus] = useState<"valid" | "expired" | "missing" | "error" | null>(null);
+  const [source, setSource] = useState<"pat" | "github_app" | undefined>();
+  const [user, setUser] = useState<{ login: string; name: string } | undefined>();
+  const [message, setMessage] = useState<string | undefined>();
+  const [loading, setLoading] = useState(true);
+  const [newToken, setNewToken] = useState("");
+  const [rotating, setRotating] = useState(false);
+  const [showRotateForm, setShowRotateForm] = useState(false);
+
+  const checkStatus = async () => {
+    setLoading(true);
+    try {
+      const res = await api.getGithubTokenStatus();
+      setStatus(res.status);
+      setSource(res.source);
+      setUser(res.user);
+      setMessage(res.message ?? res.error);
+    } catch {
+      setStatus("error");
+      setMessage("Failed to check token status");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (typeof Notification !== "undefined") {
-      setNotificationsEnabled(Notification.permission === "granted");
+    checkStatus();
+  }, []);
+
+  const handleRotate = async () => {
+    if (!newToken.trim()) return;
+    setRotating(true);
+    try {
+      const res = await api.rotateGithubToken(newToken.trim());
+      if (res.success) {
+        toast.success(res.message ?? "GitHub token replaced successfully");
+        setNewToken("");
+        setShowRotateForm(false);
+        checkStatus();
+      } else {
+        toast.error(res.error ?? "Token validation failed");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to replace token");
+    } finally {
+      setRotating(false);
     }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-5 rounded-xl border border-border/50 bg-bg-card text-center text-text-muted text-sm">
+        <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Checking token status...
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-4">
+      {/* Current status */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {status === "valid" ? (
+            <CheckCircle2 className="w-5 h-5 text-success shrink-0" />
+          ) : status === "expired" ? (
+            <AlertTriangle className="w-5 h-5 text-warning shrink-0" />
+          ) : status === "missing" ? (
+            <XCircle className="w-5 h-5 text-error shrink-0" />
+          ) : (
+            <AlertTriangle className="w-5 h-5 text-text-muted shrink-0" />
+          )}
+          <div>
+            <p className="text-sm font-medium">
+              {status === "valid"
+                ? "Token is valid"
+                : status === "expired"
+                  ? "Token is expired or revoked"
+                  : status === "missing"
+                    ? "No token configured"
+                    : "Unable to verify token"}
+            </p>
+            {user && (
+              <p className="text-xs text-text-muted">
+                Authenticated as <span className="font-medium text-text">{user.login}</span>
+                {user.name && ` (${user.name})`}
+              </p>
+            )}
+            {source === "github_app" && (
+              <p className="text-xs text-text-muted">Using GitHub App integration</p>
+            )}
+            {message && !user && <p className="text-xs text-text-muted">{message}</p>}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={checkStatus}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-text-muted hover:bg-bg-hover transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Refresh
+          </button>
+          {source !== "github_app" && (
+            <button
+              onClick={() => setShowRotateForm(!showRotateForm)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-xs hover:bg-primary/20 transition-colors"
+            >
+              <KeyRound className="w-3 h-3" />
+              {status === "missing" ? "Add Token" : "Replace Token"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Expired/missing warning */}
+      {(status === "expired" || status === "missing") && (
+        <div
+          className={`flex items-start gap-2 p-3 rounded-lg text-xs ${
+            status === "expired"
+              ? "bg-warning/10 border border-warning/20 text-warning"
+              : "bg-error/10 border border-error/20 text-error"
+          }`}
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">
+              {status === "expired"
+                ? "Your GitHub token has expired or been revoked"
+                : "No GitHub token is configured"}
+            </p>
+            <p className="mt-0.5 opacity-70">
+              PR watching, issue sync, and repo detection require a valid GitHub token. Replace it
+              below to restore these features.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Rotation form */}
+      {showRotateForm && (
+        <div className="space-y-3 p-3 rounded-lg border border-primary/30 bg-primary/5">
+          <p className="text-xs text-text-muted">
+            Enter a new GitHub Personal Access Token. The token will be validated before replacing
+            the existing one.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={newToken}
+              onChange={(e) => setNewToken(e.target.value)}
+              onPaste={(e) => {
+                e.preventDefault();
+                const pasted = e.clipboardData.getData("text").trim();
+                if (pasted) setNewToken(pasted);
+              }}
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              className="flex-1 px-3 py-2 rounded-lg bg-bg border border-border text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+            />
+            <button
+              onClick={handleRotate}
+              disabled={!newToken.trim() || rotating}
+              className="px-4 py-2 rounded-md bg-primary text-white text-xs font-medium hover:bg-primary-hover disabled:opacity-50 whitespace-nowrap"
+            >
+              {rotating ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Validating...
+                </span>
+              ) : (
+                "Validate & Save"
+              )}
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setShowRotateForm(false);
+              setNewToken("");
+            }}
+            className="text-xs text-text-muted hover:text-text"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SettingsPage() {
+  usePageTitle("Settings");
+  const [syncing, setSyncing] = useState(false);
+  const [providers, setProviders] = useState<any[]>([]);
+  const [showAddProvider, setShowAddProvider] = useState(false);
+  const [newProviderSource, setNewProviderSource] = useState("github");
+  const [providerConfig, setProviderConfig] = useState<Record<string, string>>({});
+  const [savingProvider, setSavingProvider] = useState(false);
+
+  useEffect(() => {
     api
       .listTicketProviders()
       .then((res) => setProviders(res.providers))
       .catch(() => {});
   }, []);
-
-  const requestNotifications = async () => {
-    if (typeof Notification === "undefined") return;
-    const result = await Notification.requestPermission();
-    setNotificationsEnabled(result === "granted");
-    if (result === "granted") {
-      toast.success("Notifications enabled");
-    }
-  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -1024,6 +1208,58 @@ export default function SettingsPage() {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleAddProvider = async () => {
+    setSavingProvider(true);
+    try {
+      const config: Record<string, unknown> = { ...providerConfig, label: "optio" };
+      await api.createTicketProvider({ source: newProviderSource, config });
+      const res = await api.listTicketProviders();
+      setProviders(res.providers);
+      setShowAddProvider(false);
+      setProviderConfig({});
+      setNewProviderSource("github");
+      toast.success("Ticket provider added");
+    } catch (err) {
+      toast.error("Failed to add provider", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setSavingProvider(false);
+    }
+  };
+
+  const handleDeleteProvider = async (id: string) => {
+    if (!confirm("Remove this ticket provider? This cannot be undone.")) return;
+    try {
+      await api.deleteTicketProvider(id);
+      setProviders((prev) => prev.filter((p) => p.id !== id));
+      toast.success("Provider removed");
+    } catch (err) {
+      toast.error("Failed to remove provider");
+    }
+  };
+
+  const providerFields: Record<string, { key: string; label: string; type?: string }[]> = {
+    github: [
+      { key: "owner", label: "Owner" },
+      { key: "repo", label: "Repository" },
+    ],
+    jira: [
+      { key: "baseUrl", label: "Jira URL (e.g. https://company.atlassian.net)" },
+      { key: "email", label: "Email" },
+      { key: "apiToken", label: "API Token", type: "password" },
+      { key: "projectKey", label: "Project Key (optional)" },
+    ],
+    linear: [
+      { key: "apiKey", label: "API Key", type: "password" },
+      { key: "teamId", label: "Team ID" },
+    ],
+    notion: [
+      { key: "apiKey", label: "Integration Token", type: "password" },
+      { key: "databaseId", label: "Database ID" },
+    ],
   };
 
   return (
@@ -1045,38 +1281,27 @@ export default function SettingsPage() {
         <AuthenticationSettings />
       </section>
 
+      {/* GitHub Token */}
+      <section>
+        <h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-2">
+          <Github className="w-4 h-4" />
+          GitHub Token
+        </h2>
+        <GitHubTokenManager />
+      </section>
+
       {/* Notifications */}
       <section>
         <h2 className="text-sm font-medium text-text-muted mb-3">Notifications</h2>
-        <div className="p-5 rounded-xl border border-border/50 bg-bg-card">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Bell className="w-5 h-5 text-text-muted" />
-              <div>
-                <p className="text-sm">Browser Notifications</p>
-                <p className="text-xs text-text-muted">
-                  Get notified when tasks complete or need attention
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={requestNotifications}
-              disabled={notificationsEnabled}
-              className={`px-3 py-1.5 rounded-md text-xs ${
-                notificationsEnabled
-                  ? "bg-success/10 text-success"
-                  : "bg-primary text-white hover:bg-primary-hover"
-              }`}
-            >
-              {notificationsEnabled ? "Enabled" : "Enable"}
-            </button>
-          </div>
-        </div>
+        <NotificationPreferences />
       </section>
 
       {/* Ticket Sync */}
       <section>
-        <h2 className="text-sm font-medium text-text-muted mb-3">Ticket Integration</h2>
+        <h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-2">
+          <Ticket className="w-4 h-4" />
+          Ticket Integration
+        </h2>
         <div className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-3">
           <p className="text-xs text-text-muted">
             Sync issues labeled with{" "}
@@ -1086,39 +1311,111 @@ export default function SettingsPage() {
           {providers.length > 0 ? (
             <div className="space-y-2">
               {providers.map((p: any) => (
-                <div key={p.id} className="flex items-center gap-2 text-sm">
-                  <span
-                    className={`w-2 h-2 rounded-full ${p.enabled ? "bg-success" : "bg-text-muted"}`}
-                  />
-                  <span className="capitalize">{p.source}</span>
-                  <span className="text-xs text-text-muted">
-                    {p.source === "github" &&
-                      p.config?.owner &&
-                      `${p.config.owner}/${p.config.repo}`}
-                    {p.source === "notion" &&
-                      p.config?.databaseId &&
-                      `Database: ${p.config.databaseId}`}
-                    {p.source === "linear" && p.config?.teamId && `Team: ${p.config.teamId}`}
-                    {p.source === "jira" && p.config?.baseUrl && `${p.config.baseUrl}`}
-                  </span>
+                <div key={p.id} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-2 h-2 rounded-full ${p.enabled ? "bg-success" : "bg-text-muted"}`}
+                    />
+                    <span className="capitalize">{p.source}</span>
+                    <span className="text-xs text-text-muted">
+                      {p.source === "github" &&
+                        p.config?.owner &&
+                        `${p.config.owner}/${p.config.repo}`}
+                      {p.source === "notion" &&
+                        p.config?.databaseId &&
+                        `Database: ${p.config.databaseId}`}
+                      {p.source === "linear" && p.config?.teamId && `Team: ${p.config.teamId}`}
+                      {p.source === "jira" && p.config?.baseUrl && `${p.config.baseUrl}`}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteProvider(p.id)}
+                    className="p-1 rounded hover:bg-error/10 text-text-muted hover:text-error transition-colors"
+                    title="Remove provider"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               ))}
             </div>
           ) : (
             <p className="text-xs text-text-muted">No ticket providers configured.</p>
           )}
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-xs hover:bg-primary/20 transition-colors disabled:opacity-50"
-          >
-            {syncing ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              <RefreshCw className="w-3 h-3" />
-            )}
-            Sync Now
-          </button>
+
+          {showAddProvider ? (
+            <div className="space-y-3 pt-2 border-t border-border/50">
+              <div>
+                <label className="block text-xs text-text-muted mb-1">Provider</label>
+                <select
+                  value={newProviderSource}
+                  onChange={(e) => {
+                    setNewProviderSource(e.target.value);
+                    setProviderConfig({});
+                  }}
+                  className="w-full px-3 py-1.5 rounded-md bg-bg border border-border/50 text-sm"
+                >
+                  <option value="github">GitHub Issues</option>
+                  <option value="jira">Jira</option>
+                  <option value="linear">Linear</option>
+                  <option value="notion">Notion</option>
+                </select>
+              </div>
+              {providerFields[newProviderSource]?.map((field) => (
+                <div key={field.key}>
+                  <label className="block text-xs text-text-muted mb-1">{field.label}</label>
+                  <input
+                    type={field.type || "text"}
+                    value={providerConfig[field.key] || ""}
+                    onChange={(e) =>
+                      setProviderConfig((prev) => ({ ...prev, [field.key]: e.target.value }))
+                    }
+                    className="w-full px-3 py-1.5 rounded-md bg-bg border border-border/50 text-sm"
+                  />
+                </div>
+              ))}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleAddProvider}
+                  disabled={savingProvider}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary text-white text-xs hover:bg-primary-hover transition-colors disabled:opacity-50"
+                >
+                  {savingProvider && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddProvider(false);
+                    setProviderConfig({});
+                  }}
+                  className="px-3 py-1.5 rounded-md bg-bg text-text-muted text-xs hover:bg-bg-hover transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowAddProvider(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-xs hover:bg-primary/20 transition-colors"
+              >
+                <Plus className="w-3 h-3" />
+                Add Provider
+              </button>
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-xs hover:bg-primary/20 transition-colors disabled:opacity-50"
+              >
+                {syncing ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3 h-3" />
+                )}
+                Sync Now
+              </button>
+            </div>
+          )}
         </div>
       </section>
 

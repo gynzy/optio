@@ -106,13 +106,34 @@ describe("GET /api/cluster/overview", () => {
     app = await buildTestApp();
   });
 
-  it("returns 500 when K8s API fails", async () => {
-    mockListNode.mockRejectedValue(new Error("K8s API unavailable"));
+  it("returns 500 when namespace-scoped K8s API fails", async () => {
+    mockListNode.mockResolvedValue({ items: [] });
+    mockListNamespacedPod.mockRejectedValue(new Error("K8s API unavailable"));
+    mockListNamespacedService.mockRejectedValue(new Error("K8s API unavailable"));
+    mockListNamespacedEvent.mockRejectedValue(new Error("K8s API unavailable"));
 
     const res = await app.inject({ method: "GET", url: "/api/cluster/overview" });
 
     expect(res.statusCode).toBe(500);
     expect(res.json().error).toContain("K8s API unavailable");
+  });
+
+  it("returns 200 with empty nodes when listNode fails (no ClusterRole)", async () => {
+    mockListNode.mockRejectedValue(new Error("Forbidden: nodes is forbidden"));
+    mockListNamespacedPod.mockResolvedValue({ items: [] });
+    mockListNamespacedService.mockResolvedValue({ items: [] });
+    mockListNamespacedEvent.mockResolvedValue({ items: [] });
+    mockListClusterCustomObject.mockRejectedValue(new Error("Forbidden"));
+    mockListNamespacedCustomObject.mockResolvedValue({ items: [] });
+
+    const res = await app.inject({ method: "GET", url: "/api/cluster/overview" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.nodes).toEqual([]);
+    expect(body.summary.totalNodes).toBe(0);
+    expect(body.summary.readyNodes).toBe(0);
+    expect(body.pods).toBeDefined();
   });
 });
 

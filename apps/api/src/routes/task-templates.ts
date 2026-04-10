@@ -5,11 +5,14 @@ import * as taskService from "../services/task-service.js";
 import { TaskState } from "@optio/shared";
 import { taskQueue } from "../workers/task-worker.js";
 
+const repoUrlQuerySchema = z.object({ repoUrl: z.string().optional() });
+const idParamsSchema = z.object({ id: z.string() });
+
 const createTemplateSchema = z.object({
   name: z.string().min(1),
   repoUrl: z.string().optional(),
   prompt: z.string().min(1),
-  agentType: z.enum(["claude-code", "codex", "copilot"]).optional(),
+  agentType: z.enum(["claude-code", "codex", "copilot", "opencode"]).optional(),
   priority: z.number().int().min(1).max(1000).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -18,7 +21,7 @@ const updateTemplateSchema = z.object({
   name: z.string().min(1).optional(),
   repoUrl: z.string().nullable().optional(),
   prompt: z.string().min(1).optional(),
-  agentType: z.enum(["claude-code", "codex", "copilot"]).optional(),
+  agentType: z.enum(["claude-code", "codex", "copilot", "opencode"]).optional(),
   priority: z.number().int().min(1).max(1000).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -31,7 +34,7 @@ const createFromTemplateSchema = z.object({
     .regex(/^[a-zA-Z0-9._\/-]+$/, "Invalid branch name")
     .optional(),
   prompt: z.string().optional(),
-  agentType: z.enum(["claude-code", "codex", "copilot"]).optional(),
+  agentType: z.enum(["claude-code", "codex", "copilot", "opencode"]).optional(),
   priority: z.number().int().min(1).max(1000).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -40,7 +43,7 @@ const createFromTemplateSchema = z.object({
 export async function taskTemplateRoutes(app: FastifyInstance) {
   // List templates — scoped to workspace
   app.get("/api/task-templates", async (req, reply) => {
-    const query = req.query as { repoUrl?: string };
+    const query = repoUrlQuerySchema.parse(req.query);
     const workspaceId = req.user?.workspaceId ?? null;
     const templates = await taskTemplateService.listTaskTemplates(query.repoUrl, workspaceId);
     reply.send({ templates });
@@ -48,7 +51,7 @@ export async function taskTemplateRoutes(app: FastifyInstance) {
 
   // Get template — verify workspace ownership
   app.get("/api/task-templates/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const template = await taskTemplateService.getTaskTemplate(id);
     if (!template) return reply.status(404).send({ error: "Template not found" });
     const wsId = req.user?.workspaceId;
@@ -68,7 +71,7 @@ export async function taskTemplateRoutes(app: FastifyInstance) {
 
   // Update template — verify workspace ownership
   app.patch("/api/task-templates/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await taskTemplateService.getTaskTemplate(id);
     if (!existing) return reply.status(404).send({ error: "Template not found" });
     const wsId = req.user?.workspaceId;
@@ -83,7 +86,7 @@ export async function taskTemplateRoutes(app: FastifyInstance) {
 
   // Delete template — verify workspace ownership
   app.delete("/api/task-templates/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const existing = await taskTemplateService.getTaskTemplate(id);
     if (!existing) return reply.status(404).send({ error: "Template not found" });
     const wsId = req.user?.workspaceId;
@@ -96,7 +99,7 @@ export async function taskTemplateRoutes(app: FastifyInstance) {
 
   // Create task from template — verify workspace ownership of template
   app.post("/api/tasks/from-template/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const overrides = createFromTemplateSchema.parse(req.body);
 
     const template = await taskTemplateService.getTaskTemplate(id);

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -27,6 +28,11 @@ vi.mock("../db/schema.js", () => ({
     createdAt: "sessions.created_at",
   },
 }));
+
+/** Helper to compute SHA-256 hex hash (mirrors session-service internals). */
+function testHashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 import { db } from "../db/client.js";
 import {
@@ -140,46 +146,114 @@ describe("session-service", () => {
   });
 
   describe("validateSession", () => {
-    it("returns user for valid session", async () => {
+    const VALID_TOKEN = "some-token";
+    const VALID_TOKEN_HASH = testHashToken(VALID_TOKEN);
+
+    function mockValidSessionRow(overrides: Record<string, unknown> = {}) {
+      return {
+        sessionId: "sess-1",
+        tokenHash: VALID_TOKEN_HASH,
+        sessionCreatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
+        expiresAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000), // 6 days from now
+        userId: "user-1",
+        provider: "github",
+        email: "test@test.com",
+        displayName: "Test",
+        avatarUrl: null,
+        defaultWorkspaceId: "ws-1",
+        ...overrides,
+      };
+    }
+
+    function setupSelectMock(rows: unknown[]) {
       (db.select as any) = vi.fn().mockReturnValue({
         from: vi.fn().mockReturnValue({
           innerJoin: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([
-                {
-                  sessionId: "sess-1",
-                  userId: "user-1",
-                  provider: "github",
-                  email: "test@test.com",
-                  displayName: "Test",
-                  avatarUrl: null,
-                  defaultWorkspaceId: "ws-1",
-                },
-              ]),
+              limit: vi.fn().mockResolvedValue(rows),
             }),
           }),
         }),
       });
+    }
 
-      const result = await validateSession("some-token");
+    function setupUpdateMock() {
+      (db.update as any) = vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+    }
+
+    it("returns user for valid session and extends expiry (sliding window)", async () => {
+      setupSelectMock([mockValidSessionRow()]);
+      setupUpdateMock();
+
+      const result = await validateSession(VALID_TOKEN);
       expect(result).not.toBeNull();
       expect(result!.id).toBe("user-1");
       expect(result!.email).toBe("test@test.com");
+      expect(result!.workspaceId).toBe("ws-1");
+
+      // Sliding window: should have called db.update to extend expiry
+      expect(db.update).toHaveBeenCalled();
     });
 
-    it("returns null for invalid or expired session", async () => {
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([]),
-            }),
-          }),
-        }),
-      });
+    it("returns null when no session row found (invalid token)", async () => {
+      setupSelectMock([]);
 
       const result = await validateSession("bad-token");
       expect(result).toBeNull();
+    });
+
+    it("returns null when session is expired (post-fetch check)", async () => {
+      setupSelectMock([
+        mockValidSessionRow({
+          expiresAt: new Date(Date.now() - 1000), // expired 1 second ago
+        }),
+      ]);
+
+      const result = await validateSession(VALID_TOKEN);
+      expect(result).toBeNull();
+    });
+
+    it("performs constant-time hash comparison via timingSafeEqual", async () => {
+      // Row with a mismatched tokenHash — should be rejected by timingSafeEqual
+      setupSelectMock([
+        mockValidSessionRow({
+          tokenHash: testHashToken("different-token"),
+        }),
+      ]);
+
+      const result = await validateSession(VALID_TOKEN);
+      expect(result).toBeNull();
+    });
+
+    it("caps sliding window at max TTL from session creation", async () => {
+      // Session created 28 days ago — max TTL is 30 days, so cap at 2 days from now
+      const sessionCreatedAt = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+      setupSelectMock([
+        mockValidSessionRow({
+          sessionCreatedAt,
+          expiresAt: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000), // 1 day left
+        }),
+      ]);
+      setupUpdateMock();
+
+      const result = await validateSession(VALID_TOKEN);
+      expect(result).not.toBeNull();
+
+      // Verify the update was called (sliding window extension)
+      expect(db.update).toHaveBeenCalled();
+      // The new expiry should be capped: createdAt + 30 days < now + 7 days
+      const setCalls = (db.update as any).mock.results[0].value.set.mock.calls;
+      const newExpiry: Date = setCalls[0][0].expiresAt;
+      const maxExpiry = new Date(sessionCreatedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+      // newExpiry should not exceed maxExpiry
+      expect(newExpiry.getTime()).toBeLessThanOrEqual(maxExpiry.getTime());
+      // newExpiry should be less than now + 7 days (because of the cap)
+      const slidingExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      expect(newExpiry.getTime()).toBeLessThan(slidingExpiry.getTime());
     });
   });
 
