@@ -140,7 +140,7 @@ local buildImages = base.pipeline(
 );
 
 // ── Deployment Event Hook ───────────────────────────────────────────────────
-local deployHook = deployment.masterMergeDeploymentEventHook();
+local deployHook = deployment.masterMergeDeploymentEventHook(runsOn=['ubuntu-latest']);
 
 // ── Release ─────────────────────────────────────────────────────────────────
 local prodIfClause = deployment.deploymentTargets(['production']);
