@@ -365,6 +365,12 @@ spec:
             tmpfsMounts: [{ mountPath: "/var/lib/docker", sizeLimit: "10Gi" }],
           }
         : {}),
+      ...(process.env.OPTIO_AGENT_NODE_SELECTOR
+        ? { nodeSelector: JSON.parse(process.env.OPTIO_AGENT_NODE_SELECTOR) }
+        : {}),
+      ...(process.env.OPTIO_AGENT_TOLERATIONS
+        ? { tolerations: JSON.parse(process.env.OPTIO_AGENT_TOLERATIONS) }
+        : {}),
     };
 
     // Add Envoy sidecar containers and volumes when secret proxy is enabled
