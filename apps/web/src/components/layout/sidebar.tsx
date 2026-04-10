@@ -16,8 +16,8 @@ import {
   Terminal,
   Clock,
   FileText,
-  GitBranch,
   Bot,
+  GitBranch,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
 import { WorkspaceSwitcher } from "./workspace-switcher";
@@ -30,9 +30,9 @@ const MAIN_NAV = [
   { href: "/repos", label: "Repos", icon: FolderGit2 },
   { href: "/cluster", label: "Cluster", icon: Server },
   { href: "/costs", label: "Costs", icon: DollarSign },
+  { href: "/workflows", label: "Workflows", icon: GitBranch },
   { href: "/schedules", label: "Schedules", icon: Clock },
   { href: "/templates", label: "Templates", icon: FileText },
-  { href: "/workflows", label: "Workflows", icon: GitBranch },
 ];
 
 const SECONDARY_NAV = [

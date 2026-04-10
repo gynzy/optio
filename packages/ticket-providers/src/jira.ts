@@ -7,6 +7,7 @@ import {
   type TicketComment,
   type TicketProviderConfig,
 } from "@optio/shared";
+import { assertSsrfSafe } from "@optio/shared/ssrf";
 import type { TicketProvider } from "./types.js";
 
 /**
@@ -59,6 +60,7 @@ export class JiraTicketProvider implements TicketProvider {
 
   async fetchActionableTickets(config: TicketProviderConfig): Promise<Ticket[]> {
     const jiraConfig = asJiraConfig(config);
+    await assertSsrfSafe(jiraConfig.baseUrl);
     const client = new Version3Client({
       host: jiraConfig.baseUrl,
       authentication: {
@@ -79,15 +81,15 @@ export class JiraTicketProvider implements TicketProvider {
     const jql = jqlParts.join(" AND ");
 
     const allTickets: Ticket[] = [];
-    let startAt = 0;
     const maxResults = 100;
     let pageCount = 1;
+    let nextPageToken: string | undefined;
 
     while (pageCount <= maxPages) {
-      const response = await client.issueSearch.searchForIssuesUsingJql({
+      const response = await client.issueSearch.searchForIssuesUsingJqlEnhancedSearch({
         jql,
-        startAt,
         maxResults,
+        nextPageToken,
         fields: [
           "summary",
           "description",
@@ -128,7 +130,12 @@ export class JiraTicketProvider implements TicketProvider {
           url: `${jiraConfig.baseUrl}/browse/${issue.key}`,
           labels: fields.labels ?? [],
           assignee: fields.assignee?.displayName,
-          repo: undefined,
+          // Extract target repo from a "repo:<owner/repo>" Jira label (e.g. "repo:acme/backend").
+          // Accepts full URLs, "owner/repo" paths, or bare repo names for suffix matching.
+          repo: (fields.labels ?? [])
+            .find((l: string) => l.startsWith("repo:"))
+            ?.slice(5)
+            .trim(),
           attachments: attachments.length > 0 ? attachments : undefined,
           metadata: {
             key: issue.key,
@@ -141,10 +148,9 @@ export class JiraTicketProvider implements TicketProvider {
         });
       }
 
-      const total = response.total ?? 0;
-      if (startAt + maxResults >= total) break;
+      if (!response.nextPageToken) break;
 
-      startAt += maxResults;
+      nextPageToken = response.nextPageToken;
       pageCount++;
     }
 
@@ -156,6 +162,7 @@ export class JiraTicketProvider implements TicketProvider {
     config: TicketProviderConfig,
   ): Promise<TicketComment[]> {
     const jiraConfig = asJiraConfig(config);
+    await assertSsrfSafe(jiraConfig.baseUrl);
     const client = new Version3Client({
       host: jiraConfig.baseUrl,
       authentication: {
@@ -181,6 +188,7 @@ export class JiraTicketProvider implements TicketProvider {
 
   async addComment(ticketId: string, comment: string, config: TicketProviderConfig): Promise<void> {
     const jiraConfig = asJiraConfig(config);
+    await assertSsrfSafe(jiraConfig.baseUrl);
     const client = new Version3Client({
       host: jiraConfig.baseUrl,
       authentication: {
@@ -217,6 +225,7 @@ export class JiraTicketProvider implements TicketProvider {
     config: TicketProviderConfig,
   ): Promise<void> {
     const jiraConfig = asJiraConfig(config);
+    await assertSsrfSafe(jiraConfig.baseUrl);
     const client = new Version3Client({
       host: jiraConfig.baseUrl,
       authentication: {

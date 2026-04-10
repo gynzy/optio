@@ -62,9 +62,23 @@ describe("GET /api/setup/status", () => {
     const body = res.json();
     expect(body.isSetUp).toBe(true);
     expect(body.steps.runtime.done).toBe(true);
-    expect(body.steps.githubToken.done).toBe(true);
+    expect(body.steps.gitToken.done).toBe(true);
     expect(body.steps.anthropicKey.done).toBe(true);
     expect(body.steps.anyAgentKey.done).toBe(true);
+  });
+
+  it("returns fully set up when using GitLab token", async () => {
+    mockListSecrets.mockResolvedValue([{ name: "ANTHROPIC_API_KEY" }, { name: "GITLAB_TOKEN" }]);
+    mockRetrieveSecret.mockRejectedValue(new Error("not found"));
+    mockCheckRuntimeHealth.mockResolvedValue(true);
+
+    const res = await app.inject({ method: "GET", url: "/api/setup/status" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.isSetUp).toBe(true);
+    expect(body.steps.gitToken.done).toBe(true);
+    expect(body.steps.anthropicKey.done).toBe(true);
   });
 
   it("returns not set up when no agent key exists", async () => {

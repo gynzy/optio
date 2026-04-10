@@ -10,9 +10,15 @@ echo "[optio] Auth mode: ${OPTIO_AUTH_MODE:-api-key}"
 git config --global user.name "Optio Agent"
 git config --global user.email "optio-agent@noreply.github.com"
 
-# Authenticate GitHub CLI
-echo "${GITHUB_TOKEN}" | gh auth login --with-token
-echo "[optio] GitHub CLI authenticated"
+# Authenticate CLI tools
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  echo "${GITHUB_TOKEN}" | gh auth login --with-token
+  echo "[optio] GitHub CLI authenticated"
+fi
+if [ -n "${GITLAB_TOKEN:-}" ] && command -v glab >/dev/null 2>&1; then
+  glab auth login --hostname "${GITLAB_HOST:-gitlab.com}" --token "${GITLAB_TOKEN}"
+  echo "[optio] GitLab CLI authenticated"
+fi
 
 # Clone repo
 cd /workspace
@@ -78,6 +84,25 @@ case "${OPTIO_AGENT_TYPE}" in
       COPILOT_FLAGS="${COPILOT_FLAGS} --effort ${COPILOT_EFFORT}"
     fi
     copilot ${COPILOT_FLAGS} -p "${OPTIO_PROMPT}"
+    ;;
+  opencode)
+    echo "[optio] Running OpenCode (experimental)..."
+    OPENCODE_FLAGS="run --format json"
+    if [ -n "${OPTIO_OPENCODE_MODEL:-}" ]; then
+      OPENCODE_FLAGS="${OPENCODE_FLAGS} --model ${OPTIO_OPENCODE_MODEL}"
+    fi
+    if [ -n "${OPTIO_OPENCODE_AGENT:-}" ]; then
+      OPENCODE_FLAGS="${OPENCODE_FLAGS} --agent ${OPTIO_OPENCODE_AGENT}"
+    fi
+    opencode ${OPENCODE_FLAGS} "${OPTIO_PROMPT}"
+    ;;
+  gemini)
+    echo "[optio] Running Google Gemini..."
+    GEMINI_FLAGS="--output-format stream-json --approval-mode yolo"
+    if [ -n "${OPTIO_GEMINI_MODEL:-}" ]; then
+      GEMINI_FLAGS="${GEMINI_FLAGS} -m ${OPTIO_GEMINI_MODEL}"
+    fi
+    gemini ${GEMINI_FLAGS} -p "${OPTIO_PROMPT}"
     ;;
   *)
     echo "[optio] Unknown agent type: ${OPTIO_AGENT_TYPE}"

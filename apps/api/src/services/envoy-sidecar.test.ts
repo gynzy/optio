@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   generateEnvoyConfig,
   generateSecretInitScript,
@@ -95,13 +95,28 @@ describe("generateSecretInitScript", () => {
     expect(script).toContain("anthropic-api-key");
   });
 
-  it("generates CA certificate", () => {
+  it("generates CA certificate with ed25519 and 30-day validity", () => {
     const script = generateSecretInitScript({});
 
     expect(script).toContain("openssl req -x509");
+    expect(script).toContain("-newkey ed25519");
+    expect(script).toContain("-days 30");
+    expect(script).not.toContain("rsa:2048");
+    expect(script).not.toContain("-days 365");
     expect(script).toContain("Optio Envoy Proxy CA");
     expect(script).toContain("ca.crt");
     expect(script).toContain("ca.key");
+  });
+
+  it("respects OPTIO_ENVOY_CA_ALG env var override", () => {
+    process.env.OPTIO_ENVOY_CA_ALG = "mldsa44";
+    try {
+      const script = generateSecretInitScript({});
+      expect(script).toContain("-newkey mldsa44");
+      expect(script).not.toContain("ed25519");
+    } finally {
+      delete process.env.OPTIO_ENVOY_CA_ALG;
+    }
   });
 
   it("handles both secrets", () => {
@@ -272,7 +287,8 @@ describe("getAgentCaVolumeMount", () => {
 describe("PROXIED_SECRET_ENV_VARS", () => {
   it("lists the expected secret env var names", () => {
     expect(PROXIED_SECRET_ENV_VARS).toContain("GITHUB_TOKEN");
+    expect(PROXIED_SECRET_ENV_VARS).toContain("GITLAB_TOKEN");
     expect(PROXIED_SECRET_ENV_VARS).toContain("ANTHROPIC_API_KEY");
-    expect(PROXIED_SECRET_ENV_VARS).toHaveLength(2);
+    expect(PROXIED_SECRET_ENV_VARS).toHaveLength(3);
   });
 });

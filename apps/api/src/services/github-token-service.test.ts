@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { generateKeyPairSync, createVerify } from "node:crypto";
 
+vi.mock("../logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 // Generate a test RSA key pair
 const { publicKey, privateKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -60,22 +64,25 @@ describe("github-app-service", () => {
   });
 
   describe("generateJwt", () => {
-    it("produces a valid RS256 JWT with three parts", () => {
-      const jwt = generateJwt();
+    it("produces a valid RS256 JWT with three parts", async () => {
+      resetTokenCache();
+      const jwt = await generateJwt();
       const parts = jwt.split(".");
       expect(parts).toHaveLength(3);
     });
 
-    it("has correct header with RS256 algorithm", () => {
-      const jwt = generateJwt();
+    it("has correct header with RS256 algorithm", async () => {
+      resetTokenCache();
+      const jwt = await generateJwt();
       const [headerB64] = jwt.split(".");
       const header = JSON.parse(Buffer.from(headerB64, "base64url").toString());
       expect(header).toEqual({ alg: "RS256", typ: "JWT" });
     });
 
-    it("has correct payload claims", () => {
+    it("has correct payload claims", async () => {
+      resetTokenCache();
       const now = Math.floor(Date.now() / 1000);
-      const jwt = generateJwt();
+      const jwt = await generateJwt();
       const [, payloadB64] = jwt.split(".");
       const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
 
@@ -88,8 +95,9 @@ describe("github-app-service", () => {
       expect(payload.exp).toBeLessThanOrEqual(now + 602);
     });
 
-    it("signature is verifiable with the public key", () => {
-      const jwt = generateJwt();
+    it("signature is verifiable with the public key", async () => {
+      resetTokenCache();
+      const jwt = await generateJwt();
       const [headerB64, payloadB64, signatureB64] = jwt.split(".");
       const verifier = createVerify("RSA-SHA256");
       verifier.update(`${headerB64}.${payloadB64}`);

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { db } from "../db/client.js";
 import { checkRuntimeHealth } from "../services/container-service.js";
 import { sql } from "drizzle-orm";
+import { isOtelEnabled } from "../telemetry.js";
 
 // Cache runtime health to avoid slow k8s API calls on every health check.
 // The UI polls this frequently — a 30s TTL is sufficient.
@@ -39,6 +40,8 @@ export async function healthRoutes(app: FastifyInstance) {
 
     const healthy = Object.values(checks).every(Boolean);
     const maxConcurrent = parseInt(process.env.OPTIO_MAX_CONCURRENT ?? "5", 10);
-    reply.status(healthy ? 200 : 503).send({ healthy, checks, maxConcurrent });
+    reply
+      .status(healthy ? 200 : 503)
+      .send({ healthy, checks, maxConcurrent, otelEnabled: isOtelEnabled() });
   });
 }

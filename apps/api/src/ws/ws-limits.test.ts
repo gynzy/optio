@@ -32,7 +32,7 @@ describe("ws-limits", () => {
 
   describe("constants", () => {
     it("exports expected limit values", () => {
-      expect(MAX_WS_CONNECTIONS_PER_IP).toBe(10);
+      expect(MAX_WS_CONNECTIONS_PER_IP).toBe(50);
       expect(MAX_WS_MESSAGE_SIZE).toBe(1_048_576);
       expect(WS_CLOSE_CONNECTION_LIMIT).toBe(4429);
       expect(WS_CLOSE_MESSAGE_TOO_LARGE).toBe(4413);

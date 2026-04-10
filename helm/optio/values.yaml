@@ -1,20 +1,21 @@
 # Optio Helm Chart Values
 #
-# For production deployments, see values.production.yaml for recommended overrides.
-# Required values are marked with "# REQUIRED" below.
+# Defaults are production-ready: GHCR images with IfNotPresent pull policy.
+# For local development, use values.local.yaml:
+#   helm install optio helm/optio -f helm/optio/values.local.yaml ...
+# (setup-local.sh does this automatically)
 #
-# Image repositories default to short names for local dev (pullPolicy: Never).
-# For registry deployments, override with full GHCR paths, e.g.:
-#   api.image.repository: ghcr.io/jonwiggins/optio-api
-#   web.image.repository: ghcr.io/jonwiggins/optio-web
-# Or install a released chart: helm install optio oci://ghcr.io/jonwiggins/optio
+# For production deployments, see values.production.yaml for recommended overrides
+# (replicas, autoscaling, ingress, external DB/Redis, etc.).
+#
+# Install a released chart: helm install optio oci://ghcr.io/jonwiggins/optio
 
 # ──────────────────────────────────────────────────────────────────────────────
 # API Server
 # ──────────────────────────────────────────────────────────────────────────────
 api:
   image:
-    repository: optio-api  # Registry: ghcr.io/jonwiggins/optio-api
+    repository: ghcr.io/jonwiggins/optio-api
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
@@ -62,7 +63,7 @@ api:
 # ──────────────────────────────────────────────────────────────────────────────
 web:
   image:
-    repository: optio-web  # Registry: ghcr.io/jonwiggins/optio-web
+    repository: ghcr.io/jonwiggins/optio-web
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
@@ -100,7 +101,7 @@ web:
 optio:
   enabled: true
   image:
-    repository: optio-optio  # Registry: ghcr.io/jonwiggins/optio-optio
+    repository: ghcr.io/jonwiggins/optio-optio
     tag: latest
     pullPolicy: IfNotPresent
   resources:
@@ -116,10 +117,15 @@ optio:
 # ──────────────────────────────────────────────────────────────────────────────
 agent:
   image:
-    repository: optio-base  # Registry: ghcr.io/jonwiggins/optio-agent-base (or -node, -python, -go, -rust, -full)
+    repository: ghcr.io/jonwiggins/optio-agent-base
     tag: latest
-    pullPolicy: Never  # Use "IfNotPresent" or "Always" for registry images
-  imagePullPolicy: Never  # Use "IfNotPresent" or "Always" for registry images
+    pullPolicy: IfNotPresent
+    # Prefix used to resolve preset images (base, node, python, go, rust, full, dind).
+    # The full image name is: {prefix}{preset}:{tag}
+    # GHCR: ghcr.io/jonwiggins/optio-agent-  →  ghcr.io/jonwiggins/optio-agent-node:latest
+    # Local: optio-                           →  optio-node:latest
+    prefix: "ghcr.io/jonwiggins/optio-agent-"
+  imagePullPolicy: IfNotPresent
   # Envoy sidecar proxy for secret isolation.
   # When repos.secretProxy is enabled, this image is added as a sidecar to agent pods.
   # The sidecar intercepts outbound HTTPS requests and injects auth headers so the
@@ -137,6 +143,24 @@ agent:
     size: 10Gi
     accessModes:
       - ReadWriteOnce
+  # Shared cache directory PVCs (opt-in per repo).
+  # Controls storage class and size limits for cache directories.
+  cache:
+    enabled: true                     # Set false to hard-disable the feature
+    storageClass: ""                  # Empty = cluster default storage class
+    maxSizePerDirectoryGi: 100        # Max size for a single cache directory
+    maxSizeTotalGi: 200               # Max total cache size across all dirs per repo
+    defaultSizePerDirectoryGi: 10     # Default size when creating a cache directory
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Network Policy
+# Default-deny policy for agent (repo) pods. Restricts cluster-internal
+# traffic so compromised pods cannot reach PostgreSQL, Redis, or other
+# services directly. Requires a CNI plugin that supports NetworkPolicy
+# (e.g. Calico, Cilium, Weave Net). Not supported on Docker Desktop.
+# ──────────────────────────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: false  # Set to true when your cluster supports NetworkPolicy
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cloud SQL Proxy sidecar (for GCP Cloud SQL connections)
@@ -172,6 +196,11 @@ postgresql:
     username: optio
     # REQUIRED when auth is enabled. Override this in production.
     password: ""
+  # TLS encryption for the in-cluster Postgres connection.
+  # When enabled, a self-signed CA + server cert are generated at install time
+  # and the DATABASE_URL is configured with sslmode=verify-full.
+  tls:
+    enabled: true
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Redis (built-in)
@@ -189,6 +218,23 @@ redis:
     limits:
       cpu: 250m
       memory: 256Mi
+  # TLS encryption for in-cluster Redis. Encrypts data in transit (BullMQ job
+  # payloads, pub/sub log streams) with TLSv1.3. Recommended for production.
+  tls:
+    enabled: true
+    # When true, generates a self-signed CA + server cert at install time via
+    # Helm's genSignedCert. Set to false if providing certs externally
+    # (e.g., cert-manager) and populate redis.tls.existingSecret.
+    autoGenerateCert: true
+    # Name of an existing TLS Secret (type kubernetes.io/tls with ca.crt key).
+    # Only used when autoGenerateCert is false.
+    existingSecret: ""
+  # Redis password authentication (requirepass). Strongly recommended alongside TLS.
+  auth:
+    enabled: true
+    # Leave empty to auto-generate a 32-char password at install time.
+    # The password is stored in a K8s Secret and persisted across upgrades.
+    password: ""
 
 # ──────────────────────────────────────────────────────────────────────────────
 # External services (used when built-in PostgreSQL/Redis are disabled)
@@ -200,7 +246,7 @@ externalDatabase:
 
 # REQUIRED when redis.enabled=false
 externalRedis:
-  url: ""  # e.g., redis://host:6379
+  url: ""  # e.g., rediss://:password@host:6379 (use rediss:// for TLS)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Public URL
@@ -350,6 +396,36 @@ gatewayAPI:
   httpRouteAnnotations: {}
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Push Notifications (Web Push API)
+# Optional. If publicKey/privateKey are empty, browser push is disabled.
+# Generate keys with: npx web-push generate-vapid-keys --json
+# ──────────────────────────────────────────────────────────────────────────────
+notifications:
+  vapid:
+    publicKey: ""
+    privateKey: ""
+    subject: ""  # e.g. mailto:ops@example.com
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Observability (OpenTelemetry)
+# Set otel.enabled=true and configure OTEL_EXPORTER_OTLP_ENDPOINT to ship
+# traces, metrics, and (optionally) logs to any OTLP backend (Datadog,
+# Honeycomb, Grafana Cloud, etc.).
+# ──────────────────────────────────────────────────────────────────────────────
+observability:
+  otel:
+    enabled: false
+    endpoint: ""             # e.g. https://api.honeycomb.io:443 or http://otel-collector:4318
+    protocol: "http/protobuf"
+    headers: ""              # Comma-separated key=value, e.g. "x-honeycomb-team=abc123"
+    serviceName: "optio-api"
+    resourceAttributes: ""   # Extra attrs, e.g. "team=platform,region=us-east-1"
+    samplingRatio: "1.0"
+    metricsIntervalMs: "60000"
+    logsEnabled: false
+    debug: false
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Namespace
 # ──────────────────────────────────────────────────────────────────────────────
 namespace: optio
@@ -367,6 +443,17 @@ resourceQuota:
     limits.memory: 80Gi
     pods: "50"
     persistentvolumeclaims: "30"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RBAC
+# ──────────────────────────────────────────────────────────────────────────────
+rbac:
+  clusterRole:
+    # Set to false for namespace-only deployments where cluster-wide
+    # permissions are not available (e.g. shared multitenant clusters).
+    # When disabled, the cluster overview page will not show node
+    # utilization, but all other functionality works normally.
+    create: true
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Service account

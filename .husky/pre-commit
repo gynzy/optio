@@ -1,6 +1,9 @@
 # Format all staged files
 npx lint-staged
 
+# Check for duplicate migration prefixes
+bash scripts/check-migration-prefixes.sh
+
 # Run the same checks as CI to catch issues before push
 pnpm format:check
 pnpm turbo typecheck

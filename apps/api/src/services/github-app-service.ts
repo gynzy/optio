@@ -1,4 +1,6 @@
-import { createPrivateKey, createSign } from "node:crypto";
+import type { Signer } from "./crypto/signer.js";
+import { Rs256Signer, MlDsa65Signer } from "./crypto/signer.js";
+import { logger } from "../logger.js";
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 let installationTokenLock: Promise<string> | null = null;
@@ -13,25 +15,38 @@ export function isGitHubAppConfigured(): boolean {
   );
 }
 
-// Cache the parsed key object to avoid re-parsing on every JWT generation
-let _privateKeyObj: ReturnType<typeof createPrivateKey> | null = null;
+// Cache the signer instance so the private key is only parsed once
+let _appSigner: Signer | null = null;
 
-function getPrivateKey(): ReturnType<typeof createPrivateKey> {
-  if (!_privateKeyObj) {
-    const rawKey = process.env.GITHUB_APP_PRIVATE_KEY!;
-    // createPrivateKey handles PKCS#1 (BEGIN RSA PRIVATE KEY),
-    // PKCS#8 (BEGIN PRIVATE KEY), and OpenSSH (BEGIN OPENSSH PRIVATE KEY) formats
-    _privateKeyObj = createPrivateKey(rawKey);
+export function loadAppSigner(): Signer {
+  if (_appSigner) return _appSigner;
+
+  const alg = process.env.GITHUB_APP_JWT_ALG ?? "RS256";
+  switch (alg) {
+    case "RS256":
+      _appSigner = new Rs256Signer(process.env.GITHUB_APP_PRIVATE_KEY!);
+      break;
+    // Future: case "ML-DSA-65": _appSigner = new MlDsa65Signer(); break;
+    default:
+      throw new Error(`Unsupported GitHub App JWT algorithm: ${alg}`);
   }
-  return _privateKeyObj;
+
+  logger.info(
+    { githubAppJwtKty: _appSigner.kty, githubAppJwtAlg: _appSigner.jwtAlg },
+    "Signer configuration",
+  );
+
+  return _appSigner;
 }
 
-export function generateJwt(): string {
+export async function generateJwt(): Promise<string> {
   const appId = process.env.GITHUB_APP_ID!;
-  const key = getPrivateKey();
+  const signer = loadAppSigner();
 
   const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const header = Buffer.from(
+    JSON.stringify({ alg: signer.jwtAlg ?? "RS256", typ: "JWT" }),
+  ).toString("base64url");
   const payload = Buffer.from(
     JSON.stringify({
       iss: appId,
@@ -40,9 +55,8 @@ export function generateJwt(): string {
     }),
   ).toString("base64url");
 
-  const signer = createSign("RSA-SHA256");
-  signer.update(`${header}.${payload}`);
-  const signature = signer.sign(key, "base64url");
+  const sigBuf = await signer.sign(Buffer.from(`${header}.${payload}`));
+  const signature = sigBuf.toString("base64url");
 
   return `${header}.${payload}.${signature}`;
 }
@@ -71,7 +85,7 @@ async function fetchInstallationToken(): Promise<string> {
   }
 
   const installationId = process.env.GITHUB_APP_INSTALLATION_ID!;
-  const jwt = generateJwt();
+  const jwt = await generateJwt();
 
   const res = await fetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
@@ -97,5 +111,5 @@ async function fetchInstallationToken(): Promise<string> {
 export function resetTokenCache(): void {
   cachedToken = null;
   installationTokenLock = null;
-  _privateKeyObj = null;
+  _appSigner = null;
 }

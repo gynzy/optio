@@ -96,7 +96,7 @@ export default function TasksPage() {
               : "border-transparent text-text-muted hover:text-text",
           )}
         >
-          GitHub Issues
+          Issues
         </button>
         <button
           onClick={() => setTab("prs")}
@@ -256,7 +256,7 @@ function IssuesBrowser() {
       {loading ? (
         <div className="flex items-center justify-center py-12 text-text-muted">
           <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading issues from GitHub...
+          Loading issues...
         </div>
       ) : issues.length === 0 ? (
         <div className="text-center py-12 text-text-muted border border-dashed border-border rounded-lg">

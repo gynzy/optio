@@ -1,12 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fp from "fastify-plugin";
 import { validateSession, type SessionUser } from "../services/session-service.js";
+import { validateApiKey } from "../services/api-key-service.js";
 import { isAuthDisabled } from "../services/oauth/index.js";
 import { getUserRole, ensureUserHasWorkspace } from "../services/workspace-service.js";
 import { listSecrets } from "../services/secret-service.js";
-import { db } from "../db/client.js";
-import { users } from "../db/schema.js";
-import { eq } from "drizzle-orm";
 import type { WorkspaceRole } from "@optio/shared";
 
 declare module "fastify" {
@@ -45,15 +43,40 @@ export function requireRole(minimumRole: WorkspaceRole) {
 const SESSION_COOKIE_NAME = "optio_session";
 const WORKSPACE_HEADER = "x-workspace-id";
 
-/** Routes that never require authentication. */
-const PUBLIC_ROUTES = [
+/** Exact routes that are always public. */
+const PUBLIC_ROUTES = new Set([
   "/api/health",
-  "/api/auth/",
   "/api/setup/status",
-  "/api/webhooks/",
-  "/ws/",
-  "/api/internal/git-credentials",
-];
+  "/api/notifications/vapid-public-key",
+]);
+
+/**
+ * Prefix-matched routes that are always public.
+ *
+ * /api/internal/* routes are called by agent pods which don't have session
+ * cookies. They authenticate via HMAC-SHA256 signatures verified in the
+ * route handler itself (see hmac-auth-service.ts). The Helm ingress also
+ * blocks /api/internal/* from public traffic as defense in depth.
+ */
+const PUBLIC_PREFIXES = ["/api/webhooks/", "/api/hooks/", "/ws/", "/api/internal/git-credentials"];
+
+/**
+ * Auth routes that are public (OAuth login/callback flows only).
+ * Sensitive endpoints like claude-token, status, usage, me are NOT listed
+ * here — they require authentication via the normal auth path.
+ */
+const PUBLIC_AUTH_ROUTES = new Set([
+  "/api/auth/providers",
+  "/api/auth/exchange-code",
+  "/api/auth/github/login",
+  "/api/auth/github/callback",
+  "/api/auth/google/login",
+  "/api/auth/google/callback",
+  "/api/auth/gitlab/login",
+  "/api/auth/gitlab/callback",
+  "/api/auth/cli/start",
+  "/api/auth/cli/token",
+]);
 
 /**
  * Secrets whose presence indicates that initial setup has been completed.
@@ -94,42 +117,10 @@ export function resetSetupCompleteCache(): void {
   _setupCompleteCache = null;
 }
 
-// Deterministic UUID for the local dev user (auth-disabled mode)
-const LOCAL_DEV_USER_ID = "00000000-0000-4000-a000-000000000000";
-let _localDevUser: SessionUser | null = null;
-
-async function getOrCreateLocalDevUser(): Promise<SessionUser> {
-  if (_localDevUser) return _localDevUser;
-
-  // Upsert the local dev user in the DB
-  const existing = await db.select().from(users).where(eq(users.id, LOCAL_DEV_USER_ID));
-  if (existing.length === 0) {
-    await db.insert(users).values({
-      id: LOCAL_DEV_USER_ID,
-      provider: "local",
-      externalId: "local",
-      email: "dev@localhost",
-      displayName: "Local Dev",
-    });
-  }
-
-  // Ensure the user has a workspace
-  const wsId = await ensureUserHasWorkspace(LOCAL_DEV_USER_ID);
-
-  _localDevUser = {
-    id: LOCAL_DEV_USER_ID,
-    provider: "local",
-    email: "dev@localhost",
-    displayName: "Local Dev",
-    avatarUrl: null,
-    workspaceId: wsId,
-    workspaceRole: "admin",
-  };
-  return _localDevUser;
-}
-
-function isPublicRoute(url: string): boolean {
-  return PUBLIC_ROUTES.some((prefix) => url.startsWith(prefix));
+export function isPublicRoute(url: string): boolean {
+  const path = url.split("?")[0];
+  if (PUBLIC_ROUTES.has(path) || PUBLIC_AUTH_ROUTES.has(path)) return true;
+  return PUBLIC_PREFIXES.some((p) => path.startsWith(p));
 }
 
 function parseCookie(header: string | undefined, name: string): string | undefined {
@@ -145,14 +136,8 @@ function parseBearer(header: string | undefined): string | undefined {
 
 async function authPlugin(app: FastifyInstance) {
   app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
-    // Auth disabled — allow everything with a real local dev user
-    if (isAuthDisabled()) {
-      if (!req.user) {
-        const user = await getOrCreateLocalDevUser();
-        req.user = user;
-      }
-      return;
-    }
+    // Auth disabled — allow everything
+    if (isAuthDisabled()) return;
 
     // Public routes — no auth needed
     if (isPublicRoute(req.url)) return;
@@ -165,17 +150,21 @@ async function authPlugin(app: FastifyInstance) {
       // Fall through to normal auth check
     }
 
-    // Token resolution order: Bearer header → session cookie → query param (WS)
+    // Token resolution order: Bearer header → session cookie
+    // Note: WebSocket auth is handled separately by authenticateWs() in ws-auth.ts
+    // using cookies and Sec-WebSocket-Protocol header (never URL query params).
     const token =
       parseBearer(req.headers.authorization) ??
-      parseCookie(req.headers.cookie, SESSION_COOKIE_NAME) ??
-      (req.query as Record<string, string>)?.token;
+      parseCookie(req.headers.cookie, SESSION_COOKIE_NAME);
 
     if (!token) {
       return reply.status(401).send({ error: "Authentication required" });
     }
 
-    const user = await validateSession(token);
+    // PAT tokens (optio_pat_*) validated via api_keys table; session tokens via sessions table
+    const user = token.startsWith("optio_pat_")
+      ? await validateApiKey(token)
+      : await validateSession(token);
     if (!user) {
       return reply.status(401).send({ error: "Invalid or expired session" });
     }

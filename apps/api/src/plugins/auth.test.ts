@@ -25,7 +25,7 @@ vi.mock("../services/secret-service.js", () => ({
   listSecrets: (...args: unknown[]) => mockListSecrets(...args),
 }));
 
-import { requireRole, isSetupComplete, resetSetupCompleteCache } from "./auth.js";
+import { requireRole, isSetupComplete, resetSetupCompleteCache, isPublicRoute } from "./auth.js";
 
 // ─── Helpers ───
 
@@ -156,6 +156,105 @@ describe("requireRole", () => {
       const res = await inject(await buildApp("viewer", null));
       expect(res.statusCode).toBe(403);
     });
+  });
+});
+
+describe("isPublicRoute", () => {
+  // ─── Non-auth public routes ───
+
+  it("allows /api/health", () => {
+    expect(isPublicRoute("/api/health")).toBe(true);
+  });
+
+  it("allows /api/setup/status", () => {
+    expect(isPublicRoute("/api/setup/status")).toBe(true);
+  });
+
+  it("allows /api/webhooks/ prefix", () => {
+    expect(isPublicRoute("/api/webhooks/some-id")).toBe(true);
+  });
+
+  it("allows /ws/ prefix", () => {
+    expect(isPublicRoute("/ws/events")).toBe(true);
+  });
+
+  it("allows /api/internal/git-credentials", () => {
+    expect(isPublicRoute("/api/internal/git-credentials")).toBe(true);
+  });
+
+  // ─── Public auth routes (OAuth flow) ───
+
+  it("allows /api/auth/providers", () => {
+    expect(isPublicRoute("/api/auth/providers")).toBe(true);
+  });
+
+  it("allows /api/auth/exchange-code", () => {
+    expect(isPublicRoute("/api/auth/exchange-code")).toBe(true);
+  });
+
+  it("allows /api/auth/github/login", () => {
+    expect(isPublicRoute("/api/auth/github/login")).toBe(true);
+  });
+
+  it("allows /api/auth/github/callback", () => {
+    expect(isPublicRoute("/api/auth/github/callback")).toBe(true);
+  });
+
+  it("allows /api/auth/google/login", () => {
+    expect(isPublicRoute("/api/auth/google/login")).toBe(true);
+  });
+
+  it("allows /api/auth/google/callback", () => {
+    expect(isPublicRoute("/api/auth/google/callback")).toBe(true);
+  });
+
+  it("allows /api/auth/gitlab/login", () => {
+    expect(isPublicRoute("/api/auth/gitlab/login")).toBe(true);
+  });
+
+  it("allows /api/auth/gitlab/callback", () => {
+    expect(isPublicRoute("/api/auth/gitlab/callback")).toBe(true);
+  });
+
+  // ─── Sensitive auth routes that must NOT be public ───
+
+  it("blocks /api/auth/claude-token", () => {
+    expect(isPublicRoute("/api/auth/claude-token")).toBe(false);
+  });
+
+  it("blocks /api/auth/status", () => {
+    expect(isPublicRoute("/api/auth/status")).toBe(false);
+  });
+
+  it("blocks /api/auth/usage", () => {
+    expect(isPublicRoute("/api/auth/usage")).toBe(false);
+  });
+
+  it("blocks /api/auth/me", () => {
+    expect(isPublicRoute("/api/auth/me")).toBe(false);
+  });
+
+  it("blocks /api/auth/ws-token", () => {
+    expect(isPublicRoute("/api/auth/ws-token")).toBe(false);
+  });
+
+  it("blocks /api/auth/refresh", () => {
+    expect(isPublicRoute("/api/auth/refresh")).toBe(false);
+  });
+
+  it("blocks /api/auth/logout", () => {
+    expect(isPublicRoute("/api/auth/logout")).toBe(false);
+  });
+
+  // ─── Edge cases ───
+
+  it("strips query parameters before matching", () => {
+    expect(isPublicRoute("/api/auth/providers?foo=bar")).toBe(true);
+    expect(isPublicRoute("/api/auth/claude-token?foo=bar")).toBe(false);
+  });
+
+  it("blocks unknown /api/auth/ subpaths", () => {
+    expect(isPublicRoute("/api/auth/something-new")).toBe(false);
   });
 });
 

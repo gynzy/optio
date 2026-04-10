@@ -1,5 +1,8 @@
+import { assertMinOpenSSL } from "./openssl-check.js";
 import Fastify, { type FastifyError } from "fastify";
+import { Redis } from "ioredis";
 import cors from "@fastify/cors";
+import { redisConnectionUrl, redisTlsOptions } from "./services/redis-config.js";
 import formbody from "@fastify/formbody";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
@@ -22,21 +25,28 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { scheduleRoutes } from "./routes/schedules.js";
 import { commentRoutes } from "./routes/comments.js";
+import { messageRoutes } from "./routes/messages.js";
 import { slackRoutes } from "./routes/slack.js";
 import { taskTemplateRoutes } from "./routes/task-templates.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { dependencyRoutes } from "./routes/dependencies.js";
-import { workflowRoutes } from "./routes/workflows.js";
+import { workflowTriggerRoutes } from "./routes/workflow-triggers.js";
 import { mcpServerRoutes } from "./routes/mcp-servers.js";
 import { skillRoutes } from "./routes/skills.js";
+import { workflowRoutes } from "./routes/workflows.js";
+import { sharedDirectoryRoutes } from "./routes/shared-directories.js";
+import { notificationRoutes } from "./routes/notifications.js";
 import { optioRoutes } from "./routes/optio.js";
 import { optioSettingsRoutes } from "./routes/optio-settings.js";
 import githubAppRoutes from "./routes/github-app.js";
+import { githubTokenRoutes } from "./routes/github-token.js";
+import { hookRoutes } from "./routes/hooks.js";
 import { logStreamWs } from "./ws/log-stream.js";
 import { eventsWs } from "./ws/events.js";
 import { sessionTerminalWs } from "./ws/session-terminal.js";
 import { sessionChatWs } from "./ws/session-chat.js";
 import { optioChatWs } from "./ws/optio-chat.js";
+import { workflowRunLogStreamWs } from "./ws/workflow-run-log-stream.js";
 import authPlugin from "./plugins/auth.js";
 
 const loggerConfig =
@@ -48,6 +58,8 @@ const loggerConfig =
     : { level: process.env.LOG_LEVEL ?? "info" };
 
 export async function buildServer() {
+  assertMinOpenSSL(process.versions.openssl);
+
   const app = Fastify({ logger: loggerConfig });
 
   // Plugins
@@ -65,9 +77,21 @@ export async function buildServer() {
     max: 100,
     timeWindow: "1 minute",
     allowList: ["127.0.0.1", "::1"],
+    redis: new Redis(redisConnectionUrl, { tls: redisTlsOptions }),
   });
   await app.register(formbody);
-  await app.register(websocket);
+  await app.register(websocket, {
+    options: {
+      // WebSocket auth tokens are sent via Sec-WebSocket-Protocol header to avoid
+      // leaking tokens in URLs. The client sends ["optio-ws-v1", "optio-auth-<TOKEN>"]
+      // and we select "optio-ws-v1" so the raw token is never echoed back.
+      handleProtocols: (protocols: Set<string>) => {
+        if (protocols.has("optio-ws-v1")) return "optio-ws-v1";
+        // No recognized protocol — select the first one offered (ws default behavior)
+        return protocols.values().next().value ?? false;
+      },
+    },
+  });
 
   // Auth plugin (validates session cookie on protected routes)
   await app.register(authPlugin);
@@ -92,16 +116,22 @@ export async function buildServer() {
   await app.register(sessionRoutes);
   await app.register(scheduleRoutes);
   await app.register(commentRoutes);
+  await app.register(messageRoutes);
   await app.register(slackRoutes);
   await app.register(taskTemplateRoutes);
   await app.register(workspaceRoutes);
   await app.register(dependencyRoutes);
-  await app.register(workflowRoutes);
+  await app.register(workflowTriggerRoutes);
   await app.register(mcpServerRoutes);
   await app.register(skillRoutes);
+  await app.register(workflowRoutes);
+  await app.register(sharedDirectoryRoutes);
+  await app.register(notificationRoutes);
   await app.register(optioRoutes);
   await app.register(optioSettingsRoutes);
   await app.register(githubAppRoutes);
+  await app.register(githubTokenRoutes);
+  await app.register(hookRoutes);
 
   // WebSocket routes
   await app.register(logStreamWs);
@@ -109,6 +139,7 @@ export async function buildServer() {
   await app.register(sessionTerminalWs);
   await app.register(sessionChatWs);
   await app.register(optioChatWs);
+  await app.register(workflowRunLogStreamWs);
 
   // Global error handler for Zod validation
   app.setErrorHandler((error: FastifyError | Error, _req, reply) => {

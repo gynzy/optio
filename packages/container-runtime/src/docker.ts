@@ -146,6 +146,13 @@ export class DockerContainerRuntime implements ContainerRuntime {
         duplex.write(chunk);
         callback();
       },
+      // Propagate `.end()` to the underlying docker exec duplex so that
+      // callers can signal EOF to the in-container process (keeps behaviour
+      // consistent with the kubernetes runtime).
+      final(callback) {
+        duplex.end();
+        callback();
+      },
     });
 
     return {

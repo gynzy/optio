@@ -12,6 +12,19 @@ export interface TaskStats {
 export interface UsageData {
   available: boolean;
   error?: string;
+  /**
+   * True when the API detected an authentication error in any recent task log
+   * (last 15 minutes). Used by the dashboard to show the token-refresh banner
+   * even when the usage endpoint itself returns a non-401 (e.g. 429 rate
+   * limited) — the messages endpoint can be 401ing while usage is 429ing, so
+   * the usage response alone isn't a reliable signal.
+   */
+  hasRecentAuthFailure?: boolean;
+  /** Per-token-type auth failure status. */
+  authFailures?: {
+    claude: boolean;
+    github: boolean;
+  };
   fiveHour?: { utilization: number | null; resetsAt: string | null };
   sevenDay?: { utilization: number | null; resetsAt: string | null };
   sevenDaySonnet?: { utilization: number | null; resetsAt: string | null };

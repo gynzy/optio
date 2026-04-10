@@ -5,6 +5,7 @@ import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { parsePrUrl } from "@optio/shared";
 import {
   Loader2,
   Check,
@@ -107,7 +108,9 @@ export function ReviewDraftPanel({ taskId, taskState }: ReviewDraftPanelProps) {
     try {
       const res = await api.submitReviewDraft(taskId);
       setDraft(res.draft);
-      toast.success("Review submitted to GitHub");
+      toast.success(
+        `Review submitted to ${parsePrUrl(draft.prUrl ?? "")?.platform === "gitlab" ? "GitLab" : "GitHub"}`,
+      );
     } catch (err: any) {
       toast.error(err.message || "Failed to submit review");
     }
@@ -212,7 +215,7 @@ export function ReviewDraftPanel({ taskId, taskState }: ReviewDraftPanelProps) {
               rel="noopener noreferrer"
               className="flex items-center gap-1 text-xs text-primary hover:underline"
             >
-              View on GitHub
+              View on {parsePrUrl(draft.prUrl ?? "")?.platform === "gitlab" ? "GitLab" : "GitHub"}
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
@@ -392,7 +395,7 @@ export function ReviewDraftPanel({ taskId, taskState }: ReviewDraftPanelProps) {
             ) : (
               <Send className="w-3 h-3" />
             )}
-            Submit Review to GitHub
+            Submit Review
           </button>
         </div>
 

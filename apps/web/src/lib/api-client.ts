@@ -42,6 +42,20 @@ export const api = {
     return request<{ tasks: any[] }>(`/api/tasks${query ? `?${query}` : ""}`);
   },
 
+  getTaskStats: () =>
+    request<{
+      stats: {
+        total: number;
+        queued: number;
+        running: number;
+        ci: number;
+        review: number;
+        needsAttention: number;
+        failed: number;
+        completed: number;
+      };
+    }>("/api/tasks/stats"),
+
   searchTasks: (params?: {
     q?: string;
     state?: string;
@@ -69,9 +83,17 @@ export const api = {
   },
 
   getTask: (id: string) =>
-    request<{ task: any; pendingReason?: string | null; pipelineProgress?: any | null }>(
-      `/api/tasks/${id}`,
-    ),
+    request<{
+      task: any;
+      pendingReason?: string | null;
+      pipelineProgress?: any | null;
+      stallInfo?: {
+        isStalled: boolean;
+        silentForMs: number;
+        thresholdMs: number;
+        lastLogSummary?: string;
+      } | null;
+    }>(`/api/tasks/${id}`),
 
   createTask: (data: {
     title: string;
@@ -157,6 +179,15 @@ export const api = {
 
   getTaskActivity: (id: string) => request<{ activity: any[] }>(`/api/tasks/${id}/activity`),
 
+  // Task Messages (mid-task user → agent messaging)
+  sendTaskMessage: (id: string, content: string, mode: "soft" | "interrupt" = "soft") =>
+    request<{ message: any }>(`/api/tasks/${id}/message`, {
+      method: "POST",
+      body: JSON.stringify({ content, mode }),
+    }),
+
+  getTaskMessages: (id: string) => request<{ messages: any[] }>(`/api/tasks/${id}/messages`),
+
   // Secrets
   listSecrets: (scope?: string) => {
     const qs = scope ? `?scope=${scope}` : "";
@@ -164,10 +195,13 @@ export const api = {
   },
 
   createSecret: (data: { name: string; value: string; scope?: string }) =>
-    request<{ name: string; scope: string }>("/api/secrets", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
+    request<{ name: string; scope: string; validation?: { valid: boolean; error?: string } }>(
+      "/api/secrets",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
 
   deleteSecret: (name: string, scope?: string) => {
     const qs = scope ? `?scope=${scope}` : "";
@@ -187,6 +221,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+  deleteTicketProvider: (id: string) =>
+    request<void>(`/api/tickets/providers/${id}`, { method: "DELETE" }),
 
   // Prompt templates
   getEffectiveTemplate: (repoUrl?: string) => {
@@ -271,6 +308,27 @@ export const api = {
       body: JSON.stringify({ targetVersion }),
     }),
 
+  // GitHub Token Management
+  getGithubTokenStatus: () =>
+    request<{
+      status: "valid" | "expired" | "missing" | "error";
+      source?: "pat" | "github_app";
+      user?: { login: string; name: string };
+      message?: string;
+      error?: string;
+    }>("/api/github-token/status"),
+
+  rotateGithubToken: (token: string) =>
+    request<{
+      success: boolean;
+      user?: { login: string; name: string };
+      message?: string;
+      error?: string;
+    }>("/api/github-token/rotate", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+
   // Setup
   getSetupStatus: () =>
     request<{
@@ -302,6 +360,29 @@ export const api = {
       { method: "POST", body: JSON.stringify({ token }) },
     ),
 
+  validateGitlabToken: (token: string, host?: string) =>
+    request<{ valid: boolean; error?: string; user?: { login: string; name: string } }>(
+      "/api/setup/validate/gitlab-token",
+      { method: "POST", body: JSON.stringify({ token, host }) },
+    ),
+
+  listGitlabRepos: (token: string, host?: string) =>
+    request<{
+      repos: Array<{
+        fullName: string;
+        cloneUrl: string;
+        defaultBranch: string;
+        isPrivate: boolean;
+        description: string;
+        language: string;
+        pushedAt: string;
+      }>;
+      error?: string;
+    }>("/api/setup/repos/gitlab", {
+      method: "POST",
+      body: JSON.stringify({ token, host }),
+    }),
+
   validateAnthropicKey: (key: string) =>
     request<{ valid: boolean; error?: string }>("/api/setup/validate/anthropic-key", {
       method: "POST",
@@ -319,6 +400,12 @@ export const api = {
       "/api/setup/validate/copilot-token",
       { method: "POST", body: JSON.stringify({ token }) },
     ),
+
+  validateGeminiKey: (key: string) =>
+    request<{ valid: boolean; error?: string }>("/api/setup/validate/gemini-key", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }),
 
   validateRepo: (repoUrl: string, token?: string) =>
     request<{
@@ -344,6 +431,8 @@ export const api = {
     request<{
       usage: {
         available: boolean;
+        hasRecentAuthFailure?: boolean;
+        authFailures?: { claude: boolean; github: boolean };
         fiveHour?: { utilization: number | null; resetsAt: string | null };
         sevenDay?: { utilization: number | null; resetsAt: string | null };
         sevenDaySonnet?: { utilization: number | null; resetsAt: string | null };
@@ -797,49 +886,6 @@ export const api = {
   removeTaskDependency: (taskId: string, depTaskId: string) =>
     request<void>(`/api/tasks/${taskId}/dependencies/${depTaskId}`, { method: "DELETE" }),
 
-  // Workflow Templates
-  listWorkflows: () => request<{ templates: any[] }>("/api/workflow-templates"),
-
-  getWorkflow: (id: string) => request<{ template: any }>(`/api/workflow-templates/${id}`),
-
-  createWorkflow: (data: {
-    name: string;
-    description?: string;
-    steps: Array<{
-      id: string;
-      title: string;
-      prompt: string;
-      repoUrl?: string;
-      agentType?: string;
-      dependsOn?: string[];
-    }>;
-    status?: string;
-  }) =>
-    request<{ template: any }>("/api/workflow-templates", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-
-  updateWorkflow: (id: string, data: Record<string, unknown>) =>
-    request<{ template: any }>(`/api/workflow-templates/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
-
-  deleteWorkflow: (id: string) =>
-    request<void>(`/api/workflow-templates/${id}`, { method: "DELETE" }),
-
-  runWorkflow: (templateId: string, data?: { repoUrlOverride?: string }) =>
-    request<{ workflowRun: any }>(`/api/workflow-templates/${templateId}/run`, {
-      method: "POST",
-      body: JSON.stringify(data ?? {}),
-    }),
-
-  getWorkflowRuns: (templateId: string) =>
-    request<{ runs: any[] }>(`/api/workflow-templates/${templateId}/runs`),
-
-  getWorkflowRun: (id: string) => request<{ workflowRun: any }>(`/api/workflow-runs/${id}`),
-
   // MCP Servers
   listMcpServers: (scope?: string) => {
     const qs = scope ? `?scope=${encodeURIComponent(scope)}` : "";
@@ -947,7 +993,7 @@ export const api = {
     }),
 
   submitReviewDraft: (taskId: string) =>
-    request<{ draft: any; githubReviewUrl?: string }>(`/api/tasks/${taskId}/review-draft/submit`, {
+    request<{ draft: any; reviewUrl?: string }>(`/api/tasks/${taskId}/review-draft/submit`, {
       method: "POST",
     }),
 
@@ -984,5 +1030,201 @@ export const api = {
     request<{ settings: any }>("/api/optio/settings", {
       method: "PUT",
       body: JSON.stringify(data),
+    }),
+
+  // Push Notifications
+  getVapidPublicKey: () => request<{ publicKey: string }>("/api/notifications/vapid-public-key"),
+
+  subscribePush: (data: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    userAgent?: string;
+  }) =>
+    request<{ ok: boolean }>("/api/notifications/subscribe", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  unsubscribePush: (data: { endpoint: string }) =>
+    request<void>("/api/notifications/subscribe", {
+      method: "DELETE",
+      body: JSON.stringify(data),
+    }),
+
+  listPushSubscriptions: () =>
+    request<{ subscriptions: any[] }>("/api/notifications/subscriptions"),
+
+  getNotificationPreferences: () =>
+    request<{ preferences: Record<string, { push: boolean }> }>("/api/notifications/preferences"),
+
+  updateNotificationPreferences: (prefs: Record<string, { push: boolean }>) =>
+    request<{ preferences: Record<string, { push: boolean }> }>("/api/notifications/preferences", {
+      method: "PUT",
+      body: JSON.stringify(prefs),
+    }),
+
+  testPushNotification: () =>
+    request<{ sent: number }>("/api/notifications/test", { method: "POST" }),
+
+  // Shared Directories (Cache)
+  listRepoSharedDirectories: (repoId: string) =>
+    request<{
+      directories: Array<{
+        id: string;
+        repoId: string;
+        name: string;
+        description: string | null;
+        mountLocation: string;
+        mountSubPath: string;
+        sizeGi: number;
+        scope: string;
+        lastClearedAt: string | null;
+        lastMountedAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+    }>(`/api/repos/${repoId}/shared-directories`),
+
+  createRepoSharedDirectory: (
+    repoId: string,
+    data: {
+      name: string;
+      description?: string;
+      mountLocation: "workspace" | "home";
+      mountSubPath: string;
+      sizeGi?: number;
+    },
+  ) =>
+    request<{ directory: any }>(`/api/repos/${repoId}/shared-directories`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateRepoSharedDirectory: (
+    repoId: string,
+    dirId: string,
+    data: { description?: string | null; sizeGi?: number },
+  ) =>
+    request<{ directory: any }>(`/api/repos/${repoId}/shared-directories/${dirId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteRepoSharedDirectory: (repoId: string, dirId: string) =>
+    request<void>(`/api/repos/${repoId}/shared-directories/${dirId}`, {
+      method: "DELETE",
+    }),
+
+  clearRepoSharedDirectory: (repoId: string, dirId: string) =>
+    request<{ ok: boolean }>(`/api/repos/${repoId}/shared-directories/${dirId}/clear`, {
+      method: "POST",
+    }),
+
+  getRepoSharedDirectoryUsage: (repoId: string, dirId: string) =>
+    request<{ usage: string | null }>(`/api/repos/${repoId}/shared-directories/${dirId}/usage`, {
+      method: "POST",
+    }),
+
+  recycleRepoPods: (repoId: string) =>
+    request<{ ok: boolean; recycled: number }>(`/api/repos/${repoId}/pods/recycle`, {
+      method: "POST",
+    }),
+
+  // Workflows
+  listWorkflows: () => request<{ workflows: any[] }>("/api/workflows"),
+
+  getWorkflow: (id: string) => request<{ workflow: any }>(`/api/workflows/${id}`),
+
+  createWorkflow: (data: {
+    name: string;
+    description?: string;
+    promptTemplate: string;
+    agentRuntime?: string;
+    model?: string;
+    maxTurns?: number;
+    budgetUsd?: string;
+    maxConcurrent?: number;
+    maxRetries?: number;
+    warmPoolSize?: number;
+    enabled?: boolean;
+    environmentSpec?: Record<string, unknown>;
+    paramsSchema?: Record<string, unknown>;
+  }) =>
+    request<{ workflow: any }>("/api/workflows", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateWorkflow: (id: string, data: Record<string, unknown>) =>
+    request<{ workflow: any }>(`/api/workflows/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteWorkflow: (id: string) => request<void>(`/api/workflows/${id}`, { method: "DELETE" }),
+
+  cloneWorkflow: (id: string) =>
+    request<{ workflow: any }>(`/api/workflows/${id}/clone`, { method: "POST" }),
+
+  runWorkflow: (workflowId: string, params?: Record<string, unknown> | null) =>
+    request<{ run: any }>(`/api/workflows/${workflowId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ params: params ?? null }),
+    }),
+
+  getWorkflowRuns: (workflowId: string) =>
+    request<{ runs: any[] }>(`/api/workflows/${workflowId}/runs`),
+
+  listWorkflowRuns: (workflowId: string, limit?: number) => {
+    const qs = limit ? `?limit=${limit}` : "";
+    return request<{ runs: any[] }>(`/api/workflows/${workflowId}/runs${qs}`);
+  },
+
+  getWorkflowRun: (id: string) => request<{ run: any }>(`/api/workflow-runs/${id}`),
+
+  // Workflow Triggers
+  getWorkflowTriggers: (workflowId: string) =>
+    request<{ triggers: any[] }>(`/api/workflows/${workflowId}/triggers`),
+
+  listWorkflowTriggers: (workflowId: string) =>
+    request<{ triggers: any[] }>(`/api/workflows/${workflowId}/triggers`),
+
+  retryWorkflowRun: (id: string) =>
+    request<{ run: any }>(`/api/workflow-runs/${id}/retry`, { method: "POST" }),
+
+  cancelWorkflowRun: (id: string) =>
+    request<{ run: any }>(`/api/workflow-runs/${id}/cancel`, { method: "POST" }),
+
+  getWorkflowRunLogs: (id: string, opts?: { limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return request<{ logs: any[] }>(`/api/workflow-runs/${id}/logs${qs ? `?${qs}` : ""}`);
+  },
+
+  createWorkflowTrigger: (
+    workflowId: string,
+    data: {
+      type: "manual" | "schedule" | "webhook";
+      config?: Record<string, unknown>;
+      paramMapping?: Record<string, unknown>;
+      enabled?: boolean;
+    },
+  ) =>
+    request<{ trigger: any }>(`/api/workflows/${workflowId}/triggers`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateWorkflowTrigger: (workflowId: string, triggerId: string, data: Record<string, unknown>) =>
+    request<{ trigger: any }>(`/api/workflows/${workflowId}/triggers/${triggerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteWorkflowTrigger: (workflowId: string, triggerId: string) =>
+    request<void>(`/api/workflows/${workflowId}/triggers/${triggerId}`, {
+      method: "DELETE",
     }),
 };

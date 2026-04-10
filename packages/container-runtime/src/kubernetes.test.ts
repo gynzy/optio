@@ -806,11 +806,38 @@ describe("KubernetesContainerRuntime", () => {
       expect(mockCoreApi.readNamespace).toHaveBeenCalledTimes(1);
     });
 
-    it("re-throws non-404 errors from readNamespace", async () => {
-      mockCoreApi.readNamespace.mockRejectedValue(new Error("forbidden"));
+    it("re-throws non-404/non-403 errors from readNamespace", async () => {
+      mockCoreApi.readNamespace.mockRejectedValue(new Error("internal server error"));
 
-      await expect(runtime.create(baseSpec())).rejects.toThrow("forbidden");
+      await expect(runtime.create(baseSpec())).rejects.toThrow("internal server error");
       expect(mockCoreApi.createNamespace).not.toHaveBeenCalled();
+    });
+
+    it("treats 403 Forbidden from readNamespace as namespace exists (no ClusterRole)", async () => {
+      mockCoreApi.readNamespace.mockRejectedValue({ statusCode: 403 });
+
+      // Should succeed — 403 means we lack cluster-level namespace read
+      // permission but the namespace must exist since we're running in it
+      await expect(runtime.create(baseSpec())).resolves.toBeDefined();
+      expect(mockCoreApi.createNamespace).not.toHaveBeenCalled();
+    });
+
+    it("treats 403 via response.httpStatusCode as namespace exists", async () => {
+      mockCoreApi.readNamespace.mockRejectedValue({
+        response: { httpStatusCode: 403 },
+      });
+
+      await expect(runtime.create(baseSpec())).resolves.toBeDefined();
+      expect(mockCoreApi.createNamespace).not.toHaveBeenCalled();
+    });
+
+    it("caches namespace check after 403 so second create skips readNamespace", async () => {
+      mockCoreApi.readNamespace.mockRejectedValue({ statusCode: 403 });
+
+      await runtime.create(baseSpec());
+      await runtime.create(baseSpec());
+
+      expect(mockCoreApi.readNamespace).toHaveBeenCalledTimes(1);
     });
   });
 });

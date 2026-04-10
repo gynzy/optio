@@ -1,117 +1,202 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import * as workflowService from "../services/workflow-service.js";
+import { workflowRunQueue } from "../workers/workflow-worker.js";
 
-const stepSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1),
-  prompt: z.string().min(1),
-  repoUrl: z.string().optional(),
-  agentType: z.string().optional(),
-  dependsOn: z.array(z.string()).optional(),
-  condition: z
-    .object({
-      type: z.enum(["always", "if_pr_opened", "if_ci_passes", "if_cost_under"]),
-      value: z.string().optional(),
-    })
-    .optional(),
-});
-
-const createTemplateSchema = z.object({
+const createWorkflowSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  steps: z.array(stepSchema).min(1),
-  status: z.enum(["draft", "active", "archived"]).optional(),
+  promptTemplate: z.string().min(1),
+  agentRuntime: z.string().optional(),
+  model: z.string().optional(),
+  maxTurns: z.number().int().positive().optional(),
+  budgetUsd: z.string().optional(),
+  maxConcurrent: z.number().int().positive().optional(),
+  maxRetries: z.number().int().min(0).optional(),
+  warmPoolSize: z.number().int().min(0).optional(),
+  enabled: z.boolean().optional(),
+  environmentSpec: z.record(z.unknown()).optional(),
+  paramsSchema: z.record(z.unknown()).optional(),
 });
 
-const updateTemplateSchema = z.object({
+const updateWorkflowSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
-  steps: z.array(stepSchema).min(1).optional(),
-  status: z.enum(["draft", "active", "archived"]).optional(),
+  promptTemplate: z.string().min(1).optional(),
+  agentRuntime: z.string().optional(),
+  model: z.string().nullable().optional(),
+  maxTurns: z.number().int().positive().nullable().optional(),
+  budgetUsd: z.string().nullable().optional(),
+  maxConcurrent: z.number().int().positive().optional(),
+  maxRetries: z.number().int().min(0).optional(),
+  warmPoolSize: z.number().int().min(0).optional(),
+  enabled: z.boolean().optional(),
+  environmentSpec: z.record(z.unknown()).nullable().optional(),
+  paramsSchema: z.record(z.unknown()).nullable().optional(),
+});
+
+const idParamsSchema = z.object({ id: z.string() });
+const limitQuerySchema = z.object({ limit: z.string().optional() });
+
+const runWorkflowBodySchema = z
+  .object({
+    params: z.record(z.unknown()).optional(),
+    triggerId: z.string().optional(),
+  })
+  .optional()
+  .default({});
+
+const logsQuerySchema = z.object({
+  logType: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
 });
 
 export async function workflowRoutes(app: FastifyInstance) {
-  // List workflow templates
-  app.get("/api/workflow-templates", async (req, reply) => {
-    const templates = await workflowService.listWorkflowTemplates(
+  // List workflows with aggregate run stats (runCount, lastRunAt, totalCostUsd)
+  app.get("/api/workflows", async (req, reply) => {
+    const workflows = await workflowService.listWorkflowsWithStats(
       req.user?.workspaceId ?? undefined,
     );
-    reply.send({ templates });
+    reply.send({ workflows });
   });
 
-  // Get a workflow template
-  app.get("/api/workflow-templates/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const template = await workflowService.getWorkflowTemplate(id);
-    if (!template) return reply.status(404).send({ error: "Workflow template not found" });
-    reply.send({ template });
-  });
-
-  // Create a workflow template
-  app.post("/api/workflow-templates", async (req, reply) => {
-    const input = createTemplateSchema.parse(req.body);
+  // Create a workflow
+  app.post("/api/workflows", async (req, reply) => {
+    const input = createWorkflowSchema.parse(req.body);
     try {
-      const template = await workflowService.createWorkflowTemplate({
+      const workflow = await workflowService.createWorkflow({
         ...input,
         workspaceId: req.user?.workspaceId ?? undefined,
         createdBy: req.user?.id,
       });
-      reply.status(201).send({ template });
+      reply.status(201).send({ workflow });
     } catch (err) {
       reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  // Update a workflow template
-  app.patch("/api/workflow-templates/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const input = updateTemplateSchema.parse(req.body);
+  // Get a workflow with aggregate run stats
+  app.get("/api/workflows/:id", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const workflow = await workflowService.getWorkflowWithStats(id);
+    if (!workflow) return reply.status(404).send({ error: "Workflow not found" });
+    const wsId = req.user?.workspaceId;
+    if (wsId && workflow.workspaceId && workflow.workspaceId !== wsId) {
+      return reply.status(404).send({ error: "Workflow not found" });
+    }
+    reply.send({ workflow });
+  });
+
+  // Update a workflow
+  app.patch("/api/workflows/:id", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const input = updateWorkflowSchema.parse(req.body);
     try {
-      const template = await workflowService.updateWorkflowTemplate(id, input);
-      if (!template) return reply.status(404).send({ error: "Workflow template not found" });
-      reply.send({ template });
+      const workflow = await workflowService.updateWorkflow(id, input);
+      if (!workflow) return reply.status(404).send({ error: "Workflow not found" });
+      reply.send({ workflow });
     } catch (err) {
       reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  // Delete a workflow template
-  app.delete("/api/workflow-templates/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const deleted = await workflowService.deleteWorkflowTemplate(id);
-    if (!deleted) return reply.status(404).send({ error: "Workflow template not found" });
+  // Clone a workflow (and its non-webhook triggers)
+  app.post("/api/workflows/:id/clone", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const cloned = await workflowService.cloneWorkflow(id, {
+      workspaceId: req.user?.workspaceId ?? undefined,
+      createdBy: req.user?.id,
+    });
+    if (!cloned) return reply.status(404).send({ error: "Workflow not found" });
+    reply.status(201).send({ workflow: cloned });
+  });
+
+  // Delete a workflow
+  app.delete("/api/workflows/:id", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const deleted = await workflowService.deleteWorkflow(id);
+    if (!deleted) return reply.status(404).send({ error: "Workflow not found" });
     reply.status(204).send();
   });
 
-  // Run a workflow template (instantiate)
-  app.post("/api/workflow-templates/:id/run", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const body = req.body as { repoUrl?: string } | undefined;
+  // ── Workflow Runs ─────────────────────────────────────────────────────────
+
+  // Create a workflow run (enqueues it for the workflow worker)
+  app.post("/api/workflows/:id/runs", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const parsed = runWorkflowBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues[0].message });
+    }
     try {
-      const run = await workflowService.runWorkflow(id, {
-        workspaceId: req.user?.workspaceId ?? undefined,
-        createdBy: req.user?.id,
-        repoUrlOverride: body?.repoUrl,
-      });
+      const run = await workflowService.createWorkflowRun(id, parsed.data);
+
+      await workflowRunQueue.add(
+        "process-workflow-run",
+        { workflowRunId: run.id },
+        { jobId: run.id },
+      );
+
       reply.status(201).send({ run });
     } catch (err) {
       reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  // List workflow runs for a template
-  app.get("/api/workflow-templates/:id/runs", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const runs = await workflowService.listWorkflowRuns(id);
+  // List runs for a workflow
+  app.get("/api/workflows/:id/runs", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const workflow = await workflowService.getWorkflow(id);
+    if (!workflow) return reply.status(404).send({ error: "Workflow not found" });
+    const wsId = req.user?.workspaceId;
+    if (wsId && workflow.workspaceId && workflow.workspaceId !== wsId) {
+      return reply.status(404).send({ error: "Workflow not found" });
+    }
+    const { limit } = limitQuerySchema.parse(req.query);
+    const runs = await workflowService.listWorkflowRuns(id, limit ? parseInt(limit, 10) : 50);
     reply.send({ runs });
   });
 
-  // Get a workflow run
+  // Get a single workflow run
   app.get("/api/workflow-runs/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = idParamsSchema.parse(req.params);
     const run = await workflowService.getWorkflowRun(id);
     if (!run) return reply.status(404).send({ error: "Workflow run not found" });
     reply.send({ run });
+  });
+
+  // ── Workflow Run Operations ───────────────────────────────────────────────
+
+  // Retry a failed workflow run
+  app.post("/api/workflow-runs/:id/retry", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    try {
+      const run = await workflowService.retryWorkflowRun(id);
+      reply.send({ run });
+    } catch (err) {
+      reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Cancel a running workflow run
+  app.post("/api/workflow-runs/:id/cancel", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    try {
+      const run = await workflowService.cancelWorkflowRun(id);
+      reply.send({ run });
+    } catch (err) {
+      reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Get logs for a workflow run
+  app.get("/api/workflow-runs/:id/logs", async (req, reply) => {
+    const { id } = idParamsSchema.parse(req.params);
+    const run = await workflowService.getWorkflowRun(id);
+    if (!run) return reply.status(404).send({ error: "Workflow run not found" });
+    const query = logsQuerySchema.safeParse(req.query);
+    const opts = query.success ? query.data : {};
+    const logs = await workflowService.getWorkflowRunLogs(id, opts);
+    reply.send({ logs });
   });
 }

@@ -22,14 +22,21 @@ import {
   Bot,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { SessionChat } from "@/components/session-chat";
-import { SplitPane } from "@/components/split-pane";
-import { ErrorBoundary } from "@/components/error-boundary";
 
 const SessionTerminal = dynamic(
   () => import("@/components/session-terminal").then((m) => m.SessionTerminal),
-  { ssr: false },
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-full bg-[#09090b] flex items-center justify-center text-text-muted text-sm">
+        Loading terminal...
+      </div>
+    ),
+  },
 );
+import { SessionChat } from "@/components/session-chat";
+import { SplitPane } from "@/components/split-pane";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export default function SessionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

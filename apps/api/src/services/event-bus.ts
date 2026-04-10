@@ -1,13 +1,13 @@
 import { Redis } from "ioredis";
 import type { WsEvent } from "@optio/shared";
-
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+import { redisConnectionUrl, redisTlsOptions } from "./redis-config.js";
+import { getCurrentTraceId } from "../telemetry/spans.js";
 
 let publisher: Redis | null = null;
 
 function getPublisher(): Redis {
   if (!publisher) {
-    publisher = new Redis(redisUrl);
+    publisher = new Redis(redisConnectionUrl, { tls: redisTlsOptions });
   }
   return publisher;
 }
@@ -15,11 +15,16 @@ function getPublisher(): Redis {
 export async function publishEvent(event: WsEvent): Promise<void> {
   const redis = getPublisher();
   const channel = `optio:events`;
-  await redis.publish(channel, JSON.stringify(event));
+
+  // Attach current trace ID for correlation in observability backends
+  const traceId = getCurrentTraceId();
+  const enrichedEvent = traceId ? { ...event, traceId } : event;
+
+  await redis.publish(channel, JSON.stringify(enrichedEvent));
 
   // Also publish to task-specific channel for targeted subscriptions
   if ("taskId" in event) {
-    await redis.publish(`optio:task:${event.taskId}`, JSON.stringify(event));
+    await redis.publish(`optio:task:${event.taskId}`, JSON.stringify(enrichedEvent));
   }
 }
 
@@ -28,11 +33,26 @@ export async function publishSessionEvent(sessionId: string, event: WsEvent): Pr
   await redis.publish(`optio:session:${sessionId}`, JSON.stringify(event));
 }
 
+export async function publishWorkflowRunEvent(event: WsEvent): Promise<void> {
+  const redis = getPublisher();
+  const channel = `optio:events`;
+
+  const traceId = getCurrentTraceId();
+  const enrichedEvent = traceId ? { ...event, traceId } : event;
+
+  await redis.publish(channel, JSON.stringify(enrichedEvent));
+
+  // Also publish to workflow-run-specific channel for targeted subscriptions
+  if ("workflowRunId" in event) {
+    await redis.publish(`optio:workflow-run:${event.workflowRunId}`, JSON.stringify(enrichedEvent));
+  }
+}
+
 /** Return the shared Redis client (usable for pub/sub publishing and general commands). */
 export function getRedisClient(): Redis {
   return getPublisher();
 }
 
 export function createSubscriber(): Redis {
-  return new Redis(redisUrl);
+  return new Redis(redisConnectionUrl, { tls: redisTlsOptions });
 }
