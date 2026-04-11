@@ -1,4 +1,16 @@
 import { ErrorResponseSchema } from "./common.js";
+import {
+  TaskSchema,
+  EnrichedTaskSchema,
+  TaskEventSchema,
+  LogEntrySchema,
+  TaskStatsSchema,
+  TaskStateSchema,
+  AgentTypeSchema,
+  TaskActivitySubstateSchema,
+  WorktreeStateSchema,
+  TaskTypeSchema,
+} from "./task.js";
 
 /**
  * Central registry of named schemas surfaced as `components.schemas` in the
@@ -14,4 +26,14 @@ import { ErrorResponseSchema } from "./common.js";
  */
 export const namedSchemas = {
   ErrorResponse: ErrorResponseSchema,
+  Task: TaskSchema,
+  EnrichedTask: EnrichedTaskSchema,
+  TaskEvent: TaskEventSchema,
+  LogEntry: LogEntrySchema,
+  TaskStats: TaskStatsSchema,
+  TaskState: TaskStateSchema,
+  AgentType: AgentTypeSchema,
+  TaskActivitySubstate: TaskActivitySubstateSchema,
+  WorktreeState: WorktreeStateSchema,
+  TaskType: TaskTypeSchema,
 } as const;

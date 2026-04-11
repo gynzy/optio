@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -24,7 +24,7 @@ vi.mock("../db/client.js", () => ({
 }));
 
 const mockListTasks = vi.fn().mockResolvedValue([]);
-const mockSearchTasks = vi.fn().mockResolvedValue({ tasks: [], cursor: null });
+const mockSearchTasks = vi.fn().mockResolvedValue({ tasks: [], nextCursor: null, hasMore: false });
 const mockGetTask = vi.fn().mockResolvedValue({ id: "t1", state: "running", workspaceId: null });
 const mockGetTaskLogs = vi.fn().mockResolvedValue([]);
 
@@ -76,26 +76,15 @@ import { sessionRoutes } from "./sessions.js";
 // ─── Helpers ───
 
 async function buildTaskApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  // Decorate with a fake user to satisfy workspace checks
-  app.decorateRequest("user", undefined);
-  app.addHook("preHandler", async (req) => {
-    (req as any).user = { id: "u1", workspaceId: null };
+  return buildRouteTestApp(taskRoutes, {
+    user: { id: "u1", workspaceId: null, workspaceRole: "admin" },
   });
-  await taskRoutes(app);
-  await app.ready();
-  return app;
 }
 
 async function buildSessionApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined);
-  app.addHook("preHandler", async (req) => {
-    (req as any).user = { id: "u1", workspaceId: null };
+  return buildRouteTestApp(sessionRoutes, {
+    user: { id: "u1", workspaceId: null, workspaceRole: "admin" },
   });
-  await sessionRoutes(app);
-  await app.ready();
-  return app;
 }
 
 // ─── Tests ───

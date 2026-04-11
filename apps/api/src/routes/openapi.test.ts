@@ -133,3 +133,83 @@ describe("OpenAPI spec — Phase 0 baseline", () => {
     expect(docPaths, `/docs paths should be hidden: ${docPaths.join(", ")}`).toHaveLength(0);
   });
 });
+
+/**
+ * Routes migrated by each phase of the rollout. The union of all entries
+ * must always be fully documented — summary, operationId, tag, and at
+ * least one response with a non-"Default Response" description.
+ *
+ * When a new phase lands, add its routes here and the assertion below
+ * guards against regressions.
+ */
+interface MigratedRoute {
+  method: string;
+  path: string;
+  /**
+   * True for routes that are intentionally under-schematized in the spec
+   * (currently only the multi-content-type log-export endpoint). They must
+   * still carry summary/operationId/tag, but are allowed to have zero
+   * explicit response schemas.
+   */
+  lenient?: boolean;
+}
+
+const MIGRATED_ROUTES: MigratedRoute[] = [
+  // Phase 1 — tasks.ts (14 routes)
+  { method: "get", path: "/api/tasks" },
+  { method: "get", path: "/api/tasks/stats" },
+  { method: "get", path: "/api/tasks/search" },
+  { method: "get", path: "/api/tasks/{id}" },
+  { method: "post", path: "/api/tasks" },
+  { method: "post", path: "/api/tasks/{id}/cancel" },
+  { method: "post", path: "/api/tasks/{id}/retry" },
+  { method: "post", path: "/api/tasks/{id}/force-redo" },
+  { method: "get", path: "/api/tasks/{id}/logs" },
+  // Multi-content-type endpoint: body varies by ?format=. Response shapes
+  // are documented in the description, not as Zod schemas.
+  { method: "get", path: "/api/tasks/{id}/logs/export", lenient: true },
+  { method: "get", path: "/api/tasks/{id}/events" },
+  { method: "post", path: "/api/tasks/{id}/review" },
+  { method: "post", path: "/api/tasks/{id}/run-now" },
+  { method: "post", path: "/api/tasks/reorder" },
+];
+
+describe("OpenAPI spec — migrated routes are fully documented", () => {
+  for (const { method, path, lenient } of MIGRATED_ROUTES) {
+    it(`${method.toUpperCase()} ${path} has summary, operationId, and tag`, () => {
+      const op = spec.paths?.[path]?.[method];
+      expect(op, `${method.toUpperCase()} ${path} not in spec`).toBeDefined();
+      expect(op?.summary, `${method.toUpperCase()} ${path} missing summary`).toBeTruthy();
+      expect(op?.operationId, `${method.toUpperCase()} ${path} missing operationId`).toBeTruthy();
+      expect(op?.tags?.length ?? 0, `${method.toUpperCase()} ${path} missing tags`).toBeGreaterThan(
+        0,
+      );
+
+      if (!lenient) {
+        // Must have at least one explicit response schema (not the
+        // "Default Response" fallback). Lenient routes opt out — see
+        // the `lenient` flag in MIGRATED_ROUTES.
+        expect(op?.responses, `${method.toUpperCase()} ${path} missing responses`).toBeDefined();
+        const responses = op?.responses ?? {};
+        const explicit = Object.values(responses).filter(
+          (r) => r.description && r.description !== "Default Response",
+        );
+        expect(
+          explicit.length,
+          `${method.toUpperCase()} ${path} has only fallback responses`,
+        ).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  it("migrated routes produce exactly the 14 expected task entries", () => {
+    expect(MIGRATED_ROUTES).toHaveLength(14);
+  });
+
+  it("components.schemas contains the Task domain types", () => {
+    const schemas = spec.components?.schemas ?? {};
+    for (const name of ["Task", "EnrichedTask", "TaskEvent", "LogEntry", "TaskStats"]) {
+      expect(schemas[name], `components.schemas.${name} missing`).toBeDefined();
+    }
+  });
+});
