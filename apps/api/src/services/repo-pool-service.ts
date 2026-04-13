@@ -23,6 +23,7 @@ import {
 } from "./envoy-sidecar.js";
 
 const IDLE_TIMEOUT_MS = parseInt(process.env.OPTIO_REPO_POD_IDLE_MS ?? "600000", 10); // 10 min default
+const REPO_INIT_TIMEOUT_MS = parseInt(process.env.OPTIO_REPO_INIT_TIMEOUT_MS ?? "120000", 10); // 2 min default
 
 export interface RepoPod {
   id: string;
@@ -547,7 +548,11 @@ export async function execTaskInRepoPod(
     .where(eq(tasks.id, taskId));
 
   // Build the exec command
-  const envJson = JSON.stringify({ ...env, OPTIO_TASK_ID: taskId });
+  const envJson = JSON.stringify({
+    ...env,
+    OPTIO_TASK_ID: taskId,
+    REPO_INIT_TIMEOUT_SECS: String(REPO_INIT_TIMEOUT_MS / 1000),
+  });
   const envB64 = Buffer.from(envJson).toString("base64");
   const runToken = randomUUID();
 
@@ -611,8 +616,8 @@ export async function execTaskInRepoPod(
     `    print(f'export {k}={shlex.quote(v)}')`,
     `")`,
     `echo "[optio] Waiting for repo to be ready..."`,
-    `for i in $(seq 1 120); do [ -f /workspace/.ready ] && break; sleep 1; done`,
-    `[ -f /workspace/.ready ] || { echo "[optio] ERROR: repo not ready after 120s"; exit 1; }`,
+    `for i in $(seq 1 \${REPO_INIT_TIMEOUT_SECS}); do [ -f /workspace/.ready ] && break; sleep 1; done`,
+    `[ -f /workspace/.ready ] || { echo "[optio] ERROR: repo not ready after \${REPO_INIT_TIMEOUT_SECS}s (increase OPTIO_REPO_INIT_TIMEOUT_MS to extend)"; exit 1; }`,
     `echo "[optio] Repo ready"`,
     // Use task-scoped credential URL for git operations (user-scoped token).
     // Override the pod-level URL which returns an installation token.
