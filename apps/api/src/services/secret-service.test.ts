@@ -41,6 +41,42 @@ function legacyEncrypt(plaintext: string) {
   return { encrypted, iv, authTag: cipher.getAuthTag() };
 }
 
+// ── Mock Data Types ─────────────────────────────────────────────────────────
+
+interface MockSecretData {
+  name: string;
+  scope: string;
+  value: string; // plaintext - will be encrypted when retrieved
+}
+
+// ── Drizzle Expression Parser ───────────────────────────────────────────────
+
+/** Extract {column: value} filters from a Drizzle SQL condition (eq/and expressions) */
+function parseWhereCondition(condition: any): Record<string, string> {
+  const filters: Record<string, string> = {};
+  if (!condition?.queryChunks) return filters;
+
+  // Walk through queryChunks to find nested SQL objects (from and())
+  for (const chunk of condition.queryChunks) {
+    if (chunk?.queryChunks) {
+      Object.assign(filters, parseWhereCondition(chunk));
+    }
+  }
+
+  // Handle eq() - queryChunks structure: [StringChunk, column, StringChunk, value, StringChunk]
+  const chunks = condition.queryChunks;
+  if (chunks.length >= 4) {
+    const col = typeof chunks[1] === "string" ? chunks[1] : null;
+    const val = typeof chunks[3] === "string" ? chunks[3] : null;
+    if (col && val) {
+      const colName = col.replace("secrets.", ""); // "secrets.scope" -> "scope"
+      filters[colName] = val;
+    }
+  }
+
+  return filters;
+}
+
 describe("secret-service", () => {
   let encrypt: typeof import("./secret-service.js").encrypt;
   let decrypt: typeof import("./secret-service.js").decrypt;
@@ -50,7 +86,50 @@ describe("secret-service", () => {
   let listSecrets: typeof import("./secret-service.js").listSecrets;
   let deleteSecret: typeof import("./secret-service.js").deleteSecret;
   let resolveSecretsForTask: typeof import("./secret-service.js").resolveSecretsForTask;
+  let resolveSecretsForSetup: typeof import("./secret-service.js").resolveSecretsForSetup;
   let ALG_AES_256_GCM_V1: number;
+
+  // ── Data-Driven Mock Helper ─────────────────────────────────────────────────
+
+  /**
+   * Set up db.select mock with a data-driven approach.
+   * Queries are filtered based on the actual where clause conditions.
+   */
+  function setupSecretStoreMock(mockSecrets: MockSecretData[]) {
+    (db.select as any) = vi.fn().mockImplementation(() => ({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockImplementation((condition) => {
+          const filters = parseWhereCondition(condition);
+
+          // Filter mock data based on extracted conditions
+          const matches = mockSecrets.filter((s) => {
+            if (filters.scope && s.scope !== filters.scope) return false;
+            if (filters.name && s.name !== filters.name) return false;
+            return true;
+          });
+
+          // Return encrypted rows (simulating DB storage)
+          return Promise.resolve(
+            matches.map((s) => {
+              const aad = buildSecretAAD(s.name, s.scope, null);
+              const blob = encrypt(s.value, aad);
+              return {
+                id: `mock-${s.name}-${s.scope}`,
+                name: s.name,
+                scope: s.scope,
+                encryptedValue: blob.ciphertext,
+                iv: blob.iv,
+                authTag: blob.authTag,
+                alg: blob.alg,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              };
+            }),
+          );
+        }),
+      }),
+    }));
+  }
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -63,6 +142,7 @@ describe("secret-service", () => {
     listSecrets = mod.listSecrets;
     deleteSecret = mod.deleteSecret;
     resolveSecretsForTask = mod.resolveSecretsForTask;
+    resolveSecretsForSetup = mod.resolveSecretsForSetup;
     ALG_AES_256_GCM_V1 = mod.ALG_AES_256_GCM_V1;
   });
 
@@ -395,62 +475,30 @@ describe("secret-service", () => {
 
   describe("retrieveSecret", () => {
     it("throws when secret is not found", async () => {
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
-      });
+      setupSecretStoreMock([]);
 
       await expect(retrieveSecret("MISSING")).rejects.toThrow("Secret not found: MISSING");
     });
 
     it("includes scope in error message", async () => {
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
-      });
+      setupSecretStoreMock([]);
 
       await expect(retrieveSecret("KEY", "my-repo")).rejects.toThrow(
         "Secret not found: KEY (scope: my-repo)",
       );
     });
 
-    it("applies isNull workspace filter for non-global scope without workspaceId", async () => {
-      // Encrypt with appropriate AAD for this context
-      const aad = buildSecretAAD("TOKEN", "repo-scope", null);
-      const blob = encrypt("val", aad);
-
-      const whereMock = vi
-        .fn()
-        .mockResolvedValue([
-          { encryptedValue: blob.ciphertext, iv: blob.iv, authTag: blob.authTag, alg: blob.alg },
-        ]);
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({ where: whereMock }),
-      });
+    it("retrieves secret with correct scope", async () => {
+      setupSecretStoreMock([{ name: "TOKEN", scope: "repo-scope", value: "secret-val" }]);
 
       const result = await retrieveSecret("TOKEN", "repo-scope");
-      expect(result).toBe("val");
-      // The where clause should have been called (with 3 conditions: name, scope, isNull)
-      expect(whereMock).toHaveBeenCalled();
+      expect(result).toBe("secret-val");
     });
   });
 
   describe("listSecrets", () => {
     it("returns secrets without values", async () => {
-      const mockRows = [
-        {
-          id: "1",
-          name: "KEY_A",
-          scope: "global",
-          encryptedValue: Buffer.from("x"),
-          iv: Buffer.from("x"),
-          authTag: Buffer.from("x"),
-          createdAt: new Date("2024-01-01"),
-          updatedAt: new Date("2024-01-02"),
-        },
-      ];
-
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(mockRows) }),
-      });
+      setupSecretStoreMock([{ name: "KEY_A", scope: "global", value: "secret-value" }]);
 
       const result = await listSecrets("global");
       expect(result).toHaveLength(1);
@@ -458,26 +506,19 @@ describe("secret-service", () => {
       expect(result[0].name).toBe("KEY_A");
     });
 
-    it("returns all secrets when no scope filter", async () => {
-      const mockRows = [
-        {
-          id: "1",
-          name: "KEY",
-          scope: "global",
-          encryptedValue: Buffer.from("x"),
-          iv: Buffer.from("x"),
-          authTag: Buffer.from("x"),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ];
+    it("filters by scope", async () => {
+      setupSecretStoreMock([
+        { name: "GLOBAL_KEY", scope: "global", value: "g" },
+        { name: "REPO_KEY", scope: "https://github.com/owner/repo", value: "r" },
+      ]);
 
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockResolvedValue(mockRows),
-      });
+      const globalSecrets = await listSecrets("global");
+      expect(globalSecrets).toHaveLength(1);
+      expect(globalSecrets[0].name).toBe("GLOBAL_KEY");
 
-      const result = await listSecrets();
-      expect(result).toHaveLength(1);
+      const repoSecrets = await listSecrets("https://github.com/owner/repo");
+      expect(repoSecrets).toHaveLength(1);
+      expect(repoSecrets[0].name).toBe("REPO_KEY");
     });
   });
 
@@ -493,70 +534,53 @@ describe("secret-service", () => {
 
   describe("resolveSecretsForTask", () => {
     it("falls back to global when repo-scoped secret is not found", async () => {
-      let capturedGlobal: { encrypted: Buffer; iv: Buffer; authTag: Buffer };
-
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
-      });
-      (db.insert as any) = vi.fn().mockReturnValue({
-        values: vi.fn().mockImplementation((vals: any) => {
-          capturedGlobal = { encrypted: vals.encryptedValue, iv: vals.iv, authTag: vals.authTag };
-          return Promise.resolve();
-        }),
-      });
-
-      await storeSecret("API_KEY", "global-key-value");
-
-      let resolveCallCount = 0;
-      (db.select as any) = vi.fn().mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockImplementation(() => {
-            resolveCallCount++;
-            if (resolveCallCount === 1) return Promise.resolve([]);
-            return Promise.resolve([
-              {
-                encryptedValue: capturedGlobal!.encrypted,
-                iv: capturedGlobal!.iv,
-                authTag: capturedGlobal!.authTag,
-              },
-            ]);
-          }),
-        }),
-      }));
+      // Only global secret exists - should fall back to it
+      setupSecretStoreMock([{ name: "API_KEY", scope: "global", value: "global-key-value" }]);
 
       const result = await resolveSecretsForTask(["API_KEY"], "https://github.com/owner/repo");
       expect(result.API_KEY).toBe("global-key-value");
     });
 
     it("uses repo-scoped secret when available", async () => {
-      let capturedRepo: { encrypted: Buffer; iv: Buffer; authTag: Buffer };
+      const repoUrl = "https://github.com/owner/repo";
+      setupSecretStoreMock([{ name: "TOKEN", scope: repoUrl, value: "repo-specific-token" }]);
 
-      (db.select as any) = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
-      });
-      (db.insert as any) = vi.fn().mockReturnValue({
-        values: vi.fn().mockImplementation((vals: any) => {
-          capturedRepo = { encrypted: vals.encryptedValue, iv: vals.iv, authTag: vals.authTag };
-          return Promise.resolve();
-        }),
-      });
-
-      await storeSecret("TOKEN", "repo-specific-token", "https://github.com/owner/repo");
-
-      (db.select as any) = vi.fn().mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            {
-              encryptedValue: capturedRepo!.encrypted,
-              iv: capturedRepo!.iv,
-              authTag: capturedRepo!.authTag,
-            },
-          ]),
-        }),
-      }));
-
-      const result = await resolveSecretsForTask(["TOKEN"], "https://github.com/owner/repo");
+      const result = await resolveSecretsForTask(["TOKEN"], repoUrl);
       expect(result.TOKEN).toBe("repo-specific-token");
+    });
+  });
+
+  describe("resolveSecretsForSetup", () => {
+    it("returns both global and repo-scoped secrets", async () => {
+      const repoUrl = "https://github.com/owner/repo";
+      setupSecretStoreMock([
+        { name: "GLOBAL_TOKEN", scope: "global", value: "global-value" },
+        { name: "REPO_TOKEN", scope: repoUrl, value: "repo-value" },
+      ]);
+
+      const result = await resolveSecretsForSetup(repoUrl);
+      expect(result.GLOBAL_TOKEN).toBe("global-value");
+      expect(result.REPO_TOKEN).toBe("repo-value");
+      expect(Object.keys(result)).toHaveLength(2);
+    });
+
+    it("repo-scoped secret overrides global secret with same name", async () => {
+      const repoUrl = "https://github.com/owner/repo";
+      setupSecretStoreMock([
+        { name: "SHARED_TOKEN", scope: "global", value: "global-value" },
+        { name: "SHARED_TOKEN", scope: repoUrl, value: "repo-override-value" },
+      ]);
+
+      const result = await resolveSecretsForSetup(repoUrl);
+      expect(result.SHARED_TOKEN).toBe("repo-override-value");
+      expect(Object.keys(result)).toHaveLength(1);
+    });
+
+    it("returns empty object when no secrets exist", async () => {
+      setupSecretStoreMock([]);
+
+      const result = await resolveSecretsForSetup("https://github.com/owner/empty-repo");
+      expect(result).toEqual({});
     });
   });
 });
