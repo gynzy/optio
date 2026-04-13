@@ -31,6 +31,9 @@ import { withSpan } from "../telemetry/spans.js";
 
 const IDLE_TIMEOUT_MS = parseInt(process.env.OPTIO_REPO_POD_IDLE_MS ?? "600000", 10); // 10 min default
 const REPO_INIT_TIMEOUT_MS = parseInt(process.env.OPTIO_REPO_INIT_TIMEOUT_MS ?? "120000", 10); // 2 min default
+if (Number.isNaN(REPO_INIT_TIMEOUT_MS) || REPO_INIT_TIMEOUT_MS <= 0) {
+  throw new Error("OPTIO_REPO_INIT_TIMEOUT_MS must be a positive integer");
+}
 
 /**
  * Parse a JSON-encoded environment variable, returning `undefined` when unset/empty.
@@ -874,7 +877,7 @@ export async function execTaskInRepoPod(
       const envJson = JSON.stringify({
         ...env,
         OPTIO_TASK_ID: taskId,
-        REPO_INIT_TIMEOUT_SECS: String(REPO_INIT_TIMEOUT_MS / 1000),
+        REPO_INIT_TIMEOUT_SECS: String(Math.ceil(REPO_INIT_TIMEOUT_MS / 1000)),
       });
       const envB64 = Buffer.from(envJson).toString("base64");
       const runToken = randomUUID();
