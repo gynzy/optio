@@ -210,6 +210,8 @@ Key `values.yaml` settings:
 
 **Migration errors**: migrations auto-run on startup. Historical duplicate prefixes (0016, 0018, 0019, 0026, 0039, 0042) are allowlisted. New migrations use unix-timestamp prefixes.
 
+**Repo init timeout**: large repos may exceed 120s default. Increase `OPTIO_REPO_INIT_TIMEOUT_MS`.
+
 ## Production Deployment Checklist
 
 1. Generate encryption key: `openssl rand -hex 32`
