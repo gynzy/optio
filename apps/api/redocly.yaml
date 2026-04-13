@@ -1,0 +1,47 @@
+extends:
+  - recommended
+
+# After phase 9, every migrated route carries summary + operationId + tags +
+# response schemas, so the `recommended` preset is the right baseline.
+# A handful of rules are downgraded because the cost/value ratio of fixing
+# them isn't worth it — see the comments on each.
+rules:
+  # Server examples are discouraged but we intentionally declare a single
+  # server with url: "/" so clients can relative-base their requests.
+  no-server-example.com: off
+
+  # Licence and contact info aren't relevant for an internal API.
+  info-license: off
+  info-contact: off
+
+  # Some routes (workspaces/me, etc.) have descriptions in their
+  # operations but not every endpoint merits a separate prose block.
+  operation-description: warn
+
+  # `zod-to-json-schema` (bundled with fastify-type-provider-zod) emits
+  # `{ anyOf: [...], nullable: true }` for nullable unions instead of
+  # OpenAPI 3.1's `type: ["string", "null"]` form. Disable the sibling
+  # check until the library outputs strict OAS 3.0 nullability.
+  nullable-type-sibling: off
+
+  # Workspace component fixtures (future use) trip the unused-components
+  # check. Leave as a warning.
+  no-unused-components: warn
+
+  # Some paths overlap (/api/auth/:provider/login vs. /api/auth/me) and
+  # Redocly flags them as ambiguous. Fastify handles this deterministically
+  # via its trie-based router — accepting the warning.
+  no-ambiguous-paths: warn
+
+  # Routes documenting only happy-path responses trip this, but most of
+  # our routes document at least 4xx via ErrorResponseSchema. Warn only.
+  operation-4xx-response: warn
+
+  # Keep these strict:
+  no-unresolved-refs: error
+  no-identical-paths: error
+  path-params-defined: error
+  operation-operationId: error
+  operation-summary: error
+  operation-operationId-unique: error
+  tag-description: warn

@@ -5,7 +5,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Deployment",
-  description: "Production deployment guide for Optio on Kubernetes.",
+  description:
+    "Deploy Optio to production Kubernetes with Helm. Covers TLS, managed Postgres and Redis, OAuth setup, encryption, and the full deployment checklist.",
 };
 
 export default function DeploymentPage() {
@@ -376,7 +377,7 @@ kubectl get pvc -n optio`}</CodeBlock>
           {
             title: "Integrations",
             href: "/docs/guides/integrations",
-            description: "Connect GitHub Issues, Linear, Jira, Notion, Slack",
+            description: "Connect GitHub Issues, GitLab Issues, Linear, Jira, Notion, Slack",
           },
           {
             title: "API Reference",

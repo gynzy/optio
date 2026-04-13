@@ -14,10 +14,12 @@ import {
   Zap,
   DollarSign,
   Terminal,
-  Clock,
-  FileText,
   Bot,
   GitBranch,
+  Webhook,
+  Plug,
+  BarChart3,
+  Activity,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
 import { WorkspaceSwitcher } from "./workspace-switcher";
@@ -26,17 +28,19 @@ import { useOptioChatStore } from "@/hooks/use-optio-chat";
 const MAIN_NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/tasks", label: "Tasks", icon: ListTodo },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/workflows", label: "Agent Workflows", icon: GitBranch },
   { href: "/sessions", label: "Sessions", icon: Terminal },
   { href: "/repos", label: "Repos", icon: FolderGit2 },
+  { href: "/connections", label: "Connections", icon: Plug },
   { href: "/cluster", label: "Cluster", icon: Server },
   { href: "/costs", label: "Costs", icon: DollarSign },
-  { href: "/workflows", label: "Workflows", icon: GitBranch },
-  { href: "/schedules", label: "Schedules", icon: Clock },
-  { href: "/templates", label: "Templates", icon: FileText },
 ];
 
 const SECONDARY_NAV = [
   { href: "/secrets", label: "Secrets", icon: KeyRound },
+  { href: "/webhooks", label: "Webhooks", icon: Webhook },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/workspace-settings", label: "Workspace", icon: Building2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

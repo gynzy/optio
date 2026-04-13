@@ -4,17 +4,23 @@ Context and conventions for AI assistants working on the Optio codebase.
 
 ## What is Optio?
 
-Optio is a workflow orchestration system for AI coding agents. Think of it as "CI/CD where the build step is an AI agent." Users submit tasks (manually or from GitHub Issues, Linear, Jira, or Notion), and Optio:
+Optio is a workflow orchestration system for AI coding agents. Think of it as "CI/CD where the build step is an AI agent." It operates in three modes:
+
+**Tasks** — ticket to merged PR. Users submit tasks (manually or from GitHub Issues, Linear, Jira, or Notion), and Optio:
 
 1. Spins up an isolated Kubernetes pod for the repository (pod-per-repo)
 2. Creates a git worktree for the task (multiple tasks can run concurrently per repo)
-3. Runs Claude Code, OpenAI Codex, or GitHub Copilot with a configurable prompt
+3. Runs Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, or OpenCode with a configurable prompt
 4. Streams structured logs back to a web UI in real time
 5. Agent stops after opening a PR (no CI blocking)
 6. PR watcher tracks CI checks, review status, and merge state
 7. Auto-triggers code review agent on CI pass or PR open (if enabled)
 8. Auto-resumes agent when reviewer requests changes (if enabled)
 9. Auto-completes on merge, auto-fails on close
+
+**Agent Workflows** — reusable, parameterized agent jobs that run standalone (no git repo required). Define a prompt template with `{{PARAM}}` placeholders, attach triggers (manual, cron schedule, or webhook), and Optio handles execution, log streaming, cost tracking, and auto-retry.
+
+**Connections** — external service integrations injected into agent pods at runtime via MCP (Model Context Protocol). Built-in providers: Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem. Also supports custom MCP servers and HTTP APIs. Connections have fine-grained access control (per-repo, per-agent-type, permission levels).
 
 ## Architecture
 
@@ -28,11 +34,14 @@ Optio is a workflow orchestration system for AI coding agents. Think of it as "C
 │             │     │ - Drizzle    │     │  │ ├─ worktree 2  │  │
 │             │     │ - WebSocket  │     │  │ └─ worktree N  │  │
 │             │     │ - PR Watcher │     │  └────────────────┘  │
-│             │     │ - Health Mon │     │                       │
+│             │     │ - Workflow Q │     │  ┌─ Workflow Pod ─┐  │
+│             │     │ - Health Mon │     │  │ isolated agent  │  │
+│             │     │ - Connection │     │  └────────────────┘  │
+│             │     │   Service    │     │                       │
 └─────────────┘     └──────┬───────┘     └───────────────────────┘
                            │
                     ┌──────┴───────┐
-                    │  Postgres    │  State, logs, secrets, config, health events
+                    │  Postgres    │  State, logs, workflows, connections, secrets
                     │  Redis       │  Job queue, pub/sub
                     └──────────────┘
 
@@ -104,7 +113,9 @@ These are well-documented in code; read the relevant service files for details:
 - **Shared cache directories**: per-repo persistent PVCs for tool caches (npm, pip, cargo, etc.), managed via `/api/repos/:id/shared-directories`
 - **Interactive sessions**: persistent workspaces with terminal + agent chat, at `/sessions`
 - **Workspaces**: multi-tenancy via `workspaceId` column. Roles (admin/member/viewer) in schema but not fully enforced
-- **Task dependencies & workflows**: `task_dependencies` table + `workflow_templates`/`workflow_runs` for multi-step pipelines
+- **Agent Workflows** (`workflow-service.ts`, `workflow-worker.ts`): standalone agent jobs with `{{PARAM}}` prompt templates, three trigger types (manual/schedule/webhook), isolated pod execution, real-time log streaming, auto-retry with exponential backoff. Schema: `workflows`, `workflow_triggers`, `workflow_runs`, `workflow_run_logs`, `workflow_pods`
+- **Connections** (`connection-service.ts`): external service integrations via MCP. Built-in providers: Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem. Also supports custom MCP servers and HTTP APIs. Three-layer model: providers (catalog) → connections (configured instances) → assignments (per-repo/agent-type rules). Injected into agent pods at task runtime via `getConnectionsForTask()` in task-worker
+- **Task dependencies**: `task_dependencies` table for multi-step pipelines
 - **Cost tracking**: `GET /api/analytics/costs` with daily/repo/type breakdowns, UI at `/costs`
 - **Error classification**: `packages/shared/src/error-classifier.ts` pattern-matches errors into categories with remedies
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -19,15 +19,7 @@ import { secretRoutes } from "./secrets.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1", workspaceRole: "admin" };
-    done();
-  });
-  await secretRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(secretRoutes);
 }
 
 describe("GET /api/secrets", () => {
@@ -109,7 +101,7 @@ describe("POST /api/secrets", () => {
       payload: { value: "val" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 
   it("rejects missing value (Zod throws)", async () => {
@@ -119,7 +111,7 @@ describe("POST /api/secrets", () => {
       payload: { name: "KEY" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 
   it("rejects empty name (Zod throws)", async () => {
@@ -129,7 +121,7 @@ describe("POST /api/secrets", () => {
       payload: { name: "", value: "val" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 

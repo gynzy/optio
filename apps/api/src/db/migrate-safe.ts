@@ -1,0 +1,93 @@
+/**
+ * Safe migration runner that replaces Drizzle's built-in `migrate()`.
+ *
+ * Drizzle uses a watermark approach: it only applies migrations with a
+ * `folderMillis` (from the journal `when` field) greater than the highest
+ * `created_at` in `__drizzle_migrations`. This silently skips migrations
+ * whose timestamps are lower than an already-applied migration — which
+ * happens when switching from sequential prefixes (0001_, 0002_) to
+ * unix-timestamp prefixes, because Drizzle assigned artificially high
+ * `when` values to the old sequential entries.
+ *
+ * This module fixes two problems:
+ *  1. **Out-of-order timestamps**: checks by hash, not watermark.
+ *  2. **Multi-replica races**: uses a PostgreSQL advisory lock so only
+ *     one pod runs migrations at a time.
+ */
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { sql } from "drizzle-orm";
+import type { Database } from "./client.js";
+
+interface MigrationEntry {
+  sql: string[];
+  folderMillis: number;
+  hash: string;
+}
+
+const ADVISORY_LOCK_ID = 8_675_309; // arbitrary, unique to optio migrations
+
+function readMigrations(migrationsFolder: string): MigrationEntry[] {
+  const journalPath = `${migrationsFolder}/meta/_journal.json`;
+  const journal = JSON.parse(fs.readFileSync(journalPath, "utf-8"));
+  const migrations: MigrationEntry[] = [];
+
+  for (const entry of journal.entries) {
+    const filePath = `${migrationsFolder}/${entry.tag}.sql`;
+    const query = fs.readFileSync(filePath, "utf-8");
+    migrations.push({
+      sql: query.split("--> statement-breakpoint"),
+      folderMillis: entry.when,
+      hash: crypto.createHash("sha256").update(query).digest("hex"),
+    });
+  }
+
+  return migrations;
+}
+
+export async function migrateSafe(db: Database, migrationsFolder: string): Promise<number> {
+  const migrations = readMigrations(migrationsFolder);
+
+  // Ensure schema and table exist (same DDL as Drizzle)
+  await db.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at bigint
+    )
+  `);
+
+  // Advisory lock: blocks other pods until we release (session-level, auto-released on disconnect)
+  await db.execute(sql`SELECT pg_advisory_lock(${sql.raw(String(ADVISORY_LOCK_ID))})`);
+
+  let applied = 0;
+  try {
+    // Get ALL applied hashes — not just the last one
+    const rows = await db.execute<{ hash: string }>(
+      sql`SELECT hash FROM "drizzle"."__drizzle_migrations"`,
+    );
+    const appliedHashes = new Set(rows.map((r) => r.hash));
+
+    for (const migration of migrations) {
+      if (appliedHashes.has(migration.hash)) continue;
+
+      // Apply each missing migration in its own transaction
+      await db.transaction(async (tx) => {
+        for (const stmt of migration.sql) {
+          const trimmed = stmt.trim();
+          if (trimmed) await tx.execute(sql.raw(trimmed));
+        }
+        await tx.execute(
+          sql`INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES (${migration.hash}, ${migration.folderMillis})`,
+        );
+      });
+
+      applied++;
+    }
+  } finally {
+    await db.execute(sql`SELECT pg_advisory_unlock(${sql.raw(String(ADVISORY_LOCK_ID))})`);
+  }
+
+  return applied;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -87,15 +87,9 @@ import { clusterRoutes } from "./cluster.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: null, workspaceRole: "admin" };
-    done();
+  return buildRouteTestApp(clusterRoutes, {
+    user: { id: "u1", workspaceId: null, workspaceRole: "admin" },
   });
-  await clusterRoutes(app);
-  await app.ready();
-  return app;
 }
 
 describe("GET /api/cluster/overview", () => {

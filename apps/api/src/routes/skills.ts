@@ -1,66 +1,139 @@
 import type { FastifyInstance } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import * as skillService from "../services/skill-service.js";
+import { ErrorResponseSchema, IdParamsSchema } from "../schemas/common.js";
+import { SkillSchema } from "../schemas/integration.js";
 
-const scopeQuerySchema = z.object({ scope: z.string().optional() });
-const idParamsSchema = z.object({ id: z.string() });
+const scopeQuerySchema = z
+  .object({
+    scope: z.string().optional().describe("Optional scope filter"),
+  })
+  .describe("Query parameters for listing skills");
 
-const createSkillSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  prompt: z.string().min(1),
-  repoUrl: z.string().optional(),
-  enabled: z.boolean().optional(),
-});
+const createSkillSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+    prompt: z.string().min(1).describe("Skill prompt content"),
+    repoUrl: z.string().optional().describe("Optional repo scope; empty means global"),
+    enabled: z.boolean().optional(),
+  })
+  .describe("Body for creating a skill");
 
-const updateSkillSchema = z.object({
-  name: z.string().min(1).optional(),
-  description: z.string().nullable().optional(),
-  prompt: z.string().min(1).optional(),
-  enabled: z.boolean().optional(),
-});
+const updateSkillSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    description: z.string().nullable().optional(),
+    prompt: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .describe("Partial update to a skill");
 
-export async function skillRoutes(app: FastifyInstance) {
-  // List skills (global or filtered by scope)
-  app.get("/api/skills", async (req, reply) => {
-    const query = scopeQuerySchema.parse(req.query);
-    const workspaceId = req.user?.workspaceId ?? null;
-    const skills = await skillService.listSkills(query.scope, workspaceId);
-    reply.send({ skills });
-  });
+const SkillListResponseSchema = z.object({ skills: z.array(SkillSchema) });
+const SkillResponseSchema = z.object({ skill: SkillSchema });
 
-  // Get a single skill
-  app.get("/api/skills/:id", async (req, reply) => {
-    const { id } = idParamsSchema.parse(req.params);
-    const skill = await skillService.getSkill(id);
-    if (!skill) return reply.status(404).send({ error: "Skill not found" });
-    reply.send({ skill });
-  });
+export async function skillRoutes(rawApp: FastifyInstance) {
+  const app = rawApp.withTypeProvider<ZodTypeProvider>();
 
-  // Create a skill
-  app.post("/api/skills", async (req, reply) => {
-    const input = createSkillSchema.parse(req.body);
-    const workspaceId = req.user?.workspaceId ?? null;
-    const skill = await skillService.createSkill(input, workspaceId);
-    reply.status(201).send({ skill });
-  });
+  app.get(
+    "/api/skills",
+    {
+      schema: {
+        operationId: "listSkills",
+        summary: "List skills",
+        description: "List all configured skills (optionally filtered by scope).",
+        tags: ["Repos & Integrations"],
+        querystring: scopeQuerySchema,
+        response: { 200: SkillListResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const workspaceId = req.user?.workspaceId ?? null;
+      const skills = await skillService.listSkills(req.query.scope, workspaceId);
+      reply.send({ skills });
+    },
+  );
 
-  // Update a skill
-  app.patch("/api/skills/:id", async (req, reply) => {
-    const { id } = idParamsSchema.parse(req.params);
-    const existing = await skillService.getSkill(id);
-    if (!existing) return reply.status(404).send({ error: "Skill not found" });
-    const input = updateSkillSchema.parse(req.body);
-    const skill = await skillService.updateSkill(id, input);
-    reply.send({ skill });
-  });
+  app.get(
+    "/api/skills/:id",
+    {
+      schema: {
+        operationId: "getSkill",
+        summary: "Get a skill",
+        description: "Fetch a single skill by ID.",
+        tags: ["Repos & Integrations"],
+        params: IdParamsSchema,
+        response: { 200: SkillResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const skill = await skillService.getSkill(id);
+      if (!skill) return reply.status(404).send({ error: "Skill not found" });
+      reply.send({ skill });
+    },
+  );
 
-  // Delete a skill
-  app.delete("/api/skills/:id", async (req, reply) => {
-    const { id } = idParamsSchema.parse(req.params);
-    const existing = await skillService.getSkill(id);
-    if (!existing) return reply.status(404).send({ error: "Skill not found" });
-    await skillService.deleteSkill(id);
-    reply.status(204).send();
-  });
+  app.post(
+    "/api/skills",
+    {
+      schema: {
+        operationId: "createSkill",
+        summary: "Create a skill",
+        description: "Register a new skill.",
+        tags: ["Repos & Integrations"],
+        body: createSkillSchema,
+        response: { 201: SkillResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const workspaceId = req.user?.workspaceId ?? null;
+      const skill = await skillService.createSkill(req.body, workspaceId);
+      reply.status(201).send({ skill });
+    },
+  );
+
+  app.patch(
+    "/api/skills/:id",
+    {
+      schema: {
+        operationId: "updateSkill",
+        summary: "Update a skill",
+        description: "Partial update to a skill.",
+        tags: ["Repos & Integrations"],
+        params: IdParamsSchema,
+        body: updateSkillSchema,
+        response: { 200: SkillResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const existing = await skillService.getSkill(id);
+      if (!existing) return reply.status(404).send({ error: "Skill not found" });
+      const skill = await skillService.updateSkill(id, req.body);
+      reply.send({ skill });
+    },
+  );
+
+  app.delete(
+    "/api/skills/:id",
+    {
+      schema: {
+        operationId: "deleteSkill",
+        summary: "Delete a skill",
+        description: "Delete a skill. Returns 204 on success.",
+        tags: ["Repos & Integrations"],
+        params: IdParamsSchema,
+        response: { 204: z.null(), 404: ErrorResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const existing = await skillService.getSkill(id);
+      if (!existing) return reply.status(404).send({ error: "Skill not found" });
+      await skillService.deleteSkill(id);
+      reply.status(204).send(null);
+    },
+  );
 }

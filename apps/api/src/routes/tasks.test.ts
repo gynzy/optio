@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -73,29 +73,58 @@ import { taskRoutes } from "./tasks.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { id: "user-1", workspaceId: "ws-1", workspaceRole: "admin" };
-    done();
-  });
-  await taskRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(taskRoutes);
 }
 
+// Complete task mock matching the post-migration TaskSchema. Any missing
+// field here risks failing the response serializer on routes that declare
+// `schema.response[200]: TaskSchema`. Keep in sync with
+// `apps/api/src/schemas/task.ts`.
 const mockTaskData = {
   id: "task-1",
   title: "Fix bug",
   prompt: "Fix the bug",
   repoUrl: "https://github.com/org/repo",
+  repoBranch: "main",
   state: "running",
   agentType: "claude-code",
-  workspaceId: "ws-1",
-  priority: 100,
-  maxRetries: 1,
-  prUrl: null,
+  containerId: null,
   sessionId: "sess-1",
+  prUrl: null,
+  prNumber: null,
+  prState: null,
+  prChecksStatus: null,
+  prReviewStatus: null,
+  prReviewComments: null,
+  resultSummary: null,
+  costUsd: null,
+  inputTokens: null,
+  outputTokens: null,
+  modelUsed: null,
+  errorMessage: null,
+  ticketSource: null,
+  ticketExternalId: null,
+  metadata: null,
+  retryCount: 0,
+  maxRetries: 1,
+  priority: 100,
+  parentTaskId: null,
+  taskType: "coding",
+  subtaskOrder: 0,
+  blocksParent: false,
+  worktreeState: null,
+  lastPodId: null,
+  workflowRunId: null,
+  createdBy: null,
+  ignoreOffPeak: false,
+  lastActivityAt: null,
+  activitySubstate: "active",
+  workspaceId: "ws-1",
+  lastMessageAt: null,
+  createdAt: new Date("2026-04-11T12:00:00Z"),
+  updatedAt: new Date("2026-04-11T12:00:00Z"),
+  startedAt: null,
+  completedAt: null,
 };
 
 describe("GET /api/tasks", () => {
@@ -270,7 +299,7 @@ describe("POST /api/tasks", () => {
     expect(mockQueueAdd).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid agentType (Zod throws)", async () => {
+  it("rejects invalid agentType (400 from Zod body schema)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/tasks",
@@ -282,17 +311,19 @@ describe("POST /api/tasks", () => {
       },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("Validation error");
   });
 
-  it("rejects missing required fields (Zod throws)", async () => {
+  it("rejects missing required fields (400 from Zod body schema)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/tasks",
       payload: { title: "Fix bug" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("Validation error");
   });
 
   it("rejects repoBranch with shell injection characters", async () => {
@@ -307,7 +338,8 @@ describe("POST /api/tasks", () => {
       },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("Validation error");
   });
 
   it("accepts valid repoBranch names", async () => {
@@ -437,7 +469,18 @@ describe("GET /api/tasks/:id/logs", () => {
 
   it("returns task logs with default pagination", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
-    mockGetTaskLogs.mockResolvedValue([{ id: "log-1", content: "hello" }]);
+    mockGetTaskLogs.mockResolvedValue([
+      {
+        id: "log-1",
+        taskId: "task-1",
+        stream: "stdout",
+        content: "hello",
+        logType: "text",
+        metadata: null,
+        workflowRunId: null,
+        timestamp: new Date("2026-04-11T12:00:00Z"),
+      },
+    ]);
 
     const res = await app.inject({ method: "GET", url: "/api/tasks/task-1/logs" });
 
@@ -513,7 +556,18 @@ describe("GET /api/tasks/:id/events", () => {
 
   it("returns task events", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
-    mockGetTaskEvents.mockResolvedValue([{ id: "ev-1", fromState: "pending", toState: "queued" }]);
+    mockGetTaskEvents.mockResolvedValue([
+      {
+        id: "ev-1",
+        taskId: "task-1",
+        fromState: "pending",
+        toState: "queued",
+        trigger: "task_submitted",
+        message: null,
+        userId: "user-1",
+        createdAt: new Date("2026-04-11T12:00:00Z"),
+      },
+    ]);
 
     const res = await app.inject({ method: "GET", url: "/api/tasks/task-1/events" });
 
@@ -550,7 +604,7 @@ describe("POST /api/tasks/reorder", () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe("taskIds array required");
+    expect(res.json().error).toBe("Validation error");
   });
 });
 

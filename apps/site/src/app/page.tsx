@@ -1,5 +1,27 @@
 import Link from "next/link";
 
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Optio",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Kubernetes",
+  description:
+    "Workflow orchestration system for AI coding agents. Turn tickets into merged pull requests, run reusable agent workflows, and connect external services — all with autonomous feedback loops.",
+  url: "https://optio.host",
+  license: "https://opensource.org/licenses/MIT",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  sourceOrganization: {
+    "@type": "Organization",
+    name: "Optio",
+    url: "https://github.com/jonwiggins/optio",
+  },
+};
+
 const features = [
   {
     title: "Autonomous Feedback Loop",
@@ -8,39 +30,55 @@ const features = [
     color: "#6d28d9",
   },
   {
-    title: "Pod-per-Repo Isolation",
+    title: "Agent Workflows",
     description:
-      "One long-lived Kubernetes pod per repo with git worktree isolation. Multiple tasks run concurrently in separate worktrees. Idle pods clean up automatically.",
+      "Reusable, parameterized agent jobs that run standalone. Define prompt templates with variables, trigger manually, on a cron schedule, or via webhook. Auto-retry, cost tracking, and real-time log streaming included.",
     color: "#60a5fa",
+  },
+  {
+    title: "Connections",
+    description:
+      "Give your agents access to external services at runtime. Built-in providers for Notion, Slack, Linear, GitHub, PostgreSQL, and Sentry, plus custom MCP servers and HTTP APIs with fine-grained access control.",
+    color: "#34d399",
   },
   {
     title: "Multi-Agent Support",
     description:
-      "Run Claude Code, OpenAI Codex, or GitHub Copilot. Configure model, prompt template, and settings per repository. Launch review agents as subtasks with separate prompts.",
-    color: "#34d399",
+      "Run Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, or OpenCode. Configure model, prompt template, and settings per repository. Launch review agents as subtasks with separate prompts.",
+    color: "#f0a040",
   },
   {
-    title: "GitHub, Linear, Jira & Notion Intake",
+    title: "Pod-per-Repo Isolation",
     description:
-      "Pull tasks from GitHub Issues, Linear, Jira, or Notion, or create them manually. One-click assign from the web UI kicks off the full pipeline.",
-    color: "#f0a040",
+      "One long-lived Kubernetes pod per repo with git worktree isolation. Multiple tasks run concurrently in separate worktrees. Multi-pod scaling and idle cleanup built in.",
+    color: "#a78bfa",
+  },
+  {
+    title: "GitHub, GitLab, Linear, Jira & Notion Intake",
+    description:
+      "Pull tasks from GitHub Issues, GitLab Issues, Linear, Jira, or Notion, or create them manually. One-click assign from the web UI kicks off the full pipeline.",
+    color: "#f06060",
   },
   {
     title: "Real-time Dashboard",
     description:
       "Live log streaming, pipeline progress visualization, cost analytics, and cluster health monitoring. Watch your agents work in real time.",
-    color: "#a78bfa",
+    color: "#818cf8",
   },
   {
     title: "Self-Healing Pipeline",
     description:
       "Auto-resume on CI failures, merge conflicts, and stale tasks. Auto-merge when CI passes and review is approved. Close linked issues on completion.",
-    color: "#f06060",
+    color: "#fb923c",
   },
 ];
 
 const stages = [
-  { name: "Intake", description: "GitHub, Linear, Jira, Notion, or manual", icon: "\u2192" },
+  {
+    name: "Intake",
+    description: "GitHub, GitLab, Linear, Jira, Notion, or manual",
+    icon: "\u2192",
+  },
   { name: "Queued", description: "Enters the pipeline", icon: "\u25C7" },
   { name: "Provisioning", description: "Find or create pod", icon: "\u2699" },
   { name: "Running", description: "Agent writes code", icon: "\u26A1" },
@@ -52,6 +90,10 @@ const stages = [
 export default function Home() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       {/* Hero */}
       <section className="relative overflow-hidden px-6 pt-32 pb-24">
         <div className="absolute inset-0 animated-gradient" />
@@ -77,9 +119,9 @@ export default function Home() {
             className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-text-muted animate-reveal"
             style={{ animationDelay: "200ms" }}
           >
-            Optio orchestrates AI coding agents through the full development lifecycle. Submit a
-            task, and it handles execution, CI monitoring, code review, and merge &mdash;
-            automatically.
+            Optio orchestrates AI coding agents across three modes: tasks that drive tickets to
+            merged PRs, reusable agent workflows triggered on schedule or by webhook, and
+            connections that give agents access to external tools &mdash; all automatically.
           </p>
           <div
             className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row animate-reveal"
@@ -341,7 +383,7 @@ export default function Home() {
               overhead.
             </p>
           </div>
-          <div className="stagger mt-16 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="stagger mt-16 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {features.map((feature) => (
               <div
                 key={feature.title}
@@ -380,12 +422,17 @@ export default function Home() {
                 </div>
                 <p className="text-[11px] text-text-muted mb-3">Next.js &middot; :3100</p>
                 <div className="space-y-1.5">
-                  {["Dashboard", "Tasks", "Repos", "Cluster", "Costs"].map((item) => (
-                    <div key={item} className="flex items-center gap-2 text-[12px] text-text-muted">
-                      <div className="h-1 w-1 rounded-full bg-border-strong" />
-                      {item}
-                    </div>
-                  ))}
+                  {["Dashboard", "Tasks", "Workflows", "Connections", "Repos", "Costs"].map(
+                    (item) => (
+                      <div
+                        key={item}
+                        className="flex items-center gap-2 text-[12px] text-text-muted"
+                      >
+                        <div className="h-1 w-1 rounded-full bg-border-strong" />
+                        {item}
+                      </div>
+                    ),
+                  )}
                 </div>
               </div>
               <div className="hidden md:flex flex-col items-center justify-center w-12 shrink-0 text-text-muted">
@@ -411,7 +458,13 @@ export default function Home() {
                     <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">
                       Workers
                     </p>
-                    {["Task Queue", "PR Watcher", "Health Mon", "Ticket Sync"].map((item) => (
+                    {[
+                      "Task Queue",
+                      "Workflow Queue",
+                      "PR Watcher",
+                      "Health Mon",
+                      "Ticket Sync",
+                    ].map((item) => (
                       <div
                         key={item}
                         className="flex items-center gap-2 text-[12px] text-text-muted mb-1"
@@ -425,7 +478,7 @@ export default function Home() {
                     <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">
                       Services
                     </p>
-                    {["Repo Pool", "Review Agent", "Auth / Secrets"].map((item) => (
+                    {["Repo Pool", "Connections", "Review Agent", "Auth / Secrets"].map((item) => (
                       <div
                         key={item}
                         className="flex items-center gap-2 text-[12px] text-text-muted mb-1"
@@ -471,8 +524,15 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+                <div className="rounded-md border border-border/60 bg-bg-card p-3">
+                  <p className="text-[11px] font-medium text-text-muted mb-2">Workflow Pod</p>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-text-muted">isolated agent</span>
+                    <span className="text-primary-light">{"\u26A1"}</span>
+                  </div>
+                </div>
                 <p className="mt-3 text-[10px] text-text-muted">
-                  {"\u26A1"} = Claude Code / Codex / Copilot
+                  {"\u26A1"} = Claude Code / Codex / Copilot / Gemini
                 </p>
               </div>
             </div>
@@ -495,8 +555,9 @@ export default function Home() {
               <div className="flex flex-wrap justify-center gap-x-4 gap-y-1">
                 {[
                   "Tasks",
+                  "Workflows",
+                  "Connections",
                   "Logs",
-                  "Events",
                   "Secrets",
                   "Job queue",
                   "Pub/sub",

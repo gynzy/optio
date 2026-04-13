@@ -1,4 +1,4 @@
-import { and, gt, ilike, or, sql, inArray, eq } from "drizzle-orm";
+import { and, desc, gt, lt, ilike, or, sql, inArray, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { taskLogs, secrets, authEvents } from "../db/schema.js";
 
@@ -40,14 +40,20 @@ export type AuthFailureStatus = {
 /**
  * Get the most recent updatedAt from secrets matching the given names.
  * Returns null if no matching secret exists.
+ *
+ * Multiple rows can match when the same secret name is stored at different
+ * scopes/workspaces (e.g. a global GITHUB_TOKEN plus a workspace-scoped one,
+ * or both CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY). We want the latest
+ * update across all of them so that any fresh save moves the watermark
+ * forward and old failures get excluded from the window.
  */
 async function getSecretWatermark(secretNames: string[]): Promise<Date | null> {
   const rows = await db
     .select({ updatedAt: secrets.updatedAt })
     .from(secrets)
     .where(inArray(secrets.name, secretNames))
+    .orderBy(desc(secrets.updatedAt))
     .limit(1);
-  // If multiple secrets match, use the most recent updatedAt
   if (rows.length === 0) return null;
   return rows[0].updatedAt;
 }
@@ -77,12 +83,21 @@ async function hasClaudeFailuresInLogs(cutoff: Date): Promise<boolean> {
 
 /**
  * Check if any GitHub auth failures exist in the auth_events table after the cutoff.
+ * Only considers failures from the central token path (pr-watcher, legacy/null source).
+ * Provider-specific failures (ticket-sync:*) are excluded — they don't reflect global
+ * GITHUB_TOKEN health and are surfaced separately in the provider config UI.
  */
 async function hasGithubFailuresInEvents(cutoff: Date): Promise<boolean> {
   const rows = await db
     .select({ exists: sql<number>`1` })
     .from(authEvents)
-    .where(and(eq(authEvents.tokenType, "github"), gt(authEvents.createdAt, cutoff)))
+    .where(
+      and(
+        eq(authEvents.tokenType, "github"),
+        gt(authEvents.createdAt, cutoff),
+        or(sql`${authEvents.source} IS NULL`, sql`${authEvents.source} NOT LIKE 'ticket-sync:%'`),
+      ),
+    )
     .limit(1);
   return rows.length > 0;
 }
@@ -124,6 +139,9 @@ export async function getRecentAuthFailures(
     hasGithubFailuresInLogs(githubCutoff),
   ]);
 
+  // Prune stale rows in the background to prevent unbounded table growth
+  pruneStaleAuthEvents(windowMs).catch(() => {});
+
   return {
     claude: claudeFailure,
     github: githubEventFailure || githubLogFailure,
@@ -147,13 +165,20 @@ export async function hasRecentClaudeAuthFailure(
 }
 
 /**
- * Record a GitHub auth failure event so it can be surfaced in the dashboard banner.
- * Call this from ticket-sync-worker, pr-watcher, or any non-task context that
- * encounters a GitHub 401.
+ * Record an auth failure event so it can be surfaced in the dashboard.
+ * @param source — identifies the caller, e.g. "pr-watcher" or "ticket-sync:<providerId>".
+ *   The global GitHub banner only fires for non-ticket-sync sources.
  */
 export async function recordAuthEvent(
   tokenType: "claude" | "github",
   errorMessage: string,
+  source?: string,
 ): Promise<void> {
-  await db.insert(authEvents).values({ tokenType, errorMessage });
+  await db.insert(authEvents).values({ tokenType, errorMessage, source });
+}
+
+/** Delete auth_events older than the lookback window to prevent unbounded table growth. */
+async function pruneStaleAuthEvents(windowMs: number): Promise<void> {
+  const cutoff = new Date(Date.now() - windowMs);
+  await db.delete(authEvents).where(lt(authEvents.createdAt, cutoff));
 }

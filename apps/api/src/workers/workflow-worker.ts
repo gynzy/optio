@@ -15,9 +15,12 @@ import { workflowRuns } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import * as workflowService from "../services/workflow-service.js";
 import * as workflowPool from "../services/workflow-pool-service.js";
-import { publishEvent } from "../services/event-bus.js";
+import { publishWorkflowRunEvent } from "../services/event-bus.js";
+import { enqueueWebhookEvent } from "./webhook-worker.js";
+import type { WebhookEvent } from "../services/webhook-service.js";
 import { resolveSecretsForTask, retrieveSecretWithFallback } from "../services/secret-service.js";
 import { logger } from "../logger.js";
+import { instrumentWorkerProcessor } from "../telemetry/instrument-worker.js";
 
 import { getBullMQConnectionOptions } from "../services/redis-config.js";
 
@@ -162,7 +165,7 @@ async function transitionRun(
     })
     .where(eq(workflowRuns.id, runId));
 
-  await publishEvent({
+  await publishWorkflowRunEvent({
     type: "workflow_run:state_changed",
     workflowRunId: runId,
     workflowId,
@@ -171,7 +174,63 @@ async function transitionRun(
     timestamp: new Date().toISOString(),
   });
 
+  // Fire outbound webhook for relevant state transitions
+  const webhookEventMap: Partial<Record<WorkflowRunState, WebhookEvent>> = {
+    [WorkflowRunState.RUNNING]: "workflow_run.started",
+    [WorkflowRunState.COMPLETED]: "workflow_run.completed",
+    [WorkflowRunState.FAILED]: "workflow_run.failed",
+  };
+  const webhookEvent = webhookEventMap[newState];
+  if (webhookEvent) {
+    fireWorkflowRunWebhook(runId, workflowId, webhookEvent, currentState).catch((err) =>
+      logger.warn({ err, runId, event: webhookEvent }, "Failed to enqueue workflow run webhook"),
+    );
+  }
+
   return true;
+}
+
+/**
+ * Build the webhook payload for a workflow run event and enqueue delivery.
+ * Fetches the current run + workflow to produce a self-contained payload.
+ */
+async function fireWorkflowRunWebhook(
+  runId: string,
+  workflowId: string,
+  event: WebhookEvent,
+  fromState: WorkflowRunState,
+): Promise<void> {
+  const [run, workflow] = await Promise.all([
+    workflowService.getWorkflowRun(runId),
+    workflowService.getWorkflow(workflowId),
+  ]);
+  if (!run || !workflow) return;
+
+  const durationMs =
+    run.startedAt && run.finishedAt
+      ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
+      : run.startedAt
+        ? Date.now() - new Date(run.startedAt).getTime()
+        : undefined;
+
+  await enqueueWebhookEvent(event, {
+    runId: run.id,
+    workflowId: workflow.id,
+    workflowName: workflow.name,
+    state: run.state,
+    fromState,
+    params: run.params ?? null,
+    output: run.output ?? null,
+    costUsd: run.costUsd ?? undefined,
+    inputTokens: run.inputTokens ?? undefined,
+    outputTokens: run.outputTokens ?? undefined,
+    modelUsed: run.modelUsed ?? undefined,
+    errorMessage: run.errorMessage ?? undefined,
+    retryCount: run.retryCount,
+    durationMs,
+    startedAt: run.startedAt?.toISOString() ?? null,
+    finishedAt: run.finishedAt?.toISOString() ?? null,
+  });
 }
 
 // ── Concurrency lock ───────────────────────────────────────────────────────────
@@ -191,7 +250,7 @@ function withClaimLock<T>(fn: () => Promise<T>): Promise<T> {
 export function startWorkflowWorker() {
   const worker = new Worker(
     "workflow-runs",
-    async (job) => {
+    instrumentWorkerProcessor("workflow-worker", async (job) => {
       const { workflowRunId, provisioningRetryCount = 0 } = job.data as {
         workflowRunId: string;
         provisioningRetryCount?: number;
@@ -441,14 +500,12 @@ export function startWorkflowWorker() {
               }
             }
 
-            // Publish log entries as events for live streaming
+            // Persist + publish log entries (historical DB + live WS)
             for (const entry of parsed.entries) {
-              await publishEvent({
-                type: "workflow_run:log",
+              await workflowService.appendWorkflowRunLog({
                 workflowRunId,
                 stream: "stdout",
                 content: entry.content,
-                timestamp: entry.timestamp,
                 logType: entry.type,
                 metadata: entry.metadata,
               });
@@ -460,12 +517,10 @@ export function startWorkflowWorker() {
         if (lineBuf.trim()) {
           const parsed = parseEvent(lineBuf, workflowRunId);
           for (const entry of parsed.entries) {
-            await publishEvent({
-              type: "workflow_run:log",
+            await workflowService.appendWorkflowRunLog({
               workflowRunId,
               stream: "stdout",
               content: entry.content,
-              timestamp: entry.timestamp,
               logType: entry.type,
               metadata: entry.metadata,
             });
@@ -613,7 +668,7 @@ export function startWorkflowWorker() {
           await workflowPool.releaseRun(workflowPodId).catch(() => {});
         }
       }
-    },
+    }),
     {
       connection: connectionOpts,
       concurrency: parseInt(process.env.OPTIO_MAX_WORKFLOW_CONCURRENT ?? "5", 10),

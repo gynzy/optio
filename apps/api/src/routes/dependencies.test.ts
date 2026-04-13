@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -26,18 +26,17 @@ import { dependencyRoutes } from "./dependencies.js";
 // ─── Helpers ───
 
 async function buildTestApp(user?: { id: string; workspaceId: string }): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  if (user) {
-    app.addHook("preHandler", (req, _reply, done) => {
-      (req as any).user = user;
-      done();
-    });
-  }
-  await dependencyRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(dependencyRoutes, {
+    user: user ? { id: user.id, workspaceId: user.workspaceId, workspaceRole: "admin" } : null,
+  });
 }
+
+const mockDependency = {
+  id: "task-dep-1",
+  title: "Dependency task",
+  state: "completed" as const,
+  dependencyId: "edge-1",
+};
 
 describe("GET /api/tasks/:id/dependencies", () => {
   let app: FastifyInstance;
@@ -49,7 +48,7 @@ describe("GET /api/tasks/:id/dependencies", () => {
 
   it("lists dependencies", async () => {
     mockGetTask.mockResolvedValue({ id: "task-1" });
-    mockGetDependencies.mockResolvedValue([{ id: "dep-1" }]);
+    mockGetDependencies.mockResolvedValue([mockDependency]);
 
     const res = await app.inject({ method: "GET", url: "/api/tasks/task-1/dependencies" });
 
@@ -76,7 +75,7 @@ describe("GET /api/tasks/:id/dependents", () => {
 
   it("lists dependents", async () => {
     mockGetTask.mockResolvedValue({ id: "task-1" });
-    mockGetDependents.mockResolvedValue([{ id: "dep-1" }]);
+    mockGetDependents.mockResolvedValue([mockDependency]);
 
     const res = await app.inject({ method: "GET", url: "/api/tasks/task-1/dependents" });
 
@@ -123,14 +122,14 @@ describe("POST /api/tasks/:id/dependencies", () => {
     expect(res.json().error).toContain("Circular dependency");
   });
 
-  it("rejects empty dependsOnIds (Zod throws)", async () => {
+  it("rejects empty dependsOnIds (400 from Zod body schema)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/tasks/task-1/dependencies",
       payload: { dependsOnIds: [] },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 

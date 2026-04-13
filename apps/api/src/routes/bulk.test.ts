@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -33,15 +33,7 @@ import { bulkRoutes } from "./bulk.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1", workspaceRole: "admin" };
-    done();
-  });
-  await bulkRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(bulkRoutes);
 }
 
 describe("POST /api/tasks/bulk/retry-failed", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -24,10 +24,7 @@ function hmacSign(payload: string, secret: string): string {
 }
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  await hookRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(hookRoutes, { user: null });
 }
 
 const TRIGGER = {

@@ -8,7 +8,11 @@ import * as dns from "node:dns/promises";
  *     private/internal hostnames and IP literals.  Use in Zod schemas.
  *  2. `assertSsrfSafe` — async, resolves the hostname via DNS and verifies
  *     the resulting IP is not private.  Call immediately before every `fetch`.
+ *
+ * Set `OPTIO_ALLOW_PRIVATE_URLS=1` to disable all checks (local dev only).
  */
+
+const SSRF_DISABLED = process.env.OPTIO_ALLOW_PRIVATE_URLS === "1";
 
 // ── Private / reserved IP helpers ────────────────────────────────────────────
 
@@ -97,6 +101,7 @@ export class SsrfError extends Error {
  * Designed for Zod `.refine()` — does NOT resolve DNS.
  */
 export function isSsrfSafeUrl(url: string): boolean {
+  if (SSRF_DISABLED) return true;
   try {
     const parsed = new URL(url);
 
@@ -126,6 +131,8 @@ export function isSsrfSafeHost(host: string): boolean {
  * Call immediately before every outbound `fetch()`.
  */
 export async function assertSsrfSafe(url: string): Promise<void> {
+  if (SSRF_DISABLED) return;
+
   // Re-run the cheap synchronous check first
   if (!isSsrfSafeUrl(url)) {
     throw new SsrfError(`URL targets a blocked address: ${url}`);

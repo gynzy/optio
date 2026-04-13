@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
+import { validatorCompiler, serializerCompiler } from "fastify-type-provider-zod";
 import rateLimit from "@fastify/rate-limit";
 import type { FastifyInstance } from "fastify";
 
@@ -63,10 +65,7 @@ import { authRoutes } from "./auth.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  await authRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(authRoutes, { user: null });
 }
 
 const mockUser = {
@@ -96,7 +95,7 @@ describe("POST /api/auth/exchange-code", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({ error: "Missing code" });
+    expect(res.json().error).toBe("Validation error");
   });
 
   it("returns 400 for an invalid code", async () => {
@@ -368,6 +367,8 @@ describe("Auth rate limiting", () => {
 
   async function buildRateLimitedApp(): Promise<FastifyInstance> {
     const server = Fastify({ logger: false });
+    server.setValidatorCompiler(validatorCompiler);
+    server.setSerializerCompiler(serializerCompiler);
     await server.register(rateLimit, { global: false });
     await authRoutes(server);
     await server.ready();

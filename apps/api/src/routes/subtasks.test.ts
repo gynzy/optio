@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
+import { mockTask } from "../test-utils/fixtures.js";
 
 // ─── Mocks ───
 
@@ -26,22 +27,11 @@ import { subtaskRoutes } from "./subtasks.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1" };
-    done();
-  });
-  await subtaskRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(subtaskRoutes);
 }
 
-const mockTaskData = {
-  id: "task-1",
-  workspaceId: "ws-1",
-  state: "running",
-};
+const mockTaskData = { ...mockTask };
+const mockSubtaskData = { ...mockTask, id: "sub-1", parentTaskId: "task-1" };
 
 describe("GET /api/tasks/:id/subtasks", () => {
   let app: FastifyInstance;
@@ -53,7 +43,7 @@ describe("GET /api/tasks/:id/subtasks", () => {
 
   it("lists subtasks for a task", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
-    mockGetSubtasks.mockResolvedValue([{ id: "sub-1", title: "Step 1", parentTaskId: "task-1" }]);
+    mockGetSubtasks.mockResolvedValue([{ ...mockSubtaskData, title: "Step 1" }]);
 
     const res = await app.inject({ method: "GET", url: "/api/tasks/task-1/subtasks" });
 
@@ -89,7 +79,7 @@ describe("POST /api/tasks/:id/subtasks", () => {
   it("creates and auto-queues a child subtask", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
     mockCreateSubtask.mockResolvedValue({
-      id: "sub-1",
+      ...mockSubtaskData,
       title: "Child task",
       subtaskOrder: 0,
     });
@@ -109,6 +99,7 @@ describe("POST /api/tasks/:id/subtasks", () => {
   it("auto-queues first step but not subsequent steps", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
     mockCreateSubtask.mockResolvedValue({
+      ...mockSubtaskData,
       id: "sub-2",
       title: "Step 2",
       subtaskOrder: 1,
@@ -128,7 +119,7 @@ describe("POST /api/tasks/:id/subtasks", () => {
   it("respects autoQueue=false", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
     mockCreateSubtask.mockResolvedValue({
-      id: "sub-1",
+      ...mockSubtaskData,
       title: "Manual task",
       subtaskOrder: 0,
     });
@@ -143,7 +134,7 @@ describe("POST /api/tasks/:id/subtasks", () => {
     expect(mockQueueSubtask).not.toHaveBeenCalled();
   });
 
-  it("rejects missing title (Zod throws)", async () => {
+  it("rejects missing title (400 from Zod body schema)", async () => {
     mockGetTask.mockResolvedValue(mockTaskData);
 
     const res = await app.inject({
@@ -152,7 +143,7 @@ describe("POST /api/tasks/:id/subtasks", () => {
       payload: { prompt: "Do something" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 
@@ -168,14 +159,17 @@ describe("GET /api/tasks/:id/subtasks/status", () => {
     mockGetTask.mockResolvedValue(mockTaskData);
     mockCheckBlockingSubtasks.mockResolvedValue({
       allComplete: false,
-      blockingCount: 2,
-      completedCount: 1,
+      total: 3,
+      pending: 0,
+      running: 2,
+      completed: 1,
+      failed: 0,
     });
 
     const res = await app.inject({ method: "GET", url: "/api/tasks/task-1/subtasks/status" });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().allComplete).toBe(false);
-    expect(res.json().blockingCount).toBe(2);
+    expect(res.json().total).toBe(3);
   });
 });

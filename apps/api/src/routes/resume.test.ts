@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
+import { mockTask } from "../test-utils/fixtures.js";
 
 // ─── Mocks ───
 
@@ -25,27 +26,13 @@ import { resumeRoutes } from "./resume.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1" };
-    done();
-  });
-  await resumeRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(resumeRoutes);
 }
 
 const mockTaskData = {
-  id: "task-1",
+  ...mockTask,
   state: "failed",
   sessionId: "sess-1",
-  workspaceId: "ws-1",
-  prUrl: null,
-  prChecksStatus: null,
-  prReviewStatus: null,
-  prReviewComments: null,
-  errorMessage: null,
 };
 
 describe("POST /api/tasks/:id/resume", () => {

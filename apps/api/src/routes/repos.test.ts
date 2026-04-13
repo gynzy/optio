@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -33,15 +33,7 @@ import { repoRoutes } from "./repos.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1", workspaceRole: "admin" };
-    done();
-  });
-  await repoRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(repoRoutes);
 }
 
 const mockRepoData = {
@@ -155,14 +147,14 @@ describe("POST /api/repos", () => {
     expect(res.json().error).toContain("already been added");
   });
 
-  it("rejects missing required fields (Zod throws)", async () => {
+  it("rejects missing required fields (400 from Zod body schema)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/repos",
       payload: { repoUrl: "https://github.com/org/repo" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 
@@ -270,7 +262,7 @@ describe("PATCH /api/repos/:id", () => {
       payload: { slackWebhookUrl: "http://localhost:8080/hook" },
     });
 
-    expect(res.statusCode).toBe(500); // Zod validation error
+    expect(res.statusCode).toBe(400); // Zod validation error via type provider
   });
 
   it("rejects slackWebhookUrl targeting internal K8s address (SSRF)", async () => {
@@ -282,7 +274,7 @@ describe("PATCH /api/repos/:id", () => {
       payload: { slackWebhookUrl: "http://postgres.default.svc.cluster.local:5432" },
     });
 
-    expect(res.statusCode).toBe(500); // Zod validation error
+    expect(res.statusCode).toBe(400); // Zod validation error via type provider
   });
 
   it("rejects slackWebhookUrl targeting AWS metadata endpoint (SSRF)", async () => {
@@ -294,7 +286,7 @@ describe("PATCH /api/repos/:id", () => {
       payload: { slackWebhookUrl: "http://169.254.169.254/latest/meta-data/" },
     });
 
-    expect(res.statusCode).toBe(500); // Zod validation error
+    expect(res.statusCode).toBe(400); // Zod validation error via type provider
   });
 
   it("rejects slackWebhookUrl targeting private IP (SSRF)", async () => {
@@ -306,7 +298,7 @@ describe("PATCH /api/repos/:id", () => {
       payload: { slackWebhookUrl: "http://10.0.0.1:8080/hook" },
     });
 
-    expect(res.statusCode).toBe(500); // Zod validation error
+    expect(res.statusCode).toBe(400); // Zod validation error via type provider
   });
 
   it("rejects slackWebhookUrl that is not a valid URL", async () => {
@@ -318,7 +310,7 @@ describe("PATCH /api/repos/:id", () => {
       payload: { slackWebhookUrl: "not-a-url" },
     });
 
-    expect(res.statusCode).toBe(500); // Zod validation error
+    expect(res.statusCode).toBe(400); // Zod validation error via type provider
   });
 });
 

@@ -1,13 +1,17 @@
 # Optio
 
-**Workflow orchestration for AI coding agents, from task to merged PR.**
+**Workflow orchestration for AI coding agents — from ticket to merged PR, and beyond.**
 
 [![CI](https://github.com/jonwiggins/optio/actions/workflows/ci.yml/badge.svg)](https://github.com/jonwiggins/optio/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-Optio turns coding tasks into merged pull requests — without human babysitting. Submit a task (manually, from a GitHub Issue, Linear, Jira, or Notion), and Optio handles the rest: provisions an isolated environment, runs an AI agent, opens a PR, monitors CI, triggers code review, auto-fixes failures, and merges when everything passes.
+Optio orchestrates AI coding agents across three modes:
 
-The feedback loop is what makes it different. When CI fails, the agent is automatically resumed with the failure context. When a reviewer requests changes, the agent picks up the review comments and pushes a fix. When everything passes, the PR is squash-merged and the issue is closed. You describe the work; Optio drives it to completion.
+- **Tasks** — turn tickets into merged pull requests. Submit a task (manually, from a GitHub Issue, Linear, Jira, or Notion), and Optio provisions an isolated environment, runs an AI agent, opens a PR, monitors CI, triggers code review, auto-fixes failures, and merges when everything passes.
+- **Agent Workflows** — run reusable, parameterized agent jobs on a schedule, via webhook, or on demand. Generate reports, triage alerts, audit dependencies — anything that doesn't need a repo checkout.
+- **Connections** — give your agents access to external services. Connect Notion, Slack, Linear, GitHub, PostgreSQL, Sentry, or any MCP-compatible server, and Optio injects them into agent pods at runtime.
+
+The feedback loop is what makes tasks different. When CI fails, the agent is automatically resumed with the failure context. When a reviewer requests changes, the agent picks up the review comments and pushes a fix. When everything passes, the PR is squash-merged and the issue is closed. You describe the work; Optio drives it to completion.
 
 <p align="center">
   <img src="docs/screenshots/overview.png" alt="Optio dashboard showing 10 running tasks, 19 completed, with Claude Max usage, active pods, and recent task activity" width="100%"/>
@@ -20,6 +24,8 @@ The feedback loop is what makes it different. When CI fails, the agent is automa
 <p align="center"><em>Task detail — live-streamed agent output with pipeline progress, PR tracking, and cost breakdown</em></p>
 
 ## How It Works
+
+### Tasks — ticket to merged PR
 
 ```
 You create a task          Optio runs the agent           Optio closes the loop
@@ -40,12 +46,35 @@ You create a task          Optio runs the agent           Optio closes the loop
 5. **Feedback loop** — CI failures, merge conflicts, and review feedback automatically resume the agent with context
 6. **Completion** — PR is squash-merged, linked issues are closed, costs are recorded
 
+### Agent Workflows — reusable agent jobs
+
+```
+You define a workflow       Optio triggers it              Optio runs & tracks
+────────────────────        ─────────────────              ───────────────────
+
+  Prompt template           Manual (UI / API)              Provision isolated pod
+  {{PARAM}} variables  ──→  Cron schedule          ──→     Execute agent with params
+  Agent + model config      Webhook from external          Stream logs in real time
+  Budget & retry limits     service                        Track cost & token usage
+                                                           Auto-retry on failure
+```
+
+Workflows are standalone agent executions — no git repo required. Define a prompt template with `{{PARAM}}` placeholders, configure triggers (manual, cron schedule, or webhook), and let Optio handle execution, retries, and cost tracking.
+
+### Connections — extend agent capabilities
+
+Connections give your agents access to external tools and data at runtime. Configure a provider once, assign it to repos or agents, and Optio injects MCP servers into agent pods automatically.
+
+**Built-in providers:** Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem, plus custom MCP servers and HTTP APIs.
+
 ## Key Features
 
 - **Autonomous feedback loop** — auto-resumes the agent on CI failures, merge conflicts, and review feedback; auto-merges when everything passes
+- **Agent Workflows** — reusable, parameterized agent jobs triggered manually, on a cron schedule, or via webhook, with real-time log streaming, cost tracking, and auto-retry
+- **Connections** — plug external services (Notion, Slack, Linear, GitHub, PostgreSQL, Sentry, custom MCP servers) into agent pods with fine-grained access control per repo and agent type
 - **Pod-per-repo architecture** — one long-lived Kubernetes pod per repo with git worktree isolation, multi-pod scaling, and idle cleanup
 - **Code review agent** — automatically launches a review agent as a subtask, with a separate prompt and model
-- **Per-repo configuration** — model, prompt template, container image, concurrency limits, and setup commands, all tunable per repository
+- **Multi-agent support** — run Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, or OpenCode with per-repo model and prompt configuration
 - **GitHub Issues, Linear, Jira, and Notion intake** — assign issues to Optio from the UI or via ticket sync
 - **Real-time dashboard** — live log streaming, pipeline progress, cost analytics, and cluster health
 
@@ -59,17 +88,20 @@ You create a task          Optio runs the agent           Optio closes the loop
 │              │←ws──│  Workers:          │     │  │ clone + sleep       │  │
 │  Dashboard   │     │  ├─ Task Queue     │     │  │ ├─ worktree 1  ⚡    │  │
 │  Tasks       │     │  ├─ PR Watcher     │     │  │ ├─ worktree 2  ⚡    │  │
-│  Repos       │     │  ├─ Health Mon     │     │  │ └─ worktree N  ⚡    │  │
-│  Cluster     │     │  └─ Ticket Sync    │     │  └─────────────────────┘  │
-│  Costs       │     │                    │     │  ┌── Repo Pod B ───────┐  │
-│  Issues      │     │  Services:         │     │  │ clone + sleep       │  │
-│              │     │  ├─ Repo Pool      │     │  │ └─ worktree 1  ⚡    │  │
-│              │     │  ├─ Review Agent   │     │  └─────────────────────┘  │
+│  Repos       │     │  ├─ Workflow Queue │     │  │ └─ worktree N  ⚡    │  │
+│  Workflows   │     │  ├─ Health Mon     │     │  └─────────────────────┘  │
+│  Connections │     │  └─ Ticket Sync    │     │  ┌── Workflow Pod ──────┐ │
+│  Cluster     │     │                    │     │  │ isolated agent  ⚡    │ │
+│  Costs       │     │  Services:         │     │  └─────────────────────┘  │
+│              │     │  ├─ Repo Pool      │     │                           │
+│              │     │  ├─ Workflow Pool  │     │  MCP servers injected via │
+│              │     │  ├─ Connections    │     │  Connections at runtime    │
+│              │     │  ├─ Review Agent   │     │                           │
 │              │     │  └─ Auth/Secrets   │     │                           │
 └──────────────┘     └─────────┬──────────┘     └───────────────────────────┘
-                               │                  ⚡ = Claude Code / Codex / Copilot
+                               │                  ⚡ = Claude / Codex / Copilot / Gemini
                         ┌──────┴──────┐
-                        │  Postgres   │  Tasks, logs, events, secrets, repos
+                        │  Postgres   │  Tasks, workflows, connections, logs, secrets
                         │  Redis      │  Job queue, pub/sub, live streaming
                         └─────────────┘
 ```
@@ -170,13 +202,16 @@ helm uninstall optio -n optio
 ```
 apps/
   api/          Fastify API server, BullMQ workers, WebSocket endpoints,
-                review service, subtask system, OAuth providers
-  web/          Next.js dashboard with real-time streaming, cost analytics
+                workflow engine, connection service, review service, OAuth
+  web/          Next.js dashboard with real-time streaming, cost analytics,
+                workflow management, connection catalog
+  site/         Documentation site (GitHub Pages)
+  cli/          Terminal client for Optio
 
 packages/
   shared/             Types, task state machine, prompt templates, error classifier
   container-runtime/  Kubernetes pod lifecycle, exec, log streaming
-  agent-adapters/     Claude Code + Codex + Copilot prompt/auth adapters
+  agent-adapters/     Claude Code + Codex + Copilot + Gemini + OpenCode adapters
   ticket-providers/   GitHub Issues, Linear, Jira, Notion
 
 images/               Container Dockerfiles: base, node, python, go, rust, full
@@ -302,18 +337,18 @@ See the [Helm chart values](helm/optio/values.yaml) for full configuration optio
 
 ## Tech Stack
 
-| Layer    | Technology                                                       |
-| -------- | ---------------------------------------------------------------- |
-| Monorepo | Turborepo + pnpm                                                 |
-| API      | Fastify 5, Drizzle ORM, BullMQ                                   |
-| Web      | Next.js 15, Tailwind CSS 4, Zustand                              |
-| Database | PostgreSQL 16                                                    |
-| Queue    | Redis 7 + BullMQ                                                 |
-| Runtime  | Kubernetes (Docker Desktop for local dev)                        |
-| Deploy   | Helm chart                                                       |
-| Auth     | Multi-provider OAuth (GitHub, Google, GitLab)                    |
-| CI       | GitHub Actions (format, typecheck, test, build-web, build-image) |
-| Agents   | Claude Code, OpenAI Codex, GitHub Copilot                        |
+| Layer    | Technology                                                         |
+| -------- | ------------------------------------------------------------------ |
+| Monorepo | Turborepo + pnpm                                                   |
+| API      | Fastify 5, Drizzle ORM, BullMQ                                     |
+| Web      | Next.js 15, Tailwind CSS 4, Zustand                                |
+| Database | PostgreSQL 16                                                      |
+| Queue    | Redis 7 + BullMQ                                                   |
+| Runtime  | Kubernetes (Docker Desktop for local dev)                          |
+| Deploy   | Helm chart                                                         |
+| Auth     | Multi-provider OAuth (GitHub, Google, GitLab)                      |
+| CI       | GitHub Actions (format, typecheck, test, build-web, build-image)   |
+| Agents   | Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, OpenCode |
 
 ## Contributing
 

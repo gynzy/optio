@@ -5,7 +5,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Configuration",
-  description: "Environment variables, Helm values, and per-repo settings for Optio.",
+  description:
+    "Configure Optio with environment variables, Helm values, and per-repo settings. Covers authentication, concurrency limits, agent models, and secrets.",
 };
 
 export default function ConfigurationPage() {

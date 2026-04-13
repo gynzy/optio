@@ -1,1 +1,1 @@
-ALTER TABLE "repos" ADD COLUMN "planning_mode_enabled" boolean DEFAULT false NOT NULL;
+ALTER TABLE "repos" ADD COLUMN IF NOT EXISTS "planning_mode_enabled" boolean DEFAULT false NOT NULL;

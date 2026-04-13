@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -33,15 +33,7 @@ import { optioRoutes } from "./optio.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { id: "user-1", workspaceId: "ws-1", workspaceRole: "admin" };
-    done();
-  });
-  await optioRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(optioRoutes);
 }
 
 describe("GET /api/optio/actions", () => {
