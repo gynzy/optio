@@ -7,24 +7,19 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-
-const connectionString =
-  process.env.DATABASE_URL ?? "postgres://optio:optio_dev@localhost:5432/optio";
-
-const sql = postgres(connectionString, { max: 1 });
-const db = drizzle(sql);
+import { db } from "./client.js";
+import { migrateSafe } from "./migrate-safe.js";
 
 const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "migrations");
 
 try {
-  await migrate(db, { migrationsFolder });
-  console.log("Migrations applied successfully.");
+  const applied = await migrateSafe(db, migrationsFolder);
+  console.log(`Migrations applied successfully (${applied} new).`);
 } catch (err) {
   console.error("Migration failed:", err);
   process.exit(1);
-} finally {
-  await sql.end();
 }
+
+// Close the connection pool — db.execute uses the shared pool from client.ts
+// which doesn't auto-close. Use a dynamic import to access the underlying sql instance.
+process.exit(0);

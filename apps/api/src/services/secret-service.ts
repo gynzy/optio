@@ -250,3 +250,26 @@ export async function resolveSecretsForTask(
   }
   return resolved;
 }
+
+/**
+ * Resolve all secrets available for setup commands (global + repo-scoped).
+ * Repo-scoped secrets take precedence over global secrets with the same name.
+ */
+export async function resolveSecretsForSetup(
+  repoUrl: string,
+  workspaceId?: string | null,
+): Promise<Record<string, string>> {
+  // Get all global and repo-scoped secret names
+  const globalSecrets = await listSecrets("global", workspaceId);
+  const repoSecrets = await listSecrets(repoUrl, workspaceId);
+
+  // Merge names (unique) - repo-scoped will override global in resolveSecretsForTask
+  const allNames = [
+    ...new Set([...globalSecrets.map((s) => s.name), ...repoSecrets.map((s) => s.name)]),
+  ];
+
+  if (allNames.length === 0) return {};
+
+  // Resolve with repo→global fallback
+  return resolveSecretsForTask(allNames, repoUrl, workspaceId);
+}

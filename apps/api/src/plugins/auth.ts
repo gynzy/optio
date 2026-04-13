@@ -6,6 +6,7 @@ import { isAuthDisabled } from "../services/oauth/index.js";
 import { getUserRole, ensureUserHasWorkspace } from "../services/workspace-service.js";
 import { listSecrets } from "../services/secret-service.js";
 import type { WorkspaceRole } from "@optio/shared";
+import { emitAuthFailureLog } from "../telemetry/logs.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -58,7 +59,13 @@ const PUBLIC_ROUTES = new Set([
  * route handler itself (see hmac-auth-service.ts). The Helm ingress also
  * blocks /api/internal/* from public traffic as defense in depth.
  */
-const PUBLIC_PREFIXES = ["/api/webhooks/", "/api/hooks/", "/ws/", "/api/internal/git-credentials"];
+const PUBLIC_PREFIXES = [
+  "/api/webhooks/",
+  "/api/hooks/",
+  "/ws/",
+  "/api/internal/git-credentials",
+  "/docs",
+];
 
 /**
  * Auth routes that are public (OAuth login/callback flows only).
@@ -158,6 +165,7 @@ async function authPlugin(app: FastifyInstance) {
       parseCookie(req.headers.cookie, SESSION_COOKIE_NAME);
 
     if (!token) {
+      emitAuthFailureLog("no_credentials");
       return reply.status(401).send({ error: "Authentication required" });
     }
 
@@ -166,6 +174,7 @@ async function authPlugin(app: FastifyInstance) {
       ? await validateApiKey(token)
       : await validateSession(token);
     if (!user) {
+      emitAuthFailureLog("invalid_or_expired_session");
       return reply.status(401).send({ error: "Invalid or expired session" });
     }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -35,17 +35,9 @@ import { workspaceRoutes } from "./workspaces.js";
 // ─── Helpers ───
 
 async function buildTestApp(withUser = true): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  if (withUser) {
-    app.addHook("preHandler", (req, _reply, done) => {
-      (req as any).user = { id: "user-1", workspaceId: "ws-1" };
-      done();
-    });
-  }
-  await workspaceRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(workspaceRoutes, {
+    user: withUser ? { id: "user-1", workspaceId: "ws-1", workspaceRole: "admin" } : null,
+  });
 }
 
 describe("GET /api/workspaces", () => {
@@ -143,7 +135,7 @@ describe("POST /api/workspaces", () => {
       payload: { name: "New WS", slug: "Invalid Slug!" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 

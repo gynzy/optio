@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -31,16 +31,18 @@ import { setupRoutes } from "./setup.js";
 // ─── Helpers ───
 
 async function buildTestApp(user?: { workspaceRole: string } | null): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  if (user !== undefined) {
-    app.addHook("onRequest", async (req) => {
-      (req as any).user = user;
-    });
-  }
-  await setupRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(setupRoutes, {
+    user:
+      user === undefined
+        ? undefined
+        : user === null
+          ? null
+          : {
+              id: "u1",
+              workspaceId: "ws-1",
+              workspaceRole: user.workspaceRole as "admin" | "member" | "viewer",
+            },
+  });
 }
 
 describe("GET /api/setup/status", () => {
@@ -142,7 +144,9 @@ describe("POST /api/setup/validate/github-token", () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().valid).toBe(false);
+    // After type-provider migration, the 400 envelope is { error, details }
+    // rather than { valid: false }
+    expect(res.json().error).toBe("Validation error");
   });
 
   it("validates a valid GitHub token", async () => {

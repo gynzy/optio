@@ -1,104 +1,164 @@
 import type { FastifyInstance } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { TaskState } from "@optio/shared";
 import * as taskService from "../services/task-service.js";
 import { taskQueue } from "../workers/task-worker.js";
+import { ErrorResponseSchema, IdParamsSchema } from "../schemas/common.js";
+import { TaskSchema } from "../schemas/task.js";
 
-const resumeSchema = z.object({
-  prompt: z.string().min(1).optional(),
-});
+const resumeSchema = z
+  .object({
+    prompt: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Optional follow-up instructions. Defaults to 'Continue working on this task.'"),
+  })
+  .describe("Body for resuming a needs_attention / failed task");
 
-const forceRestartSchema = z.object({
-  prompt: z.string().min(1).optional(),
-});
+const forceRestartSchema = z
+  .object({
+    prompt: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional instructions for the restart. If omitted, Optio auto-generates " +
+          "a context-aware prompt based on the task's PR status and error message.",
+      ),
+  })
+  .describe("Body for force-restarting a task with a fresh agent session");
 
-const idParamsSchema = z.object({ id: z.string() });
+const TaskResponseSchema = z
+  .object({
+    task: TaskSchema.nullable(),
+  })
+  .describe("Updated task after resume / restart");
 
-export async function resumeRoutes(app: FastifyInstance) {
-  // Resume a task that's in needs_attention or failed state
-  app.post("/api/tasks/:id/resume", async (req, reply) => {
-    const { id } = idParamsSchema.parse(req.params);
-    const body = resumeSchema.parse(req.body ?? {});
+export async function resumeRoutes(rawApp: FastifyInstance) {
+  const app = rawApp.withTypeProvider<ZodTypeProvider>();
 
-    const task = await taskService.getTask(id);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
-    const wsId = req.user?.workspaceId;
-    if (wsId && task.workspaceId !== wsId) {
-      return reply.status(404).send({ error: "Task not found" });
-    }
-
-    if (!["needs_attention", "failed"].includes(task.state)) {
-      return reply.status(409).send({
-        error: `Cannot resume task in ${task.state} state`,
-      });
-    }
-
-    // Transition back to queued
-    await taskService.transitionTask(id, TaskState.QUEUED, "user_resume", body.prompt);
-
-    // Enqueue with resume metadata
-    await taskQueue.add(
-      "process-task",
-      {
-        taskId: id,
-        resumeSessionId: task.sessionId,
-        resumePrompt: body.prompt ?? "Continue working on this task.",
+  app.post(
+    "/api/tasks/:id/resume",
+    {
+      schema: {
+        operationId: "resumeTask",
+        summary: "Resume a task in needs_attention or failed state",
+        description:
+          "Transition a task back to `queued` and enqueue it with `--resume` " +
+          "metadata so the agent picks up where it left off (reuses the " +
+          "stored session ID). Fails with 409 if the task isn't in one of " +
+          "the resumable states. For stale-session recovery prefer " +
+          "`/force-restart`.",
+        tags: ["Tasks"],
+        params: IdParamsSchema,
+        body: resumeSchema,
+        response: {
+          200: TaskResponseSchema,
+          404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
+        },
       },
-      {
-        jobId: `${id}-resume-${Date.now()}`,
-        attempts: 1,
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const body = req.body;
+
+      const task = await taskService.getTask(id);
+      if (!task) return reply.status(404).send({ error: "Task not found" });
+      const wsId = req.user?.workspaceId;
+      if (wsId && task.workspaceId !== wsId) {
+        return reply.status(404).send({ error: "Task not found" });
+      }
+
+      if (!["needs_attention", "failed"].includes(task.state)) {
+        return reply.status(409).send({
+          error: `Cannot resume task in ${task.state} state`,
+        });
+      }
+
+      await taskService.transitionTask(id, TaskState.QUEUED, "user_resume", body.prompt);
+
+      await taskQueue.add(
+        "process-task",
+        {
+          taskId: id,
+          resumeSessionId: task.sessionId,
+          resumePrompt: body.prompt ?? "Continue working on this task.",
+        },
+        {
+          jobId: `${id}-resume-${Date.now()}`,
+          attempts: 1,
+        },
+      );
+
+      const updated = await taskService.getTask(id);
+      reply.send({ task: updated });
+    },
+  );
+
+  app.post(
+    "/api/tasks/:id/force-restart",
+    {
+      schema: {
+        operationId: "forceRestartTask",
+        summary: "Start a fresh agent session on the existing PR branch",
+        description:
+          "Unlike `/resume` (which tries `--resume` with the old session " +
+          "ID and is fragile if the pod was recycled), this checks out the " +
+          "existing PR branch and launches a brand-new session with a " +
+          "context-aware prompt about what needs fixing. Accepts " +
+          "`needs_attention`, `failed`, or `pr_opened`.",
+        tags: ["Tasks"],
+        params: IdParamsSchema,
+        body: forceRestartSchema,
+        response: {
+          200: TaskResponseSchema,
+          404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
+        },
       },
-    );
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const body = req.body;
 
-    const updated = await taskService.getTask(id);
-    reply.send({ task: updated });
-  });
+      const task = await taskService.getTask(id);
+      if (!task) return reply.status(404).send({ error: "Task not found" });
+      const wsId = req.user?.workspaceId;
+      if (wsId && task.workspaceId !== wsId) {
+        return reply.status(404).send({ error: "Task not found" });
+      }
 
-  // Force-restart: fresh agent session on the existing PR branch.
-  // Unlike resume (which tries --resume with the old session ID, fragile if
-  // pod was recycled), this checks out the PR branch and starts a new session
-  // with a context-aware prompt about what needs fixing.
-  app.post("/api/tasks/:id/force-restart", async (req, reply) => {
-    const { id } = idParamsSchema.parse(req.params);
-    const body = forceRestartSchema.parse(req.body ?? {});
+      if (!["needs_attention", "failed", "pr_opened"].includes(task.state)) {
+        return reply.status(409).send({
+          error: `Cannot force-restart task in ${task.state} state`,
+        });
+      }
 
-    const task = await taskService.getTask(id);
-    if (!task) return reply.status(404).send({ error: "Task not found" });
-    const wsId = req.user?.workspaceId;
-    if (wsId && task.workspaceId !== wsId) {
-      return reply.status(404).send({ error: "Task not found" });
-    }
+      const prompt = body.prompt ?? buildRestartPrompt(task);
+      const hasPrBranch = !!task.prUrl;
 
-    if (!["needs_attention", "failed", "pr_opened"].includes(task.state)) {
-      return reply.status(409).send({
-        error: `Cannot force-restart task in ${task.state} state`,
-      });
-    }
+      await taskService.transitionTask(id, TaskState.QUEUED, "force_restart", prompt.slice(0, 200));
 
-    // Build a context-aware prompt if the user didn't provide one
-    const prompt = body.prompt ?? buildRestartPrompt(task);
-    const hasPrBranch = !!task.prUrl;
+      await taskQueue.add(
+        "process-task",
+        {
+          taskId: id,
+          resumePrompt: prompt,
+          restartFromBranch: hasPrBranch,
+        },
+        {
+          jobId: `${id}-restart-${Date.now()}`,
+          attempts: 1,
+        },
+      );
 
-    // Transition back to queued (keeps PR data, logs, etc.)
-    await taskService.transitionTask(id, TaskState.QUEUED, "force_restart", prompt.slice(0, 200));
-
-    await taskQueue.add(
-      "process-task",
-      {
-        taskId: id,
-        // No resumeSessionId — fresh session, avoids stale session errors
-        resumePrompt: prompt,
-        restartFromBranch: hasPrBranch,
-      },
-      {
-        jobId: `${id}-restart-${Date.now()}`,
-        attempts: 1,
-      },
-    );
-
-    const updated = await taskService.getTask(id);
-    reply.send({ task: updated });
-  });
+      const updated = await taskService.getTask(id);
+      reply.send({ task: updated });
+    },
+  );
 }
 
 function buildRestartPrompt(task: {

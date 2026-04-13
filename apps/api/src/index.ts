@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { initTelemetry, shutdownTelemetry } from "./telemetry.js";
+import { initTelemetry, shutdownTelemetry, registerMetricCallbacks } from "./telemetry.js";
 import { logger } from "./logger.js";
 
 // Prevent Redis connection errors from crashing the process
@@ -59,7 +59,6 @@ async function main() {
   const { startRepoCleanupWorker } = await import("./workers/repo-cleanup-worker.js");
   const { startPrWatcherWorker } = await import("./workers/pr-watcher-worker.js");
   const { startWebhookWorker } = await import("./workers/webhook-worker.js");
-  const { startScheduleWorker } = await import("./workers/schedule-worker.js");
   const { startWorkflowWorker } = await import("./workers/workflow-worker.js");
   const { startWorkflowTriggerWorker } = await import("./workers/workflow-trigger-worker.js");
   const { getBullMQConnectionOptions } = await import("./services/redis-config.js");
@@ -93,14 +92,75 @@ async function main() {
   const { validateEncryptionKey } = await import("./services/secret-service.js");
   validateEncryptionKey();
 
-  // Run database migrations before anything else
-  const { migrate } = await import("drizzle-orm/postgres-js/migrator");
+  // Run database migrations before anything else.
+  // Uses a custom runner instead of Drizzle's built-in migrate() because
+  // Drizzle uses a watermark (highest created_at) which silently skips
+  // migrations with lower timestamps — broken when switching from sequential
+  // to unix-timestamp prefixes. Our runner checks by hash and uses an
+  // advisory lock for multi-replica safety.
   const { db } = await import("./db/client.js");
+  const { migrateSafe } = await import("./db/migrate-safe.js");
   const { dirname, join } = await import("node:path");
   const { fileURLToPath } = await import("node:url");
   const migrationsPath = join(dirname(fileURLToPath(import.meta.url)), "db", "migrations");
-  await migrate(db, { migrationsFolder: migrationsPath });
-  logger.info("Database migrations applied");
+  const applied = await migrateSafe(db, migrationsPath);
+  logger.info({ applied }, "Database migrations applied");
+
+  // Seed built-in connection providers (idempotent upsert)
+  const { seedBuiltInProviders } = await import("./services/connection-service.js");
+  await seedBuiltInProviders();
+  logger.info("Built-in connection providers seeded");
+
+  // Register observable metric gauge callbacks now that DB is available.
+  // OTel SDK invokes callbacks synchronously at export time, so we maintain
+  // cached counts refreshed every 30s.
+  const { tasks: tasksTable, repoPods } = await import("./db/schema.js");
+  const { sql: sqlFn } = await import("drizzle-orm");
+
+  let cachedQueueDepth: Record<string, number> = {};
+  let cachedActiveTasks = 0;
+  let cachedPodCount: Record<string, number> = {};
+
+  async function refreshGaugeCaches() {
+    try {
+      const rows = await db
+        .select({ state: tasksTable.state, count: sqlFn<number>`count(*)` })
+        .from(tasksTable)
+        .where(sqlFn`${tasksTable.state} IN ('queued', 'provisioning', 'running')`)
+        .groupBy(tasksTable.state);
+      cachedQueueDepth = {};
+      cachedActiveTasks = 0;
+      for (const row of rows) {
+        cachedQueueDepth[row.state] = Number(row.count);
+        if (row.state === "running" || row.state === "provisioning") {
+          cachedActiveTasks += Number(row.count);
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      const podRows = await db
+        .select({ state: repoPods.state, count: sqlFn<number>`count(*)` })
+        .from(repoPods)
+        .groupBy(repoPods.state);
+      cachedPodCount = {};
+      for (const row of podRows) {
+        cachedPodCount[row.state] = Number(row.count);
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  refreshGaugeCaches().catch(() => {});
+  setInterval(() => refreshGaugeCaches().catch(() => {}), 30_000);
+
+  await registerMetricCallbacks({
+    queueDepth: (attrs) => cachedQueueDepth[String(attrs.state)] ?? 0,
+    activeTasks: () => cachedActiveTasks,
+    podCount: (attrs) => cachedPodCount[String(attrs.state)] ?? 0,
+  });
 
   const app = await buildServer();
 
@@ -122,7 +182,6 @@ async function main() {
     cleanRepeatJobs("pr-watcher"),
     cleanRepeatJobs("repo-cleanup"),
     cleanRepeatJobs("ticket-sync"),
-    cleanRepeatJobs("schedule-checker"),
     cleanRepeatJobs("workflow-runs"),
     cleanRepeatJobs("workflow-trigger-checker"),
   ]);
@@ -143,9 +202,6 @@ async function main() {
 
   const webhookWorker = startWebhookWorker();
   logger.info("Webhook worker started");
-
-  const scheduleWorker = startScheduleWorker();
-  logger.info("Schedule worker started");
 
   const workflowWorker = startWorkflowWorker();
   logger.info("Workflow worker started");
@@ -170,7 +226,6 @@ async function main() {
     await repoCleanupWorker.close();
     await prWatcherWorker.close();
     await webhookWorker.close();
-    await scheduleWorker.close();
     await workflowWorker.close();
     await workflowTriggerWorker.close();
     await app.close();

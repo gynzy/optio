@@ -18,6 +18,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://optio.host"),
   title: {
     default: "Optio — Workflow Orchestration for AI Coding Agents",
     template: "%s | Optio",
@@ -31,12 +32,21 @@ export const metadata: Metadata = {
     title: "Optio — Workflow Orchestration for AI Coding Agents",
     description:
       "Turn tickets into merged pull requests with AI coding agents. Autonomous feedback loops drive every task to completion.",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Optio — Workflow Orchestration for AI Coding Agents",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Optio — Workflow Orchestration for AI Coding Agents",
     description:
       "Turn tickets into merged pull requests with AI coding agents. Autonomous feedback loops drive every task to completion.",
+    images: ["/og-image.png"],
   },
   robots: {
     index: true,

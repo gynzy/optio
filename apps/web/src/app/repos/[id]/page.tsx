@@ -24,6 +24,7 @@ import {
   Server,
   Sparkles,
   X,
+  Plug,
 } from "lucide-react";
 import { formatRelativeTime, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
   const [copilotEffort, setCopilotEffort] = useState("");
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-pro");
   const [geminiApprovalMode, setGeminiApprovalMode] = useState("yolo");
+  const [openclawModel, setOpenclawModel] = useState("");
   const [maxTurnsCoding, setMaxTurnsCoding] = useState(250);
   const [maxTurnsReview, setMaxTurnsReview] = useState(30);
   const [autoResume, setAutoResume] = useState(false);
@@ -91,6 +93,9 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
   const [newMcpArgs, setNewMcpArgs] = useState("");
   const [newMcpEnv, setNewMcpEnv] = useState("");
   const [newMcpInstallCmd, setNewMcpInstallCmd] = useState("");
+
+  // Connections
+  const [repoConnections, setRepoConnections] = useState<any[]>([]);
 
   // Custom Skills
   const [skills, setSkills] = useState<any[]>([]);
@@ -135,6 +140,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         setCopilotEffort(r.copilotEffort ?? "");
         setGeminiModel(r.geminiModel ?? "gemini-2.5-pro");
         setGeminiApprovalMode(r.geminiApprovalMode ?? "yolo");
+        setOpenclawModel(r.openclawModel ?? "");
         setMaxTurnsCoding(r.maxTurnsCoding ?? 250);
         setMaxTurnsReview(r.maxTurnsReview ?? 30);
         setReviewEnabled(r.reviewEnabled ?? false);
@@ -164,7 +170,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
       .catch(() => {});
   }, [repo?.repoUrl]);
 
-  // Fetch MCP servers and skills for this repo
+  // Fetch MCP servers, skills, and connections for this repo
   useEffect(() => {
     if (!repo?.id) return;
     api
@@ -174,6 +180,10 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
     api
       .listSkills(repo.repoUrl)
       .then((res) => setSkills(res.skills))
+      .catch(() => {});
+    api
+      .listRepoConnections(repo.id)
+      .then((res) => setRepoConnections(res.connections))
       .catch(() => {});
   }, [repo?.id, repo?.repoUrl]);
 
@@ -207,6 +217,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         copilotEffort: copilotEffort || undefined,
         geminiModel: geminiModel || undefined,
         geminiApprovalMode: geminiApprovalMode || undefined,
+        openclawModel: openclawModel || undefined,
         maxTurnsCoding,
         maxTurnsReview,
         reviewEnabled,
@@ -879,6 +890,7 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
           <option value="copilot">GitHub Copilot</option>
           <option value="opencode">OpenCode (Experimental)</option>
           <option value="gemini">Google Gemini</option>
+          <option value="openclaw">OpenClaw (Experimental)</option>
         </select>
       </section>
 
@@ -1024,8 +1036,102 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       </section>
 
+      {/* OpenClaw Settings */}
+      <section className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-3">
+        <h2 className="text-sm font-medium">OpenClaw Settings</h2>
+        <p className="text-xs text-text-muted">
+          Configure OpenClaw model when using the OpenClaw agent for this repo.
+        </p>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Model</label>
+          <input
+            value={openclawModel}
+            onChange={(e) => setOpenclawModel(e.target.value)}
+            placeholder="Default (auto-detect)"
+            className="w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+          />
+        </div>
+      </section>
+
       {/* Cache Directories */}
       {repo && <SharedDirectoriesSection repoId={repo.id} maxPodInstances={repo.maxPodInstances} />}
+
+      {/* Connections */}
+      <section className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Plug className="w-4 h-4 text-text-muted" />
+            <h2 className="text-sm font-medium">Connections</h2>
+          </div>
+          <Link
+            href="/connections"
+            className="flex items-center gap-1 text-xs text-primary hover:underline"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Manage Connections
+          </Link>
+        </div>
+        <p className="text-xs text-text-muted">
+          External services connected to agents running on this repo. Manage connections and add new
+          ones from the{" "}
+          <Link href="/connections" className="text-primary hover:underline">
+            Connections
+          </Link>{" "}
+          page.
+        </p>
+
+        {repoConnections.length > 0 ? (
+          <div className="space-y-2">
+            {repoConnections.map((conn: any) => (
+              <div
+                key={conn.id}
+                className="flex items-center gap-3 p-3 rounded-lg border border-border bg-bg"
+              >
+                <span
+                  className={cn(
+                    "w-2 h-2 rounded-full shrink-0",
+                    conn.status === "healthy"
+                      ? "bg-green-500"
+                      : conn.status === "error"
+                        ? "bg-red-500"
+                        : "bg-gray-400",
+                  )}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{conn.name}</span>
+                    {conn.provider && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                        {conn.provider.name}
+                      </span>
+                    )}
+                  </div>
+                  {conn.statusMessage && (
+                    <p className="text-[11px] text-text-muted mt-0.5 truncate">
+                      {conn.statusMessage}
+                    </p>
+                  )}
+                </div>
+                <span
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 rounded",
+                    conn.enabled ? "bg-green-500/10 text-green-400" : "bg-bg-hover text-text-muted",
+                  )}
+                >
+                  {conn.enabled ? "Active" : "Disabled"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-text-muted/60 italic">
+            No connections assigned to this repo.{" "}
+            <Link href="/connections" className="text-primary hover:underline">
+              Add one
+            </Link>
+          </p>
+        )}
+      </section>
 
       {/* MCP Servers */}
       <section className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-3">

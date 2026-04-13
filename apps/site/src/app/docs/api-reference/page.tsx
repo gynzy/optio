@@ -4,7 +4,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "API Reference",
-  description: "REST API reference for the Optio orchestration server.",
+  description:
+    "Complete REST API reference for the Optio server. Endpoints for tasks, repos, secrets, logs, analytics, and WebSocket streaming.",
 };
 
 function MethodBadge({ method }: { method: string }) {
@@ -279,7 +280,8 @@ export default function ApiReferencePage() {
 
       <h2 className="mt-10 text-2xl font-bold text-text-heading">Tickets</h2>
       <p className="mt-3 text-text-muted leading-relaxed">
-        Manage external ticket provider integrations (GitHub Issues, Linear, Jira, Notion).
+        Manage external ticket provider integrations (GitHub Issues, GitLab Issues, Linear, Jira,
+        Notion).
       </p>
       <RouteTable
         routes={[

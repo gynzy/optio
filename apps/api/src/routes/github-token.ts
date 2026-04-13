@@ -1,10 +1,35 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { retrieveSecret, storeSecret } from "../services/secret-service.js";
 import { isGitHubAppConfigured } from "../services/github-app-service.js";
 import { isAuthDisabled } from "../services/oauth/index.js";
+import { ErrorResponseSchema } from "../schemas/common.js";
 
-const rotateTokenSchema = z.object({ token: z.string().min(1) });
+const rotateTokenSchema = z
+  .object({
+    token: z.string().min(1).describe("New GitHub personal access token"),
+  })
+  .describe("Body for rotating the stored GITHUB_TOKEN secret");
+
+const GitHubTokenStatusResponseSchema = z
+  .object({
+    status: z.string().describe("`valid` | `missing` | `expired` | `error`"),
+    source: z.string().optional().describe("`github_app` | `pat`"),
+    message: z.string().optional(),
+    error: z.string().optional(),
+    user: z.object({ login: z.string(), name: z.string() }).optional(),
+  })
+  .describe("Stored GitHub token status + authenticated user info");
+
+const GitHubTokenRotateResponseSchema = z
+  .object({
+    success: z.boolean(),
+    user: z.object({ login: z.string(), name: z.string() }).optional(),
+    message: z.string().optional(),
+    error: z.string().optional(),
+  })
+  .describe("Result of rotating the stored GitHub token");
 
 /** Rate limit: 10 requests per minute per IP. */
 const RATE_LIMIT = {
@@ -20,27 +45,33 @@ const requireAdminWhenAuthenticated = async (req: FastifyRequest, reply: Fastify
   }
 };
 
-export async function githubTokenRoutes(app: FastifyInstance) {
-  /**
-   * GET /api/github-token/status
-   *
-   * Check the health of the stored GITHUB_TOKEN by validating it against
-   * the GitHub API. Returns the token status and authenticated user info.
-   */
+export async function githubTokenRoutes(rawApp: FastifyInstance) {
+  const app = rawApp.withTypeProvider<ZodTypeProvider>();
+
   app.get(
     "/api/github-token/status",
-    { config: { rateLimit: RATE_LIMIT } },
+    {
+      config: { rateLimit: RATE_LIMIT },
+      schema: {
+        operationId: "getGitHubTokenStatus",
+        summary: "Check stored GitHub token status",
+        description:
+          "Validate the stored GITHUB_TOKEN secret against the GitHub API. " +
+          "Returns `missing` / `valid` / `expired` / `error`. If no PAT is " +
+          "stored but a GitHub App is configured, reports the App as the source.",
+        tags: ["Auth & Sessions"],
+        response: { 200: GitHubTokenStatusResponseSchema },
+      },
+    },
     async (_req, reply) => {
-      // Check if a PAT is stored
       let token: string | null = null;
       try {
         token = await retrieveSecret("GITHUB_TOKEN");
       } catch {
-        // No token stored
+        /* no token stored */
       }
 
       if (!token) {
-        // No PAT — check if GitHub App is configured as an alternative
         if (isGitHubAppConfigured()) {
           return reply.send({
             status: "valid",
@@ -55,7 +86,6 @@ export async function githubTokenRoutes(app: FastifyInstance) {
         });
       }
 
-      // Validate the stored token against the GitHub API
       try {
         const res = await fetch("https://api.github.com/user", {
           headers: { Authorization: `Bearer ${token}`, "User-Agent": "Optio" },
@@ -88,26 +118,30 @@ export async function githubTokenRoutes(app: FastifyInstance) {
     },
   );
 
-  /**
-   * POST /api/github-token/rotate
-   *
-   * Validate a new GitHub token and replace the stored GITHUB_TOKEN secret.
-   * The new token is validated first — if invalid, the existing token is not replaced.
-   */
   app.post(
     "/api/github-token/rotate",
     {
       config: { rateLimit: RATE_LIMIT },
       preHandler: [requireAdminWhenAuthenticated],
+      schema: {
+        operationId: "rotateGitHubToken",
+        summary: "Rotate the stored GitHub token",
+        description:
+          "Validate a new GitHub personal access token against the GitHub API " +
+          "and replace the stored GITHUB_TOKEN secret. If validation fails, " +
+          "the existing token is NOT replaced. Rate limited to 10/minute per IP. " +
+          "Requires admin role post-setup.",
+        tags: ["Auth & Sessions"],
+        body: rotateTokenSchema,
+        response: {
+          200: GitHubTokenRotateResponseSchema,
+          400: ErrorResponseSchema,
+        },
+      },
     },
     async (req, reply) => {
-      const parsed = rotateTokenSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return reply.status(400).send({ success: false, error: "Token is required" });
-      }
-      const { token } = parsed.data;
+      const { token } = req.body;
 
-      // Validate the new token before storing
       try {
         const res = await fetch("https://api.github.com/user", {
           headers: { Authorization: `Bearer ${token.trim()}`, "User-Agent": "Optio" },
@@ -122,7 +156,6 @@ export async function githubTokenRoutes(app: FastifyInstance) {
 
         const user = (await res.json()) as { login: string; name: string };
 
-        // Token is valid — store it
         await storeSecret("GITHUB_TOKEN", token.trim(), "global");
 
         return reply.send({

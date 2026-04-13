@@ -9,8 +9,12 @@ import {
   ClusterSummary,
   ActiveSessions,
   RecentTasks,
+  RecentActivity,
   PodsList,
   WelcomeHero,
+  PerformanceSummary,
+  AgentComparison,
+  FailureInsights,
 } from "@/components/dashboard";
 import { useOptioChatStore } from "@/hooks/use-optio-chat";
 import { UpdateBanner } from "@/components/update-banner";
@@ -30,6 +34,7 @@ export default function OverviewPage() {
     metricsAvailable,
     metricsHistory,
     refresh,
+    refreshUsage,
   } = useDashboardData();
 
   if (loading) {
@@ -133,7 +138,14 @@ export default function OverviewPage() {
         </button>
       )}
 
-      <UsagePanel usage={usage} />
+      <PerformanceSummary />
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <AgentComparison />
+        <FailureInsights />
+      </div>
+
+      <UsagePanel usage={usage} onRefresh={refreshUsage} />
 
       <ClusterSummary
         cluster={cluster}
@@ -145,7 +157,11 @@ export default function OverviewPage() {
       <ActiveSessions sessions={activeSessions} activeCount={activeSessionCount} />
 
       <div className="grid md:grid-cols-2 gap-8">
+        <RecentActivity />
         <RecentTasks tasks={recentTasks} />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-8">
         <PodsList
           pods={pods}
           events={events}

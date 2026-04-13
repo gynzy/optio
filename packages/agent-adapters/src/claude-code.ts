@@ -137,9 +137,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       error = `Exit code: ${exitCode}`;
     }
 
-    // Use the agent's actual result text as the summary when available
+    // Use the agent's actual result text as the summary when available.
+    // When the agent reports an explicit error, surface it in the summary
+    // so users see what went wrong without digging into raw logs.
     let summary: string;
-    if (exitCode !== 0) {
+    const hasStructuredError = exitCode !== 0 && error && error !== `Exit code: ${exitCode}`;
+    if (hasStructuredError) {
+      const preview = error!.length > 500 ? error!.slice(0, 500) + "…" : error!;
+      summary = `Agent error: ${preview}`;
+    } else if (exitCode !== 0) {
       summary = `Agent exited with code ${exitCode}`;
     } else if (resultText) {
       // Truncate very long result texts for the summary field

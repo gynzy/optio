@@ -1,18 +1,33 @@
 import type { FastifyInstance } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { timingSafeEqual, createHmac } from "node:crypto";
 import { z } from "zod";
 import * as workflowService from "../services/workflow-service.js";
 import { logger } from "../logger.js";
+import { ErrorResponseSchema } from "../schemas/common.js";
 
-const webhookPathSchema = z.object({ webhookPath: z.string().min(1) });
-const webhookBodySchema = z.record(z.unknown()).default({});
+const webhookPathSchema = z
+  .object({
+    webhookPath: z.string().min(1).describe("Opaque path configured on the webhook trigger"),
+  })
+  .describe("Path parameters: webhook path");
+
+const webhookBodySchema = z
+  .record(z.unknown())
+  .default({})
+  .describe("Arbitrary JSON payload from the upstream webhook provider");
+
+const WebhookAcceptedResponseSchema = z
+  .object({
+    runId: z.string().describe("ID of the workflow run created by this webhook"),
+  })
+  .describe("Webhook accepted and workflow run queued");
 
 /**
  * Resolve a simple JSON-path expression (e.g. "$.foo.bar") against an object.
  * Supports dotted property access only — no arrays, filters, or wildcards.
  */
 function resolveJsonPath(obj: unknown, path: string): unknown {
-  // Strip leading "$." prefix if present
   const normalized = path.startsWith("$.") ? path.slice(2) : path;
   const segments = normalized.split(".");
 
@@ -24,10 +39,6 @@ function resolveJsonPath(obj: unknown, path: string): unknown {
   return current;
 }
 
-/**
- * Apply param mapping: for each key in the mapping, resolve the JSON-path
- * expression against the incoming body and build a params object.
- */
 function applyParamMapping(
   body: Record<string, unknown>,
   mapping: Record<string, unknown>,
@@ -41,17 +52,15 @@ function applyParamMapping(
   return params;
 }
 
-/**
- * Verify HMAC-SHA256 signature using timing-safe comparison.
- */
 function verifyHmac(payload: string, secret: string, signature: string): boolean {
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
   if (expected.length !== signature.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
-export async function hookRoutes(app: FastifyInstance) {
-  // Webhook trigger ingress — exempt from session auth, custom rate limit
+export async function hookRoutes(rawApp: FastifyInstance) {
+  const app = rawApp.withTypeProvider<ZodTypeProvider>();
+
   app.post(
     "/api/hooks/:webhookPath",
     {
@@ -61,11 +70,31 @@ export async function hookRoutes(app: FastifyInstance) {
           timeWindow: "1 minute",
         },
       },
+      schema: {
+        operationId: "triggerWebhookWorkflow",
+        summary: "Webhook trigger ingress",
+        description:
+          "Public webhook ingress for workflow triggers. Each configured " +
+          "webhook trigger has a unique `webhookPath` the upstream caller " +
+          "posts to. If the trigger has a secret configured, the request " +
+          "must include an `X-Optio-Signature` header with an HMAC-SHA256 " +
+          "digest of the raw request body. The body is passed through the " +
+          "trigger's `paramMapping` to build workflow params, then a " +
+          "workflow run is created. Rate limited to 60/minute per webhook.",
+        tags: ["System"],
+        security: [],
+        params: webhookPathSchema,
+        body: webhookBodySchema,
+        response: {
+          202: WebhookAcceptedResponseSchema,
+          401: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+        },
+      },
     },
     async (req, reply) => {
-      const { webhookPath } = webhookPathSchema.parse(req.params);
+      const { webhookPath } = req.params;
 
-      // 1. Look up the webhook trigger
       const trigger = await workflowService.getWebhookTriggerByPath(webhookPath);
       if (!trigger || !trigger.enabled) {
         return reply.status(404).send({ error: "Webhook trigger not found" });
@@ -74,7 +103,6 @@ export async function hookRoutes(app: FastifyInstance) {
       const config = trigger.config as Record<string, unknown> | null;
       const secret = config?.secret as string | undefined;
 
-      // 2. HMAC verification (if secret is configured)
       if (secret) {
         const rawBody = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
         const signature = req.headers["x-optio-signature"] as string | undefined;
@@ -90,7 +118,6 @@ export async function hookRoutes(app: FastifyInstance) {
         }
       }
 
-      // 3. Look up the workflow
       const workflow = await workflowService.getWorkflow(trigger.workflowId);
       if (!workflow) {
         return reply.status(404).send({ error: "Workflow not found" });
@@ -99,13 +126,11 @@ export async function hookRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "Workflow is disabled" });
       }
 
-      // 4. Apply param mapping
-      const body = webhookBodySchema.parse(req.body);
+      const body = req.body;
       const paramMapping = trigger.paramMapping as Record<string, unknown> | null;
 
       const params = paramMapping ? applyParamMapping(body, paramMapping) : body;
 
-      // 5. Create workflow run
       const run = await workflowService.createWorkflowRun(trigger.workflowId, {
         triggerId: trigger.id,
         params,

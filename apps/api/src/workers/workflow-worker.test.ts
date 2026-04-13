@@ -50,6 +50,7 @@ vi.mock("bullmq", () => ({
 vi.mock("../services/workflow-service.js", () => ({
   getWorkflow: vi.fn(),
   getWorkflowRun: vi.fn(),
+  appendWorkflowRunLog: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../services/workflow-pool-service.js", () => ({
@@ -63,7 +64,7 @@ vi.mock("../services/agent-event-parser.js", () => ({
 }));
 
 vi.mock("../services/event-bus.js", () => ({
-  publishEvent: vi.fn().mockResolvedValue(undefined),
+  publishWorkflowRunEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../services/secret-service.js", () => ({

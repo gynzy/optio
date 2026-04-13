@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -39,20 +39,18 @@ import { messageRoutes } from "./messages.js";
 // ─── Helpers ───
 
 async function buildTestApp(userOverrides?: Record<string, unknown>): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = {
+  return buildRouteTestApp(messageRoutes, {
+    user: {
       id: "user-1",
-      displayName: "Test User",
       workspaceId: "ws-1",
-      ...userOverrides,
-    };
-    done();
+      workspaceRole: "admin",
+      ...(userOverrides as object),
+    } as {
+      id: string;
+      workspaceId: string | null;
+      workspaceRole: "admin" | "member" | "viewer";
+    },
   });
-  await messageRoutes(app);
-  await app.ready();
-  return app;
 }
 
 const runningClaudeTask = {

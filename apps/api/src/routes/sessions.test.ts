@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
+import { mockInteractiveSession } from "../test-utils/fixtures.js";
 
 // ─── Mocks ───
 
@@ -42,25 +43,10 @@ import { sessionRoutes } from "./sessions.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.decorateRequest("userId", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { id: "user-1", workspaceId: "ws-1" };
-    (req as any).userId = "user-1";
-    done();
-  });
-  await sessionRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(sessionRoutes);
 }
 
-const mockSession = {
-  id: "session-1",
-  repoUrl: "https://github.com/org/repo",
-  state: "active",
-  userId: "user-1",
-};
+const mockSession = { ...mockInteractiveSession };
 
 describe("GET /api/sessions", () => {
   let app: FastifyInstance;
@@ -125,7 +111,9 @@ describe("GET /api/sessions/:id", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.session).toEqual(mockSession);
+    // Response body has Dates serialized to ISO strings — just check key fields
+    expect(body.session.id).toBe(mockSession.id);
+    expect(body.session.repoUrl).toBe(mockSession.repoUrl);
     expect(body.modelConfig).toEqual({
       claudeModel: "opus",
       availableModels: ["haiku", "sonnet", "opus"],
@@ -179,7 +167,7 @@ describe("POST /api/sessions", () => {
     });
 
     expect(res.statusCode).toBe(201);
-    expect(res.json().session).toEqual(mockSession);
+    expect(res.json().session.id).toBe(mockSession.id);
     expect(mockCreateSession).toHaveBeenCalledWith({
       repoUrl: "https://github.com/org/repo",
       userId: "user-1",
@@ -187,15 +175,14 @@ describe("POST /api/sessions", () => {
     });
   });
 
-  it("rejects invalid repoUrl (Zod throws)", async () => {
+  it("rejects invalid repoUrl (400 from Zod body schema)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/sessions",
       payload: { repoUrl: "not-a-url" },
     });
 
-    // Zod validation errors propagate as 500 (no global error handler)
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 
@@ -257,7 +244,13 @@ describe("session PRs", () => {
   it("GET /api/sessions/:id/prs lists PRs", async () => {
     mockGetSession.mockResolvedValue(mockSession);
     mockGetSessionPrs.mockResolvedValue([
-      { id: "pr-1", prUrl: "https://github.com/org/repo/pull/1" },
+      {
+        id: "pr-1",
+        sessionId: "session-1",
+        prUrl: "https://github.com/org/repo/pull/1",
+        prNumber: 1,
+        createdAt: new Date("2026-04-11T12:00:00Z"),
+      },
     ]);
 
     const res = await app.inject({ method: "GET", url: "/api/sessions/session-1/prs" });
@@ -278,8 +271,10 @@ describe("session PRs", () => {
     mockGetSession.mockResolvedValue(mockSession);
     mockAddSessionPr.mockResolvedValue({
       id: "pr-1",
+      sessionId: "session-1",
       prUrl: "https://github.com/org/repo/pull/1",
       prNumber: 1,
+      createdAt: new Date("2026-04-11T12:00:00Z"),
     });
 
     const res = await app.inject({
