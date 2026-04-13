@@ -171,7 +171,7 @@ agent:
     maxSizeTotalGi: 200               # Max total cache size across all dirs per repo
     defaultSizePerDirectoryGi: 10     # Default size when creating a cache directory
   # Repo init timeout (how long to wait for clone to complete)
-  repoInitTimeoutMs: 120000           # 2 min default; increase for large repos
+  repoInitTimeoutMs: 300000           # 5 minute timeout for repo init (i.e. clone). default is 2 min
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Network Policy
