@@ -50,6 +50,7 @@ describe("secret-service", () => {
   let listSecrets: typeof import("./secret-service.js").listSecrets;
   let deleteSecret: typeof import("./secret-service.js").deleteSecret;
   let resolveSecretsForTask: typeof import("./secret-service.js").resolveSecretsForTask;
+  let resolveSecretsForSetup: typeof import("./secret-service.js").resolveSecretsForSetup;
   let ALG_AES_256_GCM_V1: number;
 
   beforeEach(async () => {
@@ -63,6 +64,7 @@ describe("secret-service", () => {
     listSecrets = mod.listSecrets;
     deleteSecret = mod.deleteSecret;
     resolveSecretsForTask = mod.resolveSecretsForTask;
+    resolveSecretsForSetup = mod.resolveSecretsForSetup;
     ALG_AES_256_GCM_V1 = mod.ALG_AES_256_GCM_V1;
   });
 
@@ -557,6 +559,170 @@ describe("secret-service", () => {
 
       const result = await resolveSecretsForTask(["TOKEN"], "https://github.com/owner/repo");
       expect(result.TOKEN).toBe("repo-specific-token");
+    });
+  });
+
+  describe("resolveSecretsForSetup", () => {
+    it("returns both global and repo-scoped secrets", async () => {
+      const repoUrl = "https://github.com/owner/repo";
+      // Global secret
+      const aadGlobal = buildSecretAAD("GLOBAL_TOKEN", "global", null);
+      const blobGlobal = encrypt("global-value", aadGlobal);
+      // Repo-scoped secret
+      const aadRepo = buildSecretAAD("REPO_TOKEN", repoUrl, null);
+      const blobRepo = encrypt("repo-value", aadRepo);
+
+      let callCount = 0;
+      (db.select as any) = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // listSecrets("global")
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  id: "1",
+                  name: "GLOBAL_TOKEN",
+                  scope: "global",
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                },
+              ]),
+            }),
+          };
+        } else if (callCount === 2) {
+          // listSecrets(repoUrl)
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  id: "2",
+                  name: "REPO_TOKEN",
+                  scope: repoUrl,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                },
+              ]),
+            }),
+          };
+        } else if (callCount === 3) {
+          // retrieveSecret for GLOBAL_TOKEN at repo scope (not found)
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([]),
+            }),
+          };
+        } else if (callCount === 4) {
+          // retrieveSecret for GLOBAL_TOKEN at global scope
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  encryptedValue: blobGlobal.ciphertext,
+                  iv: blobGlobal.iv,
+                  authTag: blobGlobal.authTag,
+                  alg: blobGlobal.alg,
+                },
+              ]),
+            }),
+          };
+        } else if (callCount === 5) {
+          // retrieveSecret for REPO_TOKEN at repo scope
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  encryptedValue: blobRepo.ciphertext,
+                  iv: blobRepo.iv,
+                  authTag: blobRepo.authTag,
+                  alg: blobRepo.alg,
+                },
+              ]),
+            }),
+          };
+        }
+        return { from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) };
+      });
+
+      const result = await resolveSecretsForSetup(repoUrl);
+      expect(result.GLOBAL_TOKEN).toBe("global-value");
+      expect(result.REPO_TOKEN).toBe("repo-value");
+      expect(Object.keys(result)).toHaveLength(2);
+    });
+
+    it("repo-scoped secret overrides global secret with same name", async () => {
+      const repoUrl = "https://github.com/owner/repo";
+      // Repo-scoped secret should win
+      const aadRepo = buildSecretAAD("SHARED_TOKEN", repoUrl, null);
+      const blobRepo = encrypt("repo-override-value", aadRepo);
+
+      let callCount = 0;
+      (db.select as any) = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // listSecrets("global")
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  id: "1",
+                  name: "SHARED_TOKEN",
+                  scope: "global",
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                },
+              ]),
+            }),
+          };
+        } else if (callCount === 2) {
+          // listSecrets(repoUrl)
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  id: "2",
+                  name: "SHARED_TOKEN",
+                  scope: repoUrl,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                },
+              ]),
+            }),
+          };
+        } else if (callCount === 3) {
+          // retrieveSecret for SHARED_TOKEN at repo scope (found - takes precedence)
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                {
+                  encryptedValue: blobRepo.ciphertext,
+                  iv: blobRepo.iv,
+                  authTag: blobRepo.authTag,
+                  alg: blobRepo.alg,
+                },
+              ]),
+            }),
+          };
+        }
+        return { from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) };
+      });
+
+      const result = await resolveSecretsForSetup(repoUrl);
+      expect(result.SHARED_TOKEN).toBe("repo-override-value");
+      expect(Object.keys(result)).toHaveLength(1);
+    });
+
+    it("returns empty object when no secrets exist", async () => {
+      const repoUrl = "https://github.com/owner/empty-repo";
+
+      (db.select as any) = vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const result = await resolveSecretsForSetup(repoUrl);
+      expect(result).toEqual({});
     });
   });
 });
