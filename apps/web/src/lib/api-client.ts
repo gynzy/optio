@@ -570,6 +570,115 @@ export const api = {
     }>(`/api/analytics/costs${query ? `?${query}` : ""}`);
   },
 
+  getPerformanceAnalytics: (params?: { days?: number; repoUrl?: string; agentType?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.days) qs.set("days", String(params.days));
+    if (params?.repoUrl) qs.set("repoUrl", params.repoUrl);
+    if (params?.agentType) qs.set("agentType", params.agentType);
+    const query = qs.toString();
+    return request<{
+      durations: {
+        avgWallClock: number;
+        p50WallClock: number;
+        p95WallClock: number;
+        avgExecution: number;
+        p50Execution: number;
+        p95Execution: number;
+        avgQueueWait: number;
+        taskCount: number;
+      };
+      successRate: number;
+      successRateTrend: number;
+      tasksPerDay: Array<{
+        date: string;
+        total: number;
+        succeeded: number;
+        failed: number;
+      }>;
+    }>(`/api/analytics/performance${query ? `?${query}` : ""}`);
+  },
+
+  getAgentAnalytics: (params?: { days?: number; repoUrl?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.days) qs.set("days", String(params.days));
+    if (params?.repoUrl) qs.set("repoUrl", params.repoUrl);
+    const query = qs.toString();
+    return request<{
+      agents: Array<{
+        agentType: string;
+        taskCount: number;
+        successRate: number;
+        avgDuration: number;
+        avgCost: string;
+        avgRetries: number;
+        models: Array<{
+          model: string;
+          taskCount: number;
+          avgCost: string;
+        }>;
+      }>;
+    }>(`/api/analytics/agents${query ? `?${query}` : ""}`);
+  },
+
+  getFailureAnalytics: (params?: { days?: number; repoUrl?: string; agentType?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.days) qs.set("days", String(params.days));
+    if (params?.repoUrl) qs.set("repoUrl", params.repoUrl);
+    if (params?.agentType) qs.set("agentType", params.agentType);
+    const query = qs.toString();
+    return request<{
+      errorMessages: Array<{ message: string; count: number }>;
+      failureByRepo: Array<{
+        repoUrl: string;
+        total: number;
+        failed: number;
+        failureRate: number;
+      }>;
+      failureByAgent: Array<{
+        agentType: string;
+        total: number;
+        failed: number;
+        failureRate: number;
+      }>;
+      failureByModel: Array<{
+        model: string;
+        total: number;
+        failed: number;
+        failureRate: number;
+      }>;
+      retrySuccessRate: number;
+      retriedCount: number;
+      retrySucceededCount: number;
+      stallCount: number;
+      stallRecoveryRate: number;
+    }>(`/api/analytics/failures${query ? `?${query}` : ""}`);
+  },
+
+  getPrAnalytics: (params?: { days?: number; repoUrl?: string; agentType?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.days) qs.set("days", String(params.days));
+    if (params?.repoUrl) qs.set("repoUrl", params.repoUrl);
+    if (params?.agentType) qs.set("agentType", params.agentType);
+    const query = qs.toString();
+    return request<{
+      totalPrs: number;
+      merged: number;
+      closed: number;
+      open: number;
+      ciPassRate: number;
+      reviewApprovalRate: number;
+      autoMergeRate: number;
+      avgMergeTime: number;
+      mergeCount: number;
+      funnel: {
+        prOpened: number;
+        ciPassed: number;
+        reviewApproved: number;
+        merged: number;
+      };
+    }>(`/api/analytics/prs${query ? `?${query}` : ""}`);
+  },
+
   assignIssue: (data: {
     issueNumber: number;
     repoId: string;
@@ -610,54 +719,6 @@ export const api = {
 
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
-  // Task Templates
-  listTaskTemplates: (repoUrl?: string) => {
-    const qs = repoUrl ? `?repoUrl=${encodeURIComponent(repoUrl)}` : "";
-    return request<{ templates: any[] }>(`/api/task-templates${qs}`);
-  },
-
-  getTaskTemplate: (id: string) => request<{ template: any }>(`/api/task-templates/${id}`),
-
-  createTaskTemplate: (data: {
-    name: string;
-    prompt: string;
-    repoUrl?: string;
-    agentType?: string;
-    priority?: number;
-    metadata?: Record<string, unknown>;
-  }) =>
-    request<{ template: any }>("/api/task-templates", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-
-  updateTaskTemplate: (id: string, data: Record<string, unknown>) =>
-    request<{ template: any }>(`/api/task-templates/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
-
-  deleteTaskTemplate: (id: string) =>
-    request<void>(`/api/task-templates/${id}`, { method: "DELETE" }),
-
-  createTaskFromTemplate: (
-    templateId: string,
-    data: {
-      title: string;
-      repoUrl?: string;
-      repoBranch?: string;
-      prompt?: string;
-      agentType?: string;
-      priority?: number;
-      maxRetries?: number;
-      metadata?: Record<string, unknown>;
-    },
-  ) =>
-    request<{ task: any }>(`/api/tasks/from-template/${templateId}`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-
   // Interactive Sessions
   listSessions: (params?: {
     repoUrl?: string;
@@ -694,109 +755,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-
-  // Schedules
-  listSchedules: () =>
-    request<{
-      schedules: Array<{
-        id: string;
-        name: string;
-        description: string | null;
-        cronExpression: string;
-        enabled: boolean;
-        taskConfig: {
-          title: string;
-          prompt: string;
-          repoUrl: string;
-          repoBranch?: string;
-          agentType: string;
-          maxRetries?: number;
-          priority?: number;
-        };
-        lastRunAt: string | null;
-        nextRunAt: string | null;
-        createdAt: string;
-        updatedAt: string;
-      }>;
-    }>("/api/schedules"),
-
-  getSchedule: (id: string) =>
-    request<{
-      schedule: {
-        id: string;
-        name: string;
-        description: string | null;
-        cronExpression: string;
-        enabled: boolean;
-        taskConfig: {
-          title: string;
-          prompt: string;
-          repoUrl: string;
-          repoBranch?: string;
-          agentType: string;
-          maxRetries?: number;
-          priority?: number;
-        };
-        lastRunAt: string | null;
-        nextRunAt: string | null;
-        createdAt: string;
-        updatedAt: string;
-      };
-    }>(`/api/schedules/${id}`),
-
-  createSchedule: (data: {
-    name: string;
-    description?: string;
-    cronExpression: string;
-    enabled?: boolean;
-    taskConfig: {
-      title: string;
-      prompt: string;
-      repoUrl: string;
-      repoBranch?: string;
-      agentType: string;
-      maxRetries?: number;
-      priority?: number;
-    };
-  }) =>
-    request<{ schedule: any }>("/api/schedules", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-
-  updateSchedule: (id: string, data: Record<string, unknown>) =>
-    request<{ schedule: any }>(`/api/schedules/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
-
-  deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
-
-  triggerSchedule: (id: string) =>
-    request<{ task: any }>(`/api/schedules/${id}/trigger`, { method: "POST" }),
-
-  getScheduleRuns: (id: string, limit?: number) => {
-    const qs = limit ? `?limit=${limit}` : "";
-    return request<{
-      runs: Array<{
-        id: string;
-        scheduleId: string;
-        taskId: string | null;
-        status: string;
-        error: string | null;
-        triggeredAt: string;
-      }>;
-    }>(`/api/schedules/${id}/runs${qs}`);
-  },
-
-  validateCron: (cronExpression: string) =>
-    request<{ valid: boolean; error?: string; nextRun?: string; description?: string }>(
-      "/api/schedules/validate-cron",
-      {
-        method: "POST",
-        body: JSON.stringify({ cronExpression }),
-      },
-    ),
 
   getWsToken: () => request<{ token: string }>("/api/auth/ws-token"),
 
@@ -1227,4 +1185,117 @@ export const api = {
     request<void>(`/api/workflows/${workflowId}/triggers/${triggerId}`, {
       method: "DELETE",
     }),
+
+  // Webhooks (outbound notifications fired on task/workflow events)
+  listWebhooks: () => request<{ webhooks: any[] }>("/api/webhooks"),
+
+  getWebhook: (id: string) => request<{ webhook: any }>(`/api/webhooks/${id}`),
+
+  createWebhook: (data: { url: string; events: string[]; secret?: string; description?: string }) =>
+    request<{ webhook: any }>("/api/webhooks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateWebhook: (
+    id: string,
+    data: {
+      url?: string;
+      events?: string[];
+      secret?: string | null;
+      description?: string | null;
+      active?: boolean;
+    },
+  ) =>
+    request<{ webhook: any }>(`/api/webhooks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteWebhook: (id: string) => request<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
+
+  testWebhook: (id: string, event?: string) =>
+    request<{ delivery: any }>(`/api/webhooks/${id}/test`, {
+      method: "POST",
+      body: JSON.stringify(event ? { event } : {}),
+    }),
+
+  listWebhookDeliveries: (id: string, limit?: number) => {
+    const qs = limit ? `?limit=${limit}` : "";
+    return request<{ deliveries: any[] }>(`/api/webhooks/${id}/deliveries${qs}`);
+  },
+
+  // Connections (external service integrations for agents)
+  listConnectionProviders: () => request<{ providers: any[] }>("/api/connection-providers"),
+
+  listConnections: () => request<{ connections: any[] }>("/api/connections"),
+
+  createConnection: (data: Record<string, unknown>) =>
+    request<{ connection: any }>("/api/connections", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateConnection: (id: string, data: Record<string, unknown>) =>
+    request<{ connection: any }>(`/api/connections/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteConnection: (id: string) => request<void>(`/api/connections/${id}`, { method: "DELETE" }),
+
+  testConnection: (id: string) =>
+    request<{ status: string; message: string }>(`/api/connections/${id}/test`, {
+      method: "POST",
+    }),
+
+  createConnectionAssignment: (connectionId: string, data: Record<string, unknown>) =>
+    request<{ assignment: any }>(`/api/connections/${connectionId}/assignments`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  listRepoConnections: (repoId: string) =>
+    request<{ connections: any[] }>(`/api/repos/${repoId}/connections`),
+
+  deleteConnectionAssignment: (id: string) =>
+    request<void>(`/api/connection-assignments/${id}`, { method: "DELETE" }),
+
+  // Activity feed
+  getActivityFeed: (params?: {
+    days?: number;
+    type?: string;
+    userId?: string;
+    resourceType?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params) {
+      for (const [key, val] of Object.entries(params)) {
+        if (val != null && val !== "") qs.set(key, String(val));
+      }
+    }
+    const query = qs.toString();
+    return request<{
+      items: Array<{
+        id: string;
+        type: "action" | "task_event" | "auth_event" | "infra_event";
+        timestamp: string;
+        actor?: { id: string; displayName: string; avatarUrl?: string | null } | null;
+        action: string;
+        resourceType: string;
+        resourceId?: string | null;
+        summary: string;
+        details?: Record<string, unknown> | null;
+      }>;
+      total: number;
+      stats: {
+        actions: number;
+        taskEvents: number;
+        authEvents: number;
+        infraEvents: number;
+      };
+    }>(`/api/activity${query ? `?${query}` : ""}`);
+  },
 };

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -33,10 +33,7 @@ import { githubTokenRoutes } from "./github-token.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  await githubTokenRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(githubTokenRoutes, { user: null });
 }
 
 describe("GET /api/github-token/status", () => {

@@ -125,5 +125,6 @@ export function useDashboardData() {
     metricsAvailable,
     metricsHistory,
     refresh,
+    refreshUsage,
   };
 }

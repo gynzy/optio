@@ -5,7 +5,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Getting Started",
-  description: "Get up and running with Optio in minutes.",
+  description:
+    "Get up and running with Optio in minutes. Clone the repo, run the setup script, and start orchestrating AI coding agents on Kubernetes.",
 };
 
 export default function GettingStartedPage() {

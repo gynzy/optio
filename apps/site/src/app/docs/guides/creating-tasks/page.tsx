@@ -6,7 +6,7 @@ import { Callout } from "@/components/docs/callout";
 export const metadata: Metadata = {
   title: "Creating Tasks",
   description:
-    "How to create tasks from the dashboard, GitHub Issues, Linear, Jira, Notion, and the API.",
+    "How to create tasks from the dashboard, GitHub Issues, GitLab Issues, Linear, Jira, Notion, and the API.",
 };
 
 export default function CreatingTasksPage() {
@@ -296,7 +296,7 @@ export default function CreatingTasksPage() {
           {
             title: "Integrations",
             href: "/docs/guides/integrations",
-            description: "GitHub Issues, Linear, Jira, Notion, Slack, webhooks",
+            description: "GitHub Issues, GitLab Issues, Linear, Jira, Notion, Slack, webhooks",
           },
         ].map((item) => (
           <Link

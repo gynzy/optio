@@ -8,6 +8,7 @@ import * as taskService from "./task-service.js";
 import { taskQueue } from "../workers/task-worker.js";
 import { retrieveSecret } from "./secret-service.js";
 import { logger } from "../logger.js";
+import { recordAuthEvent } from "./auth-failure-detector.js";
 
 export async function syncAllTickets(): Promise<number> {
   const providers = await db
@@ -153,11 +154,18 @@ export async function syncAllTickets(): Promise<number> {
 
         totalSynced++;
       }
-    } catch (err) {
+    } catch (err: any) {
       logger.error(
         { err, provider: providerConfig.source },
         "Failed to sync tickets from provider",
       );
+      if (err?.status === 401 || err?.message?.includes("Bad credentials")) {
+        recordAuthEvent(
+          "github",
+          err.message ?? "GitHub 401",
+          `ticket-sync:${providerConfig.id}`,
+        ).catch(() => {});
+      }
     }
   }
 

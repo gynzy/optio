@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -29,22 +29,7 @@ const defaultSettings = {
 };
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1", workspaceRole: "admin" };
-    done();
-  });
-  // Mirror the server's ZodError handler
-  app.setErrorHandler((error: Error, _req, reply) => {
-    if (error.name === "ZodError") {
-      return reply.status(400).send({ error: "Validation error", details: error.message });
-    }
-    reply.status(500).send({ error: "Internal server error" });
-  });
-  await optioSettingsRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(optioSettingsRoutes);
 }
 
 // ─── Tests ───

@@ -4,7 +4,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Installation",
-  description: "Install Optio locally or deploy to production Kubernetes.",
+  description:
+    "Install Optio locally with Docker Desktop or deploy to a production Kubernetes cluster. Step-by-step prerequisites, Helm setup, and verification.",
 };
 
 export default function InstallationPage() {

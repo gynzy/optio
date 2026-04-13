@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -30,15 +30,7 @@ import { mcpServerRoutes } from "./mcp-servers.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { workspaceId: "ws-1" };
-    done();
-  });
-  await mcpServerRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(mcpServerRoutes);
 }
 
 describe("GET /api/mcp-servers", () => {
@@ -116,7 +108,7 @@ describe("POST /api/mcp-servers", () => {
       payload: { name: "puppeteer" },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 

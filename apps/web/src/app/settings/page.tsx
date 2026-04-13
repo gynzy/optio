@@ -1314,9 +1314,12 @@ export default function SettingsPage() {
                 <div key={p.id} className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`w-2 h-2 rounded-full ${p.enabled ? "bg-success" : "bg-text-muted"}`}
+                      className={`w-2 h-2 rounded-full ${p.hasAuthFailure ? "bg-error" : p.enabled ? "bg-success" : "bg-text-muted"}`}
                     />
                     <span className="capitalize">{p.source}</span>
+                    {p.hasAuthFailure && (
+                      <span className="text-xs text-error font-medium">Token invalid</span>
+                    )}
                     <span className="text-xs text-text-muted">
                       {p.source === "github" &&
                         p.config?.owner &&

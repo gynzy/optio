@@ -56,7 +56,13 @@ function UsageMeter({
   );
 }
 
-export function UsagePanel({ usage }: { usage: UsageData | null }) {
+export function UsagePanel({
+  usage,
+  onRefresh,
+}: {
+  usage: UsageData | null;
+  onRefresh?: () => void | Promise<void>;
+}) {
   if (!usage) return null;
 
   // Determine which auth banners to show using per-token-type failure status.
@@ -70,8 +76,8 @@ export function UsagePanel({ usage }: { usage: UsageData | null }) {
   if (claudeFailure || githubFailure) {
     return (
       <div className="space-y-3">
-        {claudeFailure && <TokenRefreshBanner />}
-        {githubFailure && <GitHubTokenBanner />}
+        {claudeFailure && <TokenRefreshBanner onSaved={onRefresh} />}
+        {githubFailure && <GitHubTokenBanner onSaved={onRefresh} />}
       </div>
     );
   }

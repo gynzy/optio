@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -23,15 +23,7 @@ import { webhookRoutes } from "./webhooks.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { id: "user-1", workspaceId: "ws-1" };
-    done();
-  });
-  await webhookRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(webhookRoutes);
 }
 
 describe("GET /api/webhooks", () => {
@@ -129,7 +121,7 @@ describe("POST /api/webhooks", () => {
       payload: { url: "https://example.com/hook", events: ["invalid.event"] },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 
   it("rejects empty events array (Zod throws)", async () => {
@@ -139,7 +131,7 @@ describe("POST /api/webhooks", () => {
       payload: { url: "https://example.com/hook", events: [] },
     });
 
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
   });
 });
 

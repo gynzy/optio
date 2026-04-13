@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -18,15 +18,12 @@ vi.mock("../services/container-service.js", () => ({
   checkRuntimeHealth: (...args: unknown[]) => mockCheckRuntimeHealth(...args),
 }));
 
-import { healthRoutes } from "./health.js";
+import { healthRoutes, _resetHealthCache } from "./health.js";
 
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  await healthRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(healthRoutes, { user: null });
 }
 
 describe("GET /api/health", () => {
@@ -34,6 +31,7 @@ describe("GET /api/health", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    _resetHealthCache();
     app = await buildTestApp();
   });
 
@@ -55,6 +53,31 @@ describe("GET /api/health", () => {
   it("returns 503 when database is down", async () => {
     mockDbExecute.mockRejectedValue(new Error("connection refused"));
     mockCheckRuntimeHealth.mockResolvedValue(true);
+
+    const res = await app.inject({ method: "GET", url: "/api/health" });
+
+    expect(res.statusCode).toBe(503);
+    const body = res.json();
+    expect(body.healthy).toBe(false);
+    expect(body.checks.database).toBe(false);
+  });
+
+  it("returns 200 when database is up but container runtime is down", async () => {
+    mockDbExecute.mockResolvedValue(undefined);
+    mockCheckRuntimeHealth.mockResolvedValue(false);
+
+    const res = await app.inject({ method: "GET", url: "/api/health" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.healthy).toBe(true);
+    expect(body.checks.database).toBe(true);
+    expect(body.checks.containerRuntime).toBe(false);
+  });
+
+  it("returns 503 only when database is down, regardless of container runtime", async () => {
+    mockDbExecute.mockRejectedValue(new Error("connection refused"));
+    mockCheckRuntimeHealth.mockResolvedValue(false);
 
     const res = await app.inject({ method: "GET", url: "/api/health" });
 

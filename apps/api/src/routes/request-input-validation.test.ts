@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 
 // ─── Mocks ───
 
@@ -143,10 +144,7 @@ describe("tickets route body validation", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    app = Fastify({ logger: false });
-    decorateApp(app);
-    await ticketRoutes(app);
-    await app.ready();
+    app = await buildRouteTestApp(ticketRoutes);
   });
 
   it("rejects POST /api/tickets/providers with missing source", async () => {
@@ -192,10 +190,7 @@ describe("pr-reviews route body validation", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    app = Fastify({ logger: false });
-    decorateApp(app);
-    await prReviewRoutes(app);
-    await app.ready();
+    app = await buildRouteTestApp(prReviewRoutes);
   });
 
   it("rejects POST /api/pull-requests/review with missing prUrl", async () => {
@@ -258,10 +253,7 @@ describe("sessions route body validation", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    app = Fastify({ logger: false });
-    decorateApp(app);
-    await sessionRoutes(app);
-    await app.ready();
+    app = await buildRouteTestApp(sessionRoutes);
   });
 
   it("rejects POST /api/sessions/:id/prs with missing prNumber", async () => {
@@ -286,7 +278,13 @@ describe("sessions route body validation", () => {
 
   it("accepts POST /api/sessions/:id/prs with valid body", async () => {
     mockGetSession.mockResolvedValue({ id: "s1", userId: "user-1" });
-    mockAddSessionPr.mockResolvedValue({ id: "pr-1", prUrl: "https://github.com/org/repo/pull/1" });
+    mockAddSessionPr.mockResolvedValue({
+      id: "pr-1",
+      sessionId: "s1",
+      prUrl: "https://github.com/org/repo/pull/1",
+      prNumber: 1,
+      createdAt: new Date("2026-04-11T12:00:00Z"),
+    });
     const res = await app.inject({
       method: "POST",
       url: "/api/sessions/s1/prs",

@@ -5,7 +5,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Configuration",
-  description: "Environment variables, Helm values, and per-repo settings for Optio.",
+  description:
+    "Configure Optio with environment variables, Helm values, and per-repo settings. Covers authentication, concurrency limits, agent models, and secrets.",
 };
 
 export default function ConfigurationPage() {
@@ -78,6 +79,11 @@ export default function ConfigurationPage() {
                 "OPTIO_REPO_POD_IDLE_MS",
                 "600000",
                 "Idle timeout for repo pods in milliseconds (10 min default)",
+              ],
+              [
+                "OPTIO_REPO_INIT_TIMEOUT_MS",
+                "120000",
+                "Repo clone/init timeout in milliseconds (2 min default)",
               ],
               ["OPTIO_PR_WATCH_INTERVAL", "30000", "PR polling interval in milliseconds"],
               [

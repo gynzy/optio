@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { api } from "@/lib/api-client";
 import { NumberInput } from "@/components/number-input";
-import { Loader2, Sparkles, Save, BookTemplate, Link2 } from "lucide-react";
+import { Loader2, Sparkles, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function NewTaskPage() {
@@ -14,8 +14,6 @@ export default function NewTaskPage() {
   const [loading, setLoading] = useState(false);
   const [repos, setRepos] = useState<any[]>([]);
   const [reposLoading, setReposLoading] = useState(true);
-  const [templates, setTemplates] = useState<any[]>([]);
-  const [savingTemplate, setSavingTemplate] = useState(false);
   const [existingTasks, setExistingTasks] = useState<any[]>([]);
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
@@ -49,59 +47,10 @@ export default function NewTaskPage() {
       .catch(() => {})
       .finally(() => setReposLoading(false));
     api
-      .listTaskTemplates()
-      .then((res) => setTemplates(res.templates))
-      .catch(() => {});
-    api
       .listTasks({ limit: 100 })
       .then((res) => setExistingTasks(res.tasks))
       .catch(() => {});
   }, []);
-
-  const handleTemplateSelect = (templateId: string) => {
-    if (!templateId) return;
-    const template = templates.find((t: any) => t.id === templateId);
-    if (!template) return;
-    const repo = template.repoUrl ? repos.find((r: any) => r.repoUrl === template.repoUrl) : null;
-    setForm((f) => ({
-      ...f,
-      prompt: template.prompt,
-      agentType: template.agentType ?? f.agentType,
-      priority: template.priority ?? f.priority,
-      ...(repo
-        ? { repoId: repo.id, repoUrl: repo.repoUrl, repoBranch: repo.defaultBranch ?? "main" }
-        : {}),
-    }));
-    toast.success("Template applied");
-  };
-
-  const handleSaveAsTemplate = async () => {
-    if (!form.prompt) {
-      toast.error("Add a prompt before saving as template");
-      return;
-    }
-    const name = prompt("Template name:");
-    if (!name) return;
-    setSavingTemplate(true);
-    try {
-      await api.createTaskTemplate({
-        name,
-        prompt: form.prompt,
-        repoUrl: form.repoUrl || undefined,
-        agentType: form.agentType,
-        priority: form.priority,
-      });
-      const res = await api.listTaskTemplates();
-      setTemplates(res.templates);
-      toast.success("Template saved");
-    } catch (err) {
-      toast.error("Failed to save template", {
-        description: err instanceof Error ? err.message : undefined,
-      });
-    } finally {
-      setSavingTemplate(false);
-    }
-  };
 
   const handleRepoChange = (repoId: string) => {
     const repo = repos.find((r: any) => r.id === repoId);
@@ -148,28 +97,6 @@ export default function NewTaskPage() {
       <h1 className="text-2xl font-semibold tracking-tight mb-6">Create New Task</h1>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Template Picker */}
-        {templates.length > 0 && (
-          <div>
-            <label className="block text-sm text-text-muted mb-1.5">
-              <BookTemplate className="w-3.5 h-3.5 inline mr-1" />
-              Load from Template
-            </label>
-            <select
-              defaultValue=""
-              onChange={(e) => handleTemplateSelect(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-bg-card border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
-            >
-              <option value="">Select a template...</option>
-              {templates.map((t: any) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
         {/* Repository */}
         <div>
           <label className="block text-sm text-text-muted mb-1.5">Repository</label>
@@ -250,6 +177,7 @@ export default function NewTaskPage() {
               <option value="copilot">GitHub Copilot</option>
               <option value="opencode">OpenCode (Experimental)</option>
               <option value="gemini">Google Gemini</option>
+              <option value="openclaw">OpenClaw (Experimental)</option>
             </select>
           </div>
         </div>
@@ -316,8 +244,8 @@ export default function NewTaskPage() {
           />
         </div>
 
-        {/* Submit + Save as Template */}
-        <div className="flex items-center gap-3">
+        {/* Submit */}
+        <div>
           <button
             type="submit"
             disabled={loading || !form.repoUrl}
@@ -329,19 +257,6 @@ export default function NewTaskPage() {
               <Sparkles className="w-4 h-4" />
             )}
             {loading ? "Creating..." : "Create Task"}
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveAsTemplate}
-            disabled={savingTemplate || !form.prompt}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-md bg-bg-card border border-border text-text-muted text-sm font-medium hover:text-text hover:bg-bg-hover transition-colors disabled:opacity-50"
-          >
-            {savingTemplate ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Save className="w-4 h-4" />
-            )}
-            Save as Template
           </button>
         </div>
       </form>

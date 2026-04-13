@@ -19,7 +19,8 @@ import { parseCodexEvent } from "../services/codex-event-parser.js";
 import { parseCopilotEvent } from "../services/copilot-event-parser.js";
 import { parseOpenCodeEvent } from "../services/opencode-event-parser.js";
 import { parseGeminiEvent } from "../services/gemini-event-parser.js";
-import { checkExistingPr } from "../services/pr-detection-service.js";
+import { parseOpenClawEvent } from "../services/openclaw-event-parser.js";
+import { checkExistingPr, type ExistingPr } from "../services/pr-detection-service.js";
 import { db } from "../db/client.js";
 import { tasks } from "../db/schema.js";
 import { eq, sql } from "drizzle-orm";
@@ -37,6 +38,15 @@ import { getCredentialSecret } from "../services/credential-secret-service.js";
 import { subscribeToTaskMessages } from "../services/task-message-bus.js";
 import * as messageService from "../services/task-message-service.js";
 import { logger } from "../logger.js";
+import {
+  recordTaskComplete,
+  recordTaskDuration,
+  recordTaskCost,
+  recordTaskTokens,
+} from "../telemetry/metrics.js";
+import { emitCostReportLog } from "../telemetry/logs.js";
+import { withSpan, injectTraceContextIntoJob } from "../telemetry/spans.js";
+import { instrumentWorkerProcessor } from "../telemetry/instrument-worker.js";
 
 import { getBullMQConnectionOptions } from "../services/redis-config.js";
 
@@ -67,7 +77,7 @@ function withClaimLock<T>(fn: () => Promise<T>): Promise<T> {
 export function startTaskWorker() {
   const worker = new Worker(
     "tasks",
-    async (job) => {
+    instrumentWorkerProcessor("task-worker", async (job) => {
       const {
         taskId,
         resumeSessionId,
@@ -210,11 +220,15 @@ export function startTaskWorker() {
 
         if (!claimed) {
           const jitter = Math.floor(Math.random() * 5000);
-          await taskQueue.add("process-task", job.data, {
-            jobId: `${taskId}-delayed-${Date.now()}`,
-            priority: currentTask.priority ?? 100,
-            delay: 10000 + jitter,
-          });
+          await taskQueue.add(
+            "process-task",
+            injectTraceContextIntoJob(job.data as Record<string, unknown>),
+            {
+              jobId: `${taskId}-delayed-${Date.now()}`,
+              priority: currentTask.priority ?? 100,
+              delay: 10000 + jitter,
+            },
+          );
           return;
         }
         log.info("Provisioning");
@@ -361,6 +375,148 @@ export function startTaskWorker() {
             agentConfig.env.OPTIO_MCP_INSTALL_COMMANDS = installCommands.join(" && ");
           }
           log.info({ count: mcpServers.length }, "Injecting MCP servers");
+        }
+
+        // ── Connection-based MCP injection ─────────────────────────
+        const { getConnectionsForTask } = await import("../services/connection-service.js");
+        const resolvedConnections = await getConnectionsForTask(
+          task.repoUrl,
+          task.agentType,
+          taskWorkspaceId,
+        );
+        if (resolvedConnections.length > 0) {
+          // Build MCP entries from connections and merge into .mcp.json
+          const connectionMcpEntries: Record<
+            string,
+            { command: string; args: string[]; env?: Record<string, string> }
+          > = {};
+          const connectionInstallCommands: string[] = [];
+
+          for (const conn of resolvedConnections) {
+            if (!conn.mcpConfig) continue;
+            const mcpCfg = conn.mcpConfig;
+
+            // Resolve env vars by mapping config values through envMapping
+            const resolvedEnv: Record<string, string> = {};
+            for (const [envKey, configKey] of Object.entries(mcpCfg.envMapping)) {
+              const value = conn.config[configKey];
+              if (typeof value === "string") {
+                // Check if it's a secret reference
+                if (value.startsWith("${{") && value.endsWith("}}")) {
+                  const secretName = value.slice(3, -2).trim();
+                  try {
+                    let secretValue: string;
+                    try {
+                      secretValue = await retrieveSecretWithFallback(
+                        secretName,
+                        task.repoUrl,
+                        taskWorkspaceId,
+                      );
+                    } catch {
+                      secretValue = await retrieveSecretWithFallback(
+                        secretName,
+                        "global",
+                        taskWorkspaceId,
+                      );
+                    }
+                    resolvedEnv[envKey] = secretValue;
+                  } catch {
+                    // Secret not found — try the config key as a secret name directly
+                    try {
+                      resolvedEnv[envKey] = await retrieveSecretWithFallback(
+                        configKey,
+                        task.repoUrl,
+                        taskWorkspaceId,
+                      );
+                    } catch {
+                      try {
+                        resolvedEnv[envKey] = await retrieveSecretWithFallback(
+                          configKey,
+                          "global",
+                          taskWorkspaceId,
+                        );
+                      } catch {
+                        // Leave unresolved
+                      }
+                    }
+                  }
+                } else {
+                  resolvedEnv[envKey] = value;
+                }
+              } else {
+                // Try resolving the config key as a secret name
+                try {
+                  resolvedEnv[envKey] = await retrieveSecretWithFallback(
+                    configKey,
+                    task.repoUrl,
+                    taskWorkspaceId,
+                  );
+                } catch {
+                  try {
+                    resolvedEnv[envKey] = await retrieveSecretWithFallback(
+                      configKey,
+                      "global",
+                      taskWorkspaceId,
+                    );
+                  } catch {
+                    // Leave unresolved
+                  }
+                }
+              }
+            }
+
+            // Resolve template args (e.g., {{ROOT_PATH}})
+            const resolvedArgs = mcpCfg.args.map((arg) =>
+              arg.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+                const val = conn.config[key];
+                return typeof val === "string" ? val : arg;
+              }),
+            );
+
+            connectionMcpEntries[conn.connectionName] = {
+              command: mcpCfg.command,
+              args: resolvedArgs,
+              ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
+            };
+
+            if (mcpCfg.installCommand) {
+              connectionInstallCommands.push(mcpCfg.installCommand);
+            }
+          }
+
+          if (Object.keys(connectionMcpEntries).length > 0) {
+            // Find existing .mcp.json in setup files and merge, or create new
+            agentConfig.setupFiles = agentConfig.setupFiles ?? [];
+            const existingIdx = agentConfig.setupFiles.findIndex((f) => f.path === ".mcp.json");
+
+            if (existingIdx >= 0) {
+              // Merge with existing MCP servers
+              const existing = JSON.parse(agentConfig.setupFiles[existingIdx].content);
+              existing.mcpServers = {
+                ...existing.mcpServers,
+                ...connectionMcpEntries,
+              };
+              agentConfig.setupFiles[existingIdx].content = JSON.stringify(existing, null, 2);
+            } else {
+              agentConfig.setupFiles.push({
+                path: ".mcp.json",
+                content: JSON.stringify({ mcpServers: connectionMcpEntries }, null, 2),
+              });
+            }
+
+            // Merge install commands
+            if (connectionInstallCommands.length > 0) {
+              const existing = agentConfig.env.OPTIO_MCP_INSTALL_COMMANDS;
+              agentConfig.env.OPTIO_MCP_INSTALL_COMMANDS = existing
+                ? `${existing} && ${connectionInstallCommands.join(" && ")}`
+                : connectionInstallCommands.join(" && ");
+            }
+
+            log.info(
+              { count: Object.keys(connectionMcpEntries).length },
+              "Injecting connections as MCP servers",
+            );
+          }
         }
 
         const skills = await getSkillsForTask(task.repoUrl, taskWorkspaceId);
@@ -683,7 +839,9 @@ export function startTaskWorker() {
                     ? parseOpenCodeEvent(line, taskId)
                     : task.agentType === "gemini"
                       ? parseGeminiEvent(line, taskId)
-                      : parseClaudeEvent(line, taskId);
+                      : task.agentType === "openclaw"
+                        ? parseOpenClawEvent(line, taskId)
+                        : parseClaudeEvent(line, taskId);
             if (parsed.sessionId && !sessionId) {
               sessionId = parsed.sessionId;
               await taskService.updateTaskSession(taskId, sessionId);
@@ -783,7 +941,9 @@ export function startTaskWorker() {
                   ? parseOpenCodeEvent(lineBuf, taskId)
                   : task.agentType === "gemini"
                     ? parseGeminiEvent(lineBuf, taskId)
-                    : parseClaudeEvent(lineBuf, taskId);
+                    : task.agentType === "openclaw"
+                      ? parseOpenClawEvent(lineBuf, taskId)
+                      : parseClaudeEvent(lineBuf, taskId);
           for (const entry of parsed.entries) {
             await taskService.appendTaskLog(
               taskId,
@@ -826,6 +986,29 @@ export function startTaskWorker() {
         if (result.model) costFields.modelUsed = result.model;
         if (Object.keys(costFields).length > 0) {
           await db.update(tasks).set(costFields).where(eq(tasks.id, taskId));
+        }
+
+        // ── Telemetry: record cost and token metrics ──────────────────
+        const taskAttrs = {
+          agent_type: task.agentType,
+          model: result.model ?? "unknown",
+          repo_url: task.repoUrl,
+        };
+        if (result.costUsd != null) {
+          recordTaskCost(result.costUsd, taskAttrs);
+          emitCostReportLog(
+            taskId,
+            result.costUsd,
+            result.inputTokens ?? 0,
+            result.outputTokens ?? 0,
+            result.model ?? "unknown",
+          );
+        }
+        if (result.inputTokens != null) {
+          recordTaskTokens(result.inputTokens, { ...taskAttrs, direction: "input" });
+        }
+        if (result.outputTokens != null) {
+          recordTaskTokens(result.outputTokens, { ...taskAttrs, direction: "output" });
         }
 
         // Pick the best PR URL.  Priority:
@@ -911,26 +1094,60 @@ export function startTaskWorker() {
             log.info("Task completed");
           }
         } else {
-          await repoPool.updateWorktreeState(taskId, "dirty");
-          await taskService.transitionTask(taskId, TaskState.FAILED, "agent_failure", result.error);
-          log.warn({ error: result.error }, "Task failed");
+          // Before failing, check if a PR was actually created via the API.
+          // Log-based PR detection can miss URLs (e.g. agent created a PR but
+          // the URL wasn't in stdout, or repo validation filtered it out).
+          let apiFallbackPr: ExistingPr | null = null;
+          if (!isReviewTask) {
+            try {
+              apiFallbackPr = await checkExistingPr(task.repoUrl, taskId, taskWorkspaceId);
+            } catch {
+              // Non-fatal — proceed with failure
+            }
+          }
 
-          // Publish global alert for auth failures so the UI can show a banner
-          if (
-            result.error &&
-            /OAuth token|authentication_failed|token.*expired/i.test(result.error)
-          ) {
-            // Invalidate the usage cache so subsequent API calls return fresh data
-            // instead of stale "healthy" results that hide the expiration
-            const { invalidateUsageCache } = await import("../services/auth-service.js");
-            invalidateUsageCache();
+          if (apiFallbackPr) {
+            // PR exists despite agent reporting failure — go to pr_opened so the
+            // PR watcher can track CI/review and auto-resume works correctly.
+            await taskService.updateTaskPr(taskId, apiFallbackPr.url);
+            await repoPool.updateWorktreeState(taskId, "preserved");
+            await taskService.transitionTask(
+              taskId,
+              TaskState.PR_OPENED,
+              "pr_detected_api",
+              apiFallbackPr.url,
+            );
+            log.info(
+              { prUrl: apiFallbackPr.url, inferredError: result.error },
+              "PR found via API fallback — transitioning to pr_opened instead of failed",
+            );
+          } else {
+            await repoPool.updateWorktreeState(taskId, "dirty");
+            await taskService.transitionTask(
+              taskId,
+              TaskState.FAILED,
+              "agent_failure",
+              result.error,
+            );
+            log.warn({ error: result.error }, "Task failed");
 
-            await publishEvent({
-              type: "auth:failed",
-              message:
-                "Claude Code OAuth token has expired. Re-authenticate with 'claude auth login' and retry failed tasks.",
-              timestamp: new Date().toISOString(),
-            });
+            // Publish global alert for auth failures so the UI can show a banner
+            if (
+              result.error &&
+              /OAuth token|authentication_failed|token.*expired/i.test(result.error)
+            ) {
+              // Invalidate the usage cache so subsequent API calls return fresh data
+              // instead of stale "healthy" results that hide the expiration
+              const { invalidateUsageCache } = await import("../services/auth-service.js");
+              invalidateUsageCache();
+
+              await publishEvent({
+                type: "auth:failed",
+                message:
+                  "Claude Code OAuth token has expired. Re-authenticate with 'claude auth login' and retry failed tasks.",
+                timestamp: new Date().toISOString(),
+              });
+            }
           }
         }
 
@@ -957,6 +1174,26 @@ export function startTaskWorker() {
             await depSvc
               .cascadeFailure(taskId)
               .catch((err) => log.warn({ err }, "Failed to cascade failure to dependents"));
+          }
+        }
+
+        // ── Telemetry: record task completion metrics ─────────────────
+        if (completedTask) {
+          const terminalState = completedTask.state;
+          recordTaskComplete({
+            state: terminalState,
+            agent_type: task.agentType,
+            model: result.model ?? "unknown",
+            repo_url: task.repoUrl,
+          });
+          // Duration from task creation to terminal state
+          const startedAt = task.startedAt ?? task.createdAt;
+          if (startedAt) {
+            const durationS = (Date.now() - new Date(startedAt).getTime()) / 1000;
+            recordTaskDuration(durationS, {
+              terminal_state: terminalState,
+              agent_type: task.agentType,
+            });
           }
         }
       } catch (err) {
@@ -1044,7 +1281,7 @@ export function startTaskWorker() {
           await repoPool.releaseRepoPodTask(repoPodId).catch(() => {});
         }
       }
-    },
+    }),
     {
       connection: connectionOpts,
       concurrency: parseInt(process.env.OPTIO_MAX_CONCURRENT ?? "5", 10),
@@ -1120,6 +1357,17 @@ export async function reconcileOrphanedTasks() {
   // Check if a PR was already opened —
   // if so, transition directly to pr_opened to avoid redoing work.
   for (const task of [...orphanedProvisioning, ...orphanedRunning]) {
+    // Re-read the task to get its current state — it may have been
+    // completed or cancelled between the initial query and now.
+    const [current] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+    if (!current || (current.state !== "running" && current.state !== "provisioning")) {
+      logger.info(
+        { taskId: task.id, state: current?.state ?? "deleted" },
+        "Skipping reconciliation — task already transitioned",
+      );
+      continue;
+    }
+
     const taskWsId = task.workspaceId ?? null;
     const isReview = task.taskType === "review";
     let existingPr = null;
@@ -1131,7 +1379,7 @@ export async function reconcileOrphanedTasks() {
       }
     }
 
-    if (existingPr && task.state === "running") {
+    if (existingPr && current.state === "running") {
       // running → pr_opened is a valid transition
       logger.info(
         { taskId: task.id, prUrl: existingPr.url },
@@ -1144,7 +1392,7 @@ export async function reconcileOrphanedTasks() {
         "startup_reconcile",
         existingPr.url,
       );
-    } else if (existingPr && task.state === "provisioning") {
+    } else if (existingPr && current.state === "provisioning") {
       // provisioning → pr_opened is NOT valid; fail → re-queue and
       // the pre-agent PR check will short-circuit it to pr_opened
       logger.info(
@@ -1378,6 +1626,18 @@ export function buildAgentCommand(
         `  --approval-mode yolo${geminiModelFlag}`,
       ];
     }
+    case "openclaw": {
+      const openclawModelFlag = env.OPTIO_OPENCLAW_MODEL
+        ? ` --model ${JSON.stringify(env.OPTIO_OPENCLAW_MODEL)}`
+        : "";
+      const openclawAgentFlag = env.OPTIO_OPENCLAW_AGENT
+        ? ` --agent ${JSON.stringify(env.OPTIO_OPENCLAW_AGENT)}`
+        : "";
+      return [
+        `echo "[optio] Running OpenClaw (experimental)..."`,
+        `openclaw agent --output-format stream-json${openclawModelFlag}${openclawAgentFlag} "$OPTIO_PROMPT"`,
+      ];
+    }
     default:
       return [`echo "Unknown agent type: ${agentType}" && exit 1`];
   }
@@ -1440,13 +1700,52 @@ export function inferExitCode(agentType: string, logs: string): number {
         ? 1
         : 0;
     }
-    case "claude-code":
-    default: {
-      // Claude: check for is_error in result event, or fatal errors
-      const hasResultError = logs.includes('"is_error":true');
+    case "openclaw": {
+      // OpenClaw: similar to OpenCode — look for error events and provider-specific failures
+      const hasErrorEvent = logs.includes('"type":"error"') || logs.includes('"type": "error"');
+      const hasApiErrorEnvelope = /"error"\s*:\s*\{\s*"message"/.test(logs);
+      const hasAuthError =
+        /ANTHROPIC_API_KEY|OPENAI_API_KEY|OPENCLAW_API_KEY|invalid.*api.?key|unauthorized|authentication.*failed/i.test(
+          logs,
+        );
+      const hasModelError = /model_not_found|model.*not found|does not exist.*model/i.test(logs);
       const hasFatalError =
         logs.includes("fatal:") || logs.includes("Error: authentication_failed");
-      return hasResultError || hasFatalError ? 1 : 0;
+      return hasErrorEvent || hasApiErrorEnvelope || hasAuthError || hasModelError || hasFatalError
+        ? 1
+        : 0;
+    }
+    case "claude-code":
+    default: {
+      // Parse the NDJSON result event (authoritative source for Claude's exit status).
+      // Raw string matching on the full logs produces false positives — e.g. "fatal:"
+      // appearing in git command output that Claude ran and handled gracefully.
+      for (const line of logs.split("\n")) {
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === "result") {
+            return ev.is_error ? 1 : 0;
+          }
+        } catch {
+          // Not JSON — skip
+        }
+      }
+      // No result event found — agent likely crashed before emitting one.
+      // Fall back to heuristic checks on raw (non-JSON) output only.
+      for (const line of logs.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          JSON.parse(trimmed);
+          continue; // Skip JSON lines — errors inside tool output are not fatal
+        } catch {
+          // Raw output line — check for fatal errors
+          if (trimmed.includes("fatal:") || trimmed.includes("Error: authentication_failed")) {
+            return 1;
+          }
+        }
+      }
+      return 0;
     }
   }
 }

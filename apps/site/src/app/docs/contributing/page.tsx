@@ -5,7 +5,8 @@ import { Callout } from "@/components/docs/callout";
 
 export const metadata: Metadata = {
   title: "Contributing",
-  description: "Contributing guide for the Optio open-source project.",
+  description:
+    "Contribute to Optio — the open-source AI agent orchestrator. Learn the dev workflow, coding conventions, commit standards, and how to submit PRs.",
 };
 
 export default function ContributingPage() {
@@ -103,10 +104,13 @@ k8s/            Local dev K8s manifests`}</CodeBlock>
               ["apps/web/src/components/", "React components (task-card, log-viewer, etc.)"],
               ["packages/shared/", "Types, state machine, prompt renderer, error classifier"],
               ["packages/container-runtime/", "Kubernetes container runtime interface"],
-              ["packages/agent-adapters/", "Claude Code, Codex, and Copilot agent adapters"],
+              [
+                "packages/agent-adapters/",
+                "Claude Code, Codex, Copilot, Gemini, and OpenCode agent adapters",
+              ],
               [
                 "packages/ticket-providers/",
-                "GitHub Issues, Linear, Jira, and Notion ticket providers",
+                "GitHub Issues, GitLab Issues, Linear, Jira, and Notion ticket providers",
               ],
             ].map(([path, contents]) => (
               <tr key={path}>

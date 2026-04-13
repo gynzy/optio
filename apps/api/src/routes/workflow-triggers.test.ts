@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
+import { mockWorkflowTrigger } from "../test-utils/fixtures.js";
 
 // ─── Mocks ───
 
@@ -38,15 +39,7 @@ import { workflowTriggerRoutes } from "./workflow-triggers.js";
 // ─── Helpers ───
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorateRequest("user", undefined as any);
-  app.addHook("preHandler", (req, _reply, done) => {
-    (req as any).user = { id: "user-1", workspaceId: "ws-1" };
-    done();
-  });
-  await workflowTriggerRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(workflowTriggerRoutes);
 }
 
 const mockWorkflow = {
@@ -55,14 +48,7 @@ const mockWorkflow = {
   workspaceId: "ws-1",
 };
 
-const mockTriggerData = {
-  id: "trig-1",
-  workflowId: "wf-1",
-  type: "manual",
-  config: {},
-  paramMapping: null,
-  enabled: true,
-};
+const mockTriggerData = { ...mockWorkflowTrigger };
 
 function mockGetWorkflowReturns(workflow: Record<string, unknown> | null) {
   mockDbSelect.mockReturnValue({
@@ -116,6 +102,21 @@ describe("GET /api/workflows/:id/triggers", () => {
     });
 
     expect(res.statusCode).toBe(404);
+  });
+
+  it("allows access to workflow with null workspaceId", async () => {
+    // Workflows created before the workspaces feature (or with auth disabled)
+    // have workspaceId = null and should remain accessible.
+    mockGetWorkflowReturns({ ...mockWorkflow, workspaceId: null });
+    mockListTriggers.mockResolvedValue([mockTriggerData]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/workflows/wf-1/triggers",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().triggers).toHaveLength(1);
   });
 });
 

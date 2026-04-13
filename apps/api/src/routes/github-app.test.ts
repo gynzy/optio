@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Fastify from "fastify";
+import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 import type { FastifyInstance } from "fastify";
 
 // ─── Mocks ───
@@ -37,10 +37,7 @@ function makeHmacHeaders(path: string, timestampOverride?: number): Record<strin
 }
 
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  await githubAppRoutes(app);
-  await app.ready();
-  return app;
+  return buildRouteTestApp(githubAppRoutes, { user: null });
 }
 
 // ─── Tests ───
