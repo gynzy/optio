@@ -39,6 +39,10 @@ spec:
                     app: optio-web
                 topologyKey: kubernetes.io/hostname
       {{- end }}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
