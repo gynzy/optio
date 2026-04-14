@@ -1,0 +1,36 @@
+{{- if and .Values.ingress.enabled .Values.ingress.gke .Values.ingress.gke.enabled }}
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ .Release.Name }}-api-backend-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "optio.labels" . | nindent 4 }}
+spec:
+  timeoutSec: 3600
+  {{- if .Values.ingress.gke.cloudArmorPolicy }}
+  securityPolicy:
+    name: {{ .Values.ingress.gke.cloudArmorPolicy | quote }}
+  {{- end }}
+  healthCheck:
+    type: HTTP
+    requestPath: /api/health
+    port: {{ .Values.api.port }}
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ .Release.Name }}-web-backend-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "optio.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.ingress.gke.cloudArmorPolicy }}
+  securityPolicy:
+    name: {{ .Values.ingress.gke.cloudArmorPolicy | quote }}
+  {{- end }}
+  healthCheck:
+    type: HTTP
+    requestPath: /api/health
+    port: {{ .Values.web.port }}
+{{- end }}

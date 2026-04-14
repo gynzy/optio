@@ -15,7 +15,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 api:
   image:
-    repository: ghcr.io/jonwiggins/optio-api
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-api
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
@@ -38,7 +38,8 @@ api:
   # ""     = disabled
   antiAffinity: soft
   # Kubernetes nodeSelector for API pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   # Pod disruption budget. Enable when running multiple replicas to ensure
   # availability during voluntary disruptions (rolling updates, node drains).
   pdb:
@@ -65,7 +66,7 @@ api:
 # ──────────────────────────────────────────────────────────────────────────────
 web:
   image:
-    repository: ghcr.io/jonwiggins/optio-web
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-web
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
@@ -83,7 +84,8 @@ web:
   # Pod anti-affinity (same options as api.antiAffinity)
   antiAffinity: soft
   # Kubernetes nodeSelector for web pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   # Pod disruption budget (same options as api.pdb)
   pdb:
     enabled: false
@@ -105,11 +107,12 @@ web:
 optio:
   enabled: true
   image:
-    repository: ghcr.io/jonwiggins/optio-optio
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-optio
     tag: latest
     pullPolicy: IfNotPresent
   # Kubernetes nodeSelector for the optio assistant pod (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   resources:
     requests:
       cpu: 100m
@@ -123,14 +126,14 @@ optio:
 # ──────────────────────────────────────────────────────────────────────────────
 agent:
   image:
-    repository: ghcr.io/jonwiggins/optio-agent-base
+    repository: europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-base
     tag: latest
     pullPolicy: IfNotPresent
     # Prefix used to resolve preset images (base, node, python, go, rust, full, dind).
     # The full image name is: {prefix}{preset}:{tag}
-    # GHCR: ghcr.io/jonwiggins/optio-agent-  →  ghcr.io/jonwiggins/optio-agent-node:latest
+    # GAR: europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-  →  .../optio-agent-node:latest
     # Local: optio-                           →  optio-node:latest
-    prefix: "ghcr.io/jonwiggins/optio-agent-"
+    prefix: "europe-docker.pkg.dev/unicorn-985/private-images/optio-agent-"
   imagePullPolicy: IfNotPresent
   # Envoy sidecar proxy for secret isolation.
   # When repos.secretProxy is enabled, this image is added as a sidecar to agent pods.
@@ -152,8 +155,8 @@ agent:
   # Kubernetes scheduling constraints for agent pods.
   # nodeSelector pins pods to nodes with matching labels (e.g. a dedicated node pool).
   # tolerations allow pods to schedule on tainted nodes.
-  nodeSelector: {}
-  #  cloud.google.com/gke-nodepool: agents
+  nodeSelector:
+    agent: "true"
   tolerations: []
   #  - key: optio.dev/agents
   #    operator: Equal
@@ -175,7 +178,7 @@ agent:
     maxSizeTotalGi: 200               # Max total cache size across all dirs per repo
     defaultSizePerDirectoryGi: 10     # Default size when creating a cache directory
   # Repo init timeout (how long to wait for clone to complete)
-  repoInitTimeoutMs: 120000           # 2 min default; increase for large repos
+  repoInitTimeoutMs: 300000           # 5 minutes. default is 2 minutes
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Network Policy
@@ -186,6 +189,17 @@ agent:
 # ──────────────────────────────────────────────────────────────────────────────
 networkPolicy:
   enabled: false  # Set to true when your cluster supports NetworkPolicy
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cloud SQL Proxy sidecar (for GCP Cloud SQL connections)
+# ──────────────────────────────────────────────────────────────────────────────
+cloudSqlProxy:
+  enabled: false
+  image:
+    repository: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+    tag: "2.15.0"
+  instanceConnectionName: ""  # e.g. project:region:instance
+  credentialsSecret: cloudsql-proxy  # K8s secret name containing service_json key
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PostgreSQL (built-in)
@@ -204,7 +218,8 @@ postgresql:
       cpu: 500m
       memory: 512Mi
   # Kubernetes nodeSelector for PostgreSQL pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   storage:
     size: 5Gi
   auth:
@@ -228,7 +243,8 @@ redis:
     repository: redis
     tag: 7-alpine
   # Kubernetes nodeSelector for Redis pods (opt-in).
-  nodeSelector: {}
+  nodeSelector:
+    optio: "true"
   resources:
     requests:
       cpu: 50m
@@ -345,7 +361,6 @@ credentialSecret: ""
 # ──────────────────────────────────────────────────────────────────────────────
 ingress:
   enabled: false
-  className: nginx
   # The ingress template automatically blocks /api/internal/* from public traffic
   # via an nginx server-snippet. These endpoints use bearer token auth (not session
   # auth) and must only be reachable within the cluster. If using a non-nginx ingress
@@ -369,6 +384,15 @@ ingress:
         - path: /ws
           pathType: Prefix
           service: api
+  # GKE-native ingress. Uses Google-managed SSL certificates and static IP
+  # instead of cert-manager. Set className to "gce" when using this.
+  gke:
+    enabled: false
+    staticIpName: ""
+    cloudArmorPolicy: ""
+    managedCertificate:
+      enabled: false
+      domains: []
   # Manual TLS configuration. When certManager is enabled, TLS entries are
   # generated automatically from hosts — this field is only needed for
   # manual certificate management.
