@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Mocks ───────────────────────────────────────────────────────────
 
@@ -367,5 +367,72 @@ describe("execRunInPod", () => {
     expect(execCall[1][1]).toBe("-c");
     // The script should contain the base64-encoded env
     expect(execCall[1][2]).toContain("base64");
+  });
+});
+
+// ── nodeSelector / tolerations env var integration ────────────────────
+
+describe("createWorkflowPod — nodeSelector and tolerations env vars", () => {
+  const origNodeSelector = process.env.OPTIO_AGENT_NODE_SELECTOR;
+  const origTolerations = process.env.OPTIO_AGENT_TOLERATIONS;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    if (origNodeSelector !== undefined) {
+      process.env.OPTIO_AGENT_NODE_SELECTOR = origNodeSelector;
+    } else {
+      delete process.env.OPTIO_AGENT_NODE_SELECTOR;
+    }
+    if (origTolerations !== undefined) {
+      process.env.OPTIO_AGENT_TOLERATIONS = origTolerations;
+    } else {
+      delete process.env.OPTIO_AGENT_TOLERATIONS;
+    }
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (db as any).returning.mockResolvedValue([
+      { id: "pod-1", workflowRunId: "wf-run-1", state: "provisioning" },
+    ]);
+    (db as any).where.mockResolvedValue([]);
+  });
+
+  it("passes parsed nodeSelector to the container spec", async () => {
+    process.env.OPTIO_AGENT_NODE_SELECTOR = '{"disktype":"ssd"}';
+    delete process.env.OPTIO_AGENT_TOLERATIONS;
+
+    mockRuntimeCreate.mockResolvedValueOnce({ id: "k8s-id", name: "optio-wf-abc" });
+
+    await createWorkflowPod("wf-run-1", {});
+
+    const spec = mockRuntimeCreate.mock.calls[0][0];
+    expect(spec.nodeSelector).toEqual({ disktype: "ssd" });
+  });
+
+  it("passes parsed tolerations to the container spec", async () => {
+    delete process.env.OPTIO_AGENT_NODE_SELECTOR;
+    process.env.OPTIO_AGENT_TOLERATIONS =
+      '[{"key":"gpu","operator":"Exists","effect":"NoSchedule"}]';
+
+    mockRuntimeCreate.mockResolvedValueOnce({ id: "k8s-id", name: "optio-wf-abc" });
+
+    await createWorkflowPod("wf-run-1", {});
+
+    const spec = mockRuntimeCreate.mock.calls[0][0];
+    expect(spec.tolerations).toEqual([{ key: "gpu", operator: "Exists", effect: "NoSchedule" }]);
+  });
+
+  it("omits nodeSelector and tolerations when env vars are not set", async () => {
+    delete process.env.OPTIO_AGENT_NODE_SELECTOR;
+    delete process.env.OPTIO_AGENT_TOLERATIONS;
+
+    mockRuntimeCreate.mockResolvedValueOnce({ id: "k8s-id", name: "optio-wf-abc" });
+
+    await createWorkflowPod("wf-run-1", {});
+
+    const spec = mockRuntimeCreate.mock.calls[0][0];
+    expect(spec.nodeSelector).toBeUndefined();
+    expect(spec.tolerations).toBeUndefined();
   });
 });
