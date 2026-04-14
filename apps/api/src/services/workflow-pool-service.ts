@@ -9,7 +9,7 @@ import {
   generateWorkflowJobName,
 } from "@optio/shared";
 import { logger } from "../logger.js";
-import { resolveImage } from "./repo-pool-service.js";
+import { resolveImage, parseJsonEnv } from "./repo-pool-service.js";
 import { getWorkloadManager, isStatefulSetEnabled } from "./k8s-workload-service.js";
 import type { RepoImageConfig } from "@optio/shared";
 
@@ -147,6 +147,22 @@ export async function createWorkflowPod(
         "optio.type": "workflow-pod",
         "managed-by": "optio",
       },
+      ...(process.env.OPTIO_AGENT_NODE_SELECTOR
+        ? {
+            nodeSelector: parseJsonEnv(
+              "OPTIO_AGENT_NODE_SELECTOR",
+              process.env.OPTIO_AGENT_NODE_SELECTOR,
+            ) as Record<string, string>,
+          }
+        : {}),
+      ...(process.env.OPTIO_AGENT_TOLERATIONS
+        ? {
+            tolerations: parseJsonEnv(
+              "OPTIO_AGENT_TOLERATIONS",
+              process.env.OPTIO_AGENT_TOLERATIONS,
+            ) as unknown[],
+          }
+        : {}),
     };
 
     const handle = await rt.create(spec);
@@ -256,6 +272,22 @@ async function createWorkflowPodViaJob(
         "optio.type": "workflow-pod",
         "managed-by": "optio",
       },
+      ...(process.env.OPTIO_AGENT_NODE_SELECTOR
+        ? {
+            nodeSelector: parseJsonEnv(
+              "OPTIO_AGENT_NODE_SELECTOR",
+              process.env.OPTIO_AGENT_NODE_SELECTOR,
+            ) as Record<string, string>,
+          }
+        : {}),
+      ...(process.env.OPTIO_AGENT_TOLERATIONS
+        ? {
+            tolerations: parseJsonEnv(
+              "OPTIO_AGENT_TOLERATIONS",
+              process.env.OPTIO_AGENT_TOLERATIONS,
+            ) as unknown[],
+          }
+        : {}),
     };
 
     const result = await manager.createJob({ name: jobName, spec });
