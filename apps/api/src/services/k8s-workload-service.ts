@@ -26,6 +26,7 @@ import {
   V1Volume,
   V1VolumeMount,
   V1SecurityContext,
+  V1PodSecurityContext,
   V1Capabilities,
   V1EmptyDirVolumeSource,
   V1PersistentVolumeClaim,
@@ -526,6 +527,17 @@ export class K8sWorkloadManager {
     }
     if (spec.tolerations && spec.tolerations.length > 0) {
       podSpec.tolerations = spec.tolerations as V1PodSpec["tolerations"];
+    }
+
+    // Pod-level security context for StatefulSets — ensures PVC mounts are
+    // writable by the agent user (UID/GID 1000). fsGroup sets the group owner
+    // of all files in mounted volumes.
+    if (restartPolicy === "Always") {
+      const podSecCtx = new V1PodSecurityContext();
+      podSecCtx.fsGroup = 1000;
+      podSecCtx.runAsUser = 1000;
+      podSecCtx.runAsGroup = 1000;
+      podSpec.securityContext = podSecCtx;
     }
 
     // Sidecar containers
