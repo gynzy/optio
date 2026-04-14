@@ -1127,7 +1127,7 @@ export const api = {
   runWorkflow: (workflowId: string, params?: Record<string, unknown> | null) =>
     request<{ run: any }>(`/api/workflows/${workflowId}/runs`, {
       method: "POST",
-      body: JSON.stringify({ params: params ?? null }),
+      body: JSON.stringify({ params: params ?? {} }),
     }),
 
   getWorkflowRuns: (workflowId: string) =>

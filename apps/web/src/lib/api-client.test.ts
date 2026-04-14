@@ -216,6 +216,31 @@ describe("api-client", () => {
   });
 
   describe("workflow run operations", () => {
+    it("runWorkflow sends empty object (not null) when no params provided", async () => {
+      mockResponse({ run: { id: "run-1" } });
+      await api.runWorkflow("w-1");
+      const [, opts] = fetchMock.mock.calls[0];
+      const body = JSON.parse(opts.body);
+      expect(body.params).toEqual({});
+      expect(body.params).not.toBeNull();
+    });
+
+    it("runWorkflow sends empty object when explicitly passed undefined", async () => {
+      mockResponse({ run: { id: "run-1" } });
+      await api.runWorkflow("w-1", undefined);
+      const [, opts] = fetchMock.mock.calls[0];
+      const body = JSON.parse(opts.body);
+      expect(body.params).toEqual({});
+    });
+
+    it("runWorkflow sends provided params", async () => {
+      mockResponse({ run: { id: "run-1" } });
+      await api.runWorkflow("w-1", { key: "value" });
+      const [, opts] = fetchMock.mock.calls[0];
+      const body = JSON.parse(opts.body);
+      expect(body.params).toEqual({ key: "value" });
+    });
+
     it("retryWorkflowRun sends POST", async () => {
       mockResponse({ run: { id: "run-1", state: "queued" } });
       const result = await api.retryWorkflowRun("run-1");
