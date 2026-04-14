@@ -59,6 +59,7 @@ async function main() {
   const { startRepoCleanupWorker } = await import("./workers/repo-cleanup-worker.js");
   const { startPrWatcherWorker } = await import("./workers/pr-watcher-worker.js");
   const { startWebhookWorker } = await import("./workers/webhook-worker.js");
+  const { startScheduleWorker } = await import("./workers/schedule-worker.js");
   const { startWorkflowWorker } = await import("./workers/workflow-worker.js");
   const { startWorkflowTriggerWorker } = await import("./workers/workflow-trigger-worker.js");
   const { getBullMQConnectionOptions } = await import("./services/redis-config.js");
@@ -182,6 +183,7 @@ async function main() {
     cleanRepeatJobs("pr-watcher"),
     cleanRepeatJobs("repo-cleanup"),
     cleanRepeatJobs("ticket-sync"),
+    cleanRepeatJobs("schedule-checker"),
     cleanRepeatJobs("workflow-runs"),
     cleanRepeatJobs("workflow-trigger-checker"),
   ]);
@@ -202,6 +204,9 @@ async function main() {
 
   const webhookWorker = startWebhookWorker();
   logger.info("Webhook worker started");
+
+  const scheduleWorker = startScheduleWorker();
+  logger.info("Schedule worker started");
 
   const workflowWorker = startWorkflowWorker();
   logger.info("Workflow worker started");
@@ -226,6 +231,7 @@ async function main() {
     await repoCleanupWorker.close();
     await prWatcherWorker.close();
     await webhookWorker.close();
+    await scheduleWorker.close();
     await workflowWorker.close();
     await workflowTriggerWorker.close();
     await app.close();

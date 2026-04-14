@@ -33,7 +33,7 @@ import { subtaskRoutes } from "./routes/subtasks.js";
 import { analyticsRoutes } from "./routes/analytics.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { sessionRoutes } from "./routes/sessions.js";
-
+import { scheduleRoutes } from "./routes/schedules.js";
 import { commentRoutes } from "./routes/comments.js";
 import { messageRoutes } from "./routes/messages.js";
 import { slackRoutes } from "./routes/slack.js";
@@ -265,6 +265,7 @@ export async function buildServer() {
   await app.register(analyticsRoutes);
   await app.register(webhookRoutes);
   await app.register(sessionRoutes);
+  await app.register(scheduleRoutes);
   await app.register(commentRoutes);
   await app.register(messageRoutes);
   await app.register(slackRoutes);

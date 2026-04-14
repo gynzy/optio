@@ -756,6 +756,109 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // Schedules
+  listSchedules: () =>
+    request<{
+      schedules: Array<{
+        id: string;
+        name: string;
+        description: string | null;
+        cronExpression: string;
+        enabled: boolean;
+        taskConfig: {
+          title: string;
+          prompt: string;
+          repoUrl: string;
+          repoBranch?: string;
+          agentType: string;
+          maxRetries?: number;
+          priority?: number;
+        };
+        lastRunAt: string | null;
+        nextRunAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+    }>("/api/schedules"),
+
+  getSchedule: (id: string) =>
+    request<{
+      schedule: {
+        id: string;
+        name: string;
+        description: string | null;
+        cronExpression: string;
+        enabled: boolean;
+        taskConfig: {
+          title: string;
+          prompt: string;
+          repoUrl: string;
+          repoBranch?: string;
+          agentType: string;
+          maxRetries?: number;
+          priority?: number;
+        };
+        lastRunAt: string | null;
+        nextRunAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>(`/api/schedules/${id}`),
+
+  createSchedule: (data: {
+    name: string;
+    description?: string;
+    cronExpression: string;
+    enabled?: boolean;
+    taskConfig: {
+      title: string;
+      prompt: string;
+      repoUrl: string;
+      repoBranch?: string;
+      agentType: string;
+      maxRetries?: number;
+      priority?: number;
+    };
+  }) =>
+    request<{ schedule: any }>("/api/schedules", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateSchedule: (id: string, data: Record<string, unknown>) =>
+    request<{ schedule: any }>(`/api/schedules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
+
+  triggerSchedule: (id: string) =>
+    request<{ task: any }>(`/api/schedules/${id}/trigger`, { method: "POST" }),
+
+  getScheduleRuns: (id: string, limit?: number) => {
+    const qs = limit ? `?limit=${limit}` : "";
+    return request<{
+      runs: Array<{
+        id: string;
+        scheduleId: string;
+        taskId: string | null;
+        status: string;
+        error: string | null;
+        triggeredAt: string;
+      }>;
+    }>(`/api/schedules/${id}/runs${qs}`);
+  },
+
+  validateCron: (cronExpression: string) =>
+    request<{ valid: boolean; error?: string; nextRun?: string; description?: string }>(
+      "/api/schedules/validate-cron",
+      {
+        method: "POST",
+        body: JSON.stringify({ cronExpression }),
+      },
+    ),
+
   getWsToken: () => request<{ token: string }>("/api/auth/ws-token"),
 
   // Workspaces

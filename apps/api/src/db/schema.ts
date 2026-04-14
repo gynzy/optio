@@ -442,6 +442,53 @@ export const sessionPrs = pgTable(
   (table) => [index("session_prs_session_id_idx").on(table.sessionId)],
 );
 
+export const schedules = pgTable(
+  "schedules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    cronExpression: text("cron_expression").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    taskConfig: jsonb("task_config")
+      .$type<{
+        title: string;
+        prompt: string;
+        repoUrl: string;
+        repoBranch?: string;
+        agentType: string;
+        maxRetries?: number;
+        priority?: number;
+      }>()
+      .notNull(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdBy: uuid("created_by"),
+    workspaceId: uuid("workspace_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("schedules_enabled_next_run_idx").on(table.enabled, table.nextRunAt),
+    index("schedules_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
+export const scheduleRuns = pgTable(
+  "schedule_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scheduleId: uuid("schedule_id")
+      .notNull()
+      .references(() => schedules.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id").references(() => tasks.id),
+    status: text("status").notNull().default("triggered"), // "triggered" | "completed" | "failed"
+    error: text("error"),
+    triggeredAt: timestamp("triggered_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("schedule_runs_schedule_id_idx").on(table.scheduleId)],
+);
+
 export const taskComments = pgTable(
   "task_comments",
   {

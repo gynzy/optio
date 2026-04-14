@@ -21,6 +21,8 @@ import {
   WorkflowRunSchema,
   WorkflowTriggerSchema,
   WorkflowRunLogEntrySchema,
+  ScheduleSchema,
+  ScheduleRunSchema,
   CronValidationResultSchema,
 } from "./workflow.js";
 import {
@@ -85,6 +87,8 @@ export const namedSchemas = {
   WorkflowRun: WorkflowRunSchema,
   WorkflowTrigger: WorkflowTriggerSchema,
   WorkflowRunLogEntry: WorkflowRunLogEntrySchema,
+  Schedule: ScheduleSchema,
+  ScheduleRun: ScheduleRunSchema,
   CronValidationResult: CronValidationResultSchema,
   InteractiveSession: InteractiveSessionSchema,
   SessionModelConfig: SessionModelConfigSchema,
