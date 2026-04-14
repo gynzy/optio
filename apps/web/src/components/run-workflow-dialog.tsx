@@ -31,8 +31,7 @@ export function RunWorkflowDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const hasParams = Object.keys(params).length > 0;
-      const res = await api.runWorkflow(workflowId, hasParams ? params : null);
+      const res = await api.runWorkflow(workflowId, params);
       toast.success("Agent workflow run started");
       onRun?.();
       onClose();
