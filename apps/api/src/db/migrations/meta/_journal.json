@@ -435,6 +435,13 @@
       "when": 1776050234000,
       "tag": "1776050234_auth_events_source",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1776281186000,
+      "tag": "1776281186_opencode_base_url",
+      "breakpoints": true
     }
   ]
 }

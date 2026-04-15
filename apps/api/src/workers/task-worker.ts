@@ -338,6 +338,7 @@ export function startTaskWorker() {
           copilotEffort: repoConfig?.copilotEffort ?? undefined,
           opencodeModel: repoConfig?.opencodeModel ?? undefined,
           opencodeAgent: repoConfig?.opencodeAgent ?? undefined,
+          opencodeBaseUrl: repoConfig?.opencodeBaseUrl ?? undefined,
           geminiAuthMode,
           geminiModel: repoConfig?.geminiModel ?? undefined,
           geminiApprovalMode:

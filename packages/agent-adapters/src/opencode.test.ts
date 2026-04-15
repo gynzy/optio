@@ -104,6 +104,36 @@ describe("OpenCodeAdapter", () => {
       expect(config.env.OPTIO_OPENCODE_AGENT).toBeUndefined();
     });
 
+    it("sets OPENAI_BASE_URL when opencodeBaseUrl is provided", () => {
+      const config = adapter.buildContainerConfig({
+        ...baseInput,
+        opencodeBaseUrl: "http://lightllm-server:8080/v1",
+      });
+      expect(config.env.OPENAI_BASE_URL).toBe("http://lightllm-server:8080/v1");
+    });
+
+    it("sets placeholder OPENAI_API_KEY when opencodeBaseUrl is provided", () => {
+      const config = adapter.buildContainerConfig({
+        ...baseInput,
+        opencodeBaseUrl: "http://localhost:8080/v1",
+      });
+      expect(config.env.OPENAI_API_KEY).toBe("sk-no-key-required");
+    });
+
+    it("does not require provider API key secrets when opencodeBaseUrl is set", () => {
+      const config = adapter.buildContainerConfig({
+        ...baseInput,
+        opencodeBaseUrl: "http://localhost:8080/v1",
+      });
+      expect(config.requiredSecrets).not.toContain("ANTHROPIC_API_KEY");
+      expect(config.requiredSecrets).not.toContain("OPENAI_API_KEY");
+    });
+
+    it("does not set OPENAI_BASE_URL when opencodeBaseUrl is not provided", () => {
+      const config = adapter.buildContainerConfig(baseInput);
+      expect(config.env.OPENAI_BASE_URL).toBeUndefined();
+    });
+
     it("includes opencode config as setup file", () => {
       const config = adapter.buildContainerConfig(baseInput);
       const configFile = config.setupFiles?.find((f) =>
