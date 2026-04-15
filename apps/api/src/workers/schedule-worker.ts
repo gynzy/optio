@@ -53,6 +53,8 @@ export function startScheduleWorker() {
             maxRetries: config.maxRetries,
             priority: config.priority,
             metadata: { scheduleId: schedule.id, scheduleName: schedule.name },
+            createdBy: schedule.createdBy ?? undefined,
+            workspaceId: schedule.workspaceId ?? null,
           });
 
           await taskService.transitionTask(task.id, TaskState.QUEUED, "schedule_trigger");
