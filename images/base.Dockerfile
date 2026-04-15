@@ -69,8 +69,11 @@ COPY scripts/optio-gh-wrapper /usr/local/bin/optio-gh-wrapper
 COPY scripts/optio-glab-wrapper /usr/local/bin/optio-glab-wrapper
 RUN chmod +x /usr/local/bin/optio-git-credential /usr/local/bin/optio-gh-wrapper /usr/local/bin/optio-glab-wrapper
 
-# Non-root user
-RUN useradd -m -s /bin/bash agent \
+# Non-root user (UID 1000 to match k8s securityContext)
+# Ubuntu 24.04 ships with 'ubuntu' user at UID 1000 — remove it first
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupadd -g 1000 agent \
+    && useradd -m -s /bin/bash -u 1000 -g 1000 agent \
     && chown -R agent:agent /workspace
 USER agent
 WORKDIR /workspace
