@@ -31,6 +31,17 @@ Optio is an orchestration system for AI coding agents. Think of it as "CI/CD whe
 
 **Backend-naming note.** For historical reasons the tables are `tasks` (Repo Tasks' one-time runs), `task_configs` (Repo Task blueprints), and `workflows` / `workflow_runs` / `workflow_triggers` (Standalone Tasks and their shared trigger surface). User-facing copy never uses "Workflow" or "Job" — everything is "Task" / "Repo Task" / "Standalone Task" in the UI. The legacy `/api/workflows` path was renamed to `/api/jobs` at the HTTP layer and the `/jobs/*` web routes remain for Standalone detail/runs.
 
+**Unified `/api/tasks` HTTP layer.** All three kinds (`repo-task`, `repo-blueprint`, `standalone`) are reachable through one polymorphic HTTP resource:
+
+- `GET /api/tasks?type=repo-task|repo-blueprint|standalone|all` — unified list
+- `POST /api/tasks` — body takes `{ type, ... }`; dispatches to taskService, taskConfigService, or workflowService based on type
+- `GET /api/tasks/:id` — resolves the id across all three tables; returns native row tagged with `type` discriminator
+- `GET/POST /api/tasks/:id/runs[/:runId]` — polymorphic runs (spawned `tasks` for blueprints, `workflow_runs` for standalone, 405 for ad-hoc)
+- `GET/POST/PATCH/DELETE /api/tasks/:id/triggers[/:triggerId]` — polymorphic triggers (405 for ad-hoc repo-task)
+- Resolver: `unified-task-service.resolveAnyTaskById()` checks tasks → task_configs → workflows; UUIDs are globally unique so no collision
+
+Legacy `/api/jobs/*` and `/api/task-configs/*` endpoints still work as thin aliases for back-compat.
+
 ## Architecture
 
 ```

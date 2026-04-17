@@ -1298,7 +1298,118 @@ export const api = {
     }>(`/api/activity${query ? `?${query}` : ""}`);
   },
 
-  // ── Task Configs ──────────────────────────────────────────────────────────
+  // ── Unified Tasks (polymorphic over repo-task | repo-blueprint | standalone) ──
+
+  /**
+   * List tasks, polymorphic. Without a `type`, returns repo-tasks in the
+   * existing enriched shape (back-compat). With a `type`, returns the
+   * requested kind tagged with a `type` field per row.
+   */
+  listTasksUnified: (opts?: {
+    type?: "repo-task" | "repo-blueprint" | "standalone" | "all";
+    state?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (opts?.type) qs.set("type", opts.type);
+    if (opts?.state) qs.set("state", opts.state);
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    if (opts?.offset) qs.set("offset", String(opts.offset));
+    const query = qs.toString();
+    return request<{ tasks: any[]; limit: number; offset: number }>(
+      `/api/tasks${query ? `?${query}` : ""}`,
+    );
+  },
+
+  /**
+   * Create a Task, polymorphic. `type` defaults to "repo-task" (existing
+   * ad-hoc Repo Task behavior). Use "repo-blueprint" for a scheduled Repo
+   * Task config, "standalone" for a Standalone Task.
+   */
+  createTaskUnified: (data: {
+    type?: "repo-task" | "repo-blueprint" | "standalone";
+    title?: string;
+    name?: string;
+    prompt: string;
+    description?: string;
+    agentType?: string;
+    maxRetries?: number;
+    repoUrl?: string;
+    repoBranch?: string;
+    priority?: number;
+    ticketSource?: string;
+    ticketExternalId?: string;
+    metadata?: Record<string, unknown>;
+    dependsOn?: string[];
+    enabled?: boolean;
+  }) =>
+    request<{ task: any }>("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  /**
+   * Get a Task by id. The returned task has a `type` discriminator so
+   * callers can branch per shape.
+   */
+  getTaskUnified: (id: string) =>
+    request<{
+      task: any;
+      pendingReason?: string | null;
+      pipelineProgress?: any | null;
+      stallInfo?: any | null;
+    }>(`/api/tasks/${id}`),
+
+  /** List runs under a Task (blueprint/standalone only). */
+  listTaskRuns: (id: string) => request<{ runs: any[] }>(`/api/tasks/${id}/runs`),
+
+  /** Kick off a run on a Task (blueprint/standalone only). */
+  createTaskRun: (id: string, params?: Record<string, unknown>) =>
+    request<{ runId: string; type: string }>(`/api/tasks/${id}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ params: params ?? {} }),
+    }),
+
+  /** Get a single run under a Task. */
+  getTaskRun: (id: string, runId: string) =>
+    request<{ run: any }>(`/api/tasks/${id}/runs/${runId}`),
+
+  /** List triggers on a Task (blueprint/standalone only). */
+  listTaskTriggers: (id: string) => request<{ triggers: any[] }>(`/api/tasks/${id}/triggers`),
+
+  createTaskTrigger: (
+    id: string,
+    data: {
+      type: "manual" | "schedule" | "webhook" | "ticket";
+      config?: Record<string, unknown>;
+      paramMapping?: Record<string, unknown>;
+      enabled?: boolean;
+    },
+  ) =>
+    request<{ trigger: any }>(`/api/tasks/${id}/triggers`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateTaskTrigger: (
+    id: string,
+    triggerId: string,
+    data: Partial<{
+      config: Record<string, unknown>;
+      paramMapping: Record<string, unknown>;
+      enabled: boolean;
+    }>,
+  ) =>
+    request<{ trigger: any }>(`/api/tasks/${id}/triggers/${triggerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteTaskTrigger: (id: string, triggerId: string) =>
+    request<null>(`/api/tasks/${id}/triggers/${triggerId}`, { method: "DELETE" }),
+
+  // ── Task Configs (legacy — prefer unified /api/tasks endpoints above) ─────
 
   listTaskConfigs: () => request<{ taskConfigs: any[] }>("/api/task-configs"),
 

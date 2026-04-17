@@ -11,21 +11,25 @@ import {
   Link2,
   Clock,
   Play,
-  FolderGit2,
+  GitPullRequest,
+  Terminal,
   GitBranch as GitBranchIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { TriggerSelector, type TriggerConfig, cronIsValid } from "@/components/trigger-selector";
 
 type RunMode = "now" | "schedule";
+type TaskMode = "repo" | "standalone";
 
 export default function NewTaskPage() {
   usePageTitle("New Task");
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
-  // Repo attachment state
-  const [attachRepo, setAttachRepo] = useState(false);
+  // Mode: repo-attached (produces PR) or standalone (agent run, no repo)
+  const [mode, setMode] = useState<TaskMode>("repo");
+
   const [repos, setRepos] = useState<any[]>([]);
   const [reposLoading, setReposLoading] = useState(true);
 
@@ -58,7 +62,11 @@ export default function NewTaskPage() {
   useEffect(() => {
     api
       .listRepos()
-      .then((res) => setRepos(res.repos))
+      .then((res) => {
+        setRepos(res.repos);
+        // Default to standalone when no repos are configured.
+        if (res.repos.length === 0) setMode("standalone");
+      })
       .catch(() => {})
       .finally(() => setReposLoading(false));
     api
@@ -67,9 +75,9 @@ export default function NewTaskPage() {
       .catch(() => {});
   }, []);
 
-  // When the user toggles on "Attach a repo", pre-select the first repo.
+  // When switching into repo mode or loading repos, pre-select the first.
   useEffect(() => {
-    if (attachRepo && !form.repoId && repos.length > 0) {
+    if (mode === "repo" && !form.repoId && repos.length > 0) {
       const first = repos[0];
       setForm((f) => ({
         ...f,
@@ -79,7 +87,7 @@ export default function NewTaskPage() {
         agentType: first.defaultAgentType ?? f.agentType,
       }));
     }
-  }, [attachRepo, form.repoId, repos]);
+  }, [mode, form.repoId, repos]);
 
   const handleRepoChange = (repoId: string) => {
     const repo = repos.find((r: any) => r.id === repoId);
@@ -110,75 +118,34 @@ export default function NewTaskPage() {
         return;
       }
 
-      // ── Branch 1: Repo Task, run now ────────────────────────────────────
-      if (attachRepo && runMode === "now") {
-        const res = await api.createTask({
-          title: form.title,
-          prompt: form.prompt,
-          repoUrl: form.repoUrl,
-          repoBranch: form.repoBranch,
-          agentType: form.agentType,
-          maxRetries: form.maxRetries,
-          priority: form.priority,
-          ...(selectedDeps.length > 0 ? { dependsOn: selectedDeps } : {}),
-        });
-        toast.success("Task created", {
-          description: `"${form.title}" has been queued.`,
-        });
-        router.push(`/tasks/${res.task.id}`);
-        return;
-      }
+      // Pick the unified `type` from the UI mode + run mode:
+      //   mode=repo + runMode=now     → repo-task (ad-hoc)
+      //   mode=repo + runMode=schedule → repo-blueprint + trigger
+      //   mode=standalone             → standalone + optional trigger + optional run
+      const apiType =
+        mode === "standalone"
+          ? "standalone"
+          : runMode === "schedule"
+            ? "repo-blueprint"
+            : "repo-task";
 
-      // ── Branch 2: Repo Task, scheduled ──────────────────────────────────
-      if (attachRepo && runMode === "schedule") {
-        const name = scheduleName.trim() || form.title.trim();
-        if (!name) {
-          toast.error("Name required for scheduled tasks");
-          setLoading(false);
-          return;
-        }
-        const created = await api.createTaskConfig({
-          name,
-          description: form.description || undefined,
-          title: form.title,
-          prompt: form.prompt,
-          repoUrl: form.repoUrl,
-          repoBranch: form.repoBranch,
-          agentType: form.agentType,
-          maxRetries: form.maxRetries,
-          priority: form.priority,
-          enabled: true,
-        });
-        if (trigger.type !== "manual") {
-          const config: Record<string, unknown> =
-            trigger.type === "schedule"
-              ? { cronExpression: trigger.cronExpression!.trim() }
-              : trigger.type === "webhook"
-                ? { path: trigger.webhookPath }
-                : {};
-          await api.createTaskConfigTrigger(created.taskConfig.id, {
-            type: trigger.type,
-            config,
-            enabled: true,
-          });
-        }
-        toast.success("Scheduled task created", { description: `"${name}" saved.` });
-        router.push(`/tasks/scheduled/${created.taskConfig.id}`);
-        return;
-      }
-
-      // ── Branch 3 + 4: Standalone Task (workflow) ────────────────────────
-      const workflowName =
-        scheduleName.trim() || form.title.trim() || `Task ${new Date().toISOString().slice(0, 10)}`;
-      const workflow = await api.createWorkflow({
-        name: workflowName,
+      const created = await api.createTaskUnified({
+        type: apiType,
+        title: form.title,
+        name: scheduleName.trim() || form.title.trim() || undefined,
+        prompt: form.prompt,
         description: form.description || undefined,
-        promptTemplate: form.prompt,
-        agentRuntime: form.agentType,
+        agentType: form.agentType,
         maxRetries: form.maxRetries,
+        repoUrl: mode === "repo" ? form.repoUrl : undefined,
+        repoBranch: mode === "repo" ? form.repoBranch : undefined,
+        priority: mode === "repo" ? form.priority : undefined,
+        ...(selectedDeps.length > 0 && apiType === "repo-task" ? { dependsOn: selectedDeps } : {}),
         enabled: true,
       });
+      const createdId = created.task.id as string;
 
+      // Attach a trigger when scheduling.
       if (runMode === "schedule" && trigger.type !== "manual") {
         const config: Record<string, unknown> =
           trigger.type === "schedule"
@@ -186,24 +153,32 @@ export default function NewTaskPage() {
             : trigger.type === "webhook"
               ? { path: trigger.webhookPath }
               : {};
-        await api.createWorkflowTrigger(workflow.workflow.id, {
+        await api.createTaskTrigger(createdId, {
           type: trigger.type,
           config,
           enabled: true,
         });
-        toast.success("Scheduled task created", {
-          description: `"${workflowName}" saved.`,
-        });
-        router.push(`/jobs/${workflow.workflow.id}`);
+      }
+
+      // Standalone + Run now → create workflow THEN kick off a run.
+      if (apiType === "standalone" && runMode === "now") {
+        const run = await api.createTaskRun(createdId);
+        toast.success("Task started");
+        router.push(`/jobs/${createdId}/runs/${run.runId}`);
         return;
       }
 
-      // Run-now standalone: create workflow and immediately kick off a run
-      const run = await api.runWorkflow(workflow.workflow.id, {});
-      toast.success("Task started", {
-        description: `"${workflowName}" is running.`,
-      });
-      router.push(`/jobs/${workflow.workflow.id}/runs/${run.run.id}`);
+      if (apiType === "repo-task") {
+        toast.success("Task created", { description: `"${form.title}" has been queued.` });
+        router.push(`/tasks/${createdId}`);
+        return;
+      }
+
+      // scheduled (repo-blueprint or standalone with schedule)
+      toast.success("Scheduled task created");
+      router.push(
+        apiType === "repo-blueprint" ? `/tasks/scheduled/${createdId}` : `/jobs/${createdId}`,
+      );
     } catch (err) {
       toast.error("Failed to create task", {
         description: err instanceof Error ? err.message : "Unknown error",
@@ -213,22 +188,85 @@ export default function NewTaskPage() {
     }
   };
 
-  const canSubmit = !loading && form.title && form.prompt && (!attachRepo || form.repoUrl);
+  const canSubmit = !loading && form.title && form.prompt && (mode !== "repo" || form.repoUrl);
+
+  const submitLabel =
+    runMode === "schedule"
+      ? mode === "repo"
+        ? "Save scheduled Repo Task"
+        : "Save scheduled Standalone Task"
+      : mode === "repo"
+        ? "Start Task (opens a PR)"
+        : "Start Task";
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <h1 className="text-2xl font-semibold tracking-tight mb-2">New Task</h1>
       <p className="text-sm text-text-muted mb-6">
-        Configure an agent to do something. Attach a repo to turn it into a Repo Task that opens a
-        PR.
+        Configure an agent to do something. Pick a mode first — repo-attached tasks open a PR,
+        standalone tasks don&apos;t.
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* ── Run mode ──────────────────────────────────── */}
+        {/* ── Mode picker (the first, biggest choice) ──────────────────── */}
         <div>
-          <label className="block text-xs uppercase tracking-wider text-text-muted/60 mb-2">
-            When
-          </label>
+          <div className="text-xs uppercase tracking-wider text-text-muted/60 mb-2">Task type</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ModeCard
+              active={mode === "repo"}
+              onClick={() => setMode("repo")}
+              icon={<GitPullRequest className="w-5 h-5" />}
+              title="Repo Task"
+              subtitle="Opens a PR against your repo"
+              description="Agent clones a repo, modifies code on a branch, and opens a pull request. Full CI + review pipeline."
+              disabled={repos.length === 0}
+              disabledHint={
+                repos.length === 0 ? (
+                  <>
+                    No repos yet —{" "}
+                    <a href="/repos" className="text-primary hover:underline">
+                      add one
+                    </a>
+                    .
+                  </>
+                ) : null
+              }
+            />
+            <ModeCard
+              active={mode === "standalone"}
+              onClick={() => setMode("standalone")}
+              icon={<Terminal className="w-5 h-5" />}
+              title="Standalone Task"
+              subtitle="Runs the agent, no PR"
+              description="Agent runs in an isolated pod with no git checkout. Output is logs + side effects via Connections."
+            />
+          </div>
+        </div>
+
+        {/* ── Outcome banner ──────────────────────────────────── */}
+        <div
+          className={cn(
+            "flex items-start gap-2 px-3 py-2 rounded-md border text-xs",
+            mode === "repo"
+              ? "border-primary/20 bg-primary/5 text-primary"
+              : "border-text-muted/20 bg-bg-card text-text-muted",
+          )}
+        >
+          {mode === "repo" ? (
+            <GitPullRequest className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          ) : (
+            <Terminal className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          )}
+          <span>
+            {mode === "repo"
+              ? "When this task runs, the agent will clone the selected repo, make changes on a branch, and open a PR — ready for CI and review."
+              : "When this task runs, the agent will execute in an isolated pod with no repo checkout. Results land in the run logs; side effects happen through Connections."}
+          </span>
+        </div>
+
+        {/* ── When ──────────────────────────────────── */}
+        <div>
+          <div className="text-xs uppercase tracking-wider text-text-muted/60 mb-2">When</div>
           <div className="flex gap-2 p-1 rounded-lg bg-bg-card border border-border w-fit">
             <button
               type="button"
@@ -265,7 +303,9 @@ export default function NewTaskPage() {
               required
               value={form.title}
               onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-              placeholder="Daily CVE patches"
+              placeholder={
+                mode === "repo" ? "Fix dependency vulnerabilities" : "Weekly security report"
+              }
               className="w-full px-3 py-2 rounded-lg bg-bg-card border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
             />
           </div>
@@ -276,7 +316,11 @@ export default function NewTaskPage() {
               rows={6}
               value={form.prompt}
               onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))}
-              placeholder="Describe what the agent should do. Be specific."
+              placeholder={
+                mode === "repo"
+                  ? "Describe the change. Be specific about files to modify and expected behavior."
+                  : "Describe what the agent should do. Reference Connections for external systems."
+              }
               className="w-full px-3 py-2 rounded-lg bg-bg-card border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors resize-y"
             />
             <p className="text-xs text-text-muted/60 mt-1">
@@ -323,30 +367,11 @@ export default function NewTaskPage() {
           </select>
         </div>
 
-        {/* ── Where (optional repo) ──────────────────────────────────── */}
-        <div>
-          <div className="text-xs uppercase tracking-wider text-text-muted/60 mb-2">Where</div>
-          <label className="flex items-start gap-3 p-3 rounded-lg bg-bg-card border border-border cursor-pointer hover:border-primary/40 transition-colors">
-            <input
-              type="checkbox"
-              checked={attachRepo}
-              onChange={(e) => setAttachRepo(e.target.checked)}
-              className="mt-0.5"
-            />
-            <div className="flex-1">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <FolderGit2 className="w-4 h-4" />
-                Attach a repo
-              </div>
-              <p className="text-xs text-text-muted mt-0.5">
-                Runs the agent against a specific repository on a git branch. The agent opens a PR
-                when it's done (Repo Task).
-              </p>
-            </div>
-          </label>
-
-          {attachRepo && (
-            <div className="mt-3 p-4 rounded-lg border border-border bg-bg-card/60 space-y-3">
+        {/* ── Where (repo — only for Repo Tasks) ──────────────────────── */}
+        {mode === "repo" && (
+          <div>
+            <div className="text-xs uppercase tracking-wider text-text-muted/60 mb-2">Where</div>
+            <div className="p-4 rounded-lg border border-border bg-bg-card/60 space-y-3">
               {reposLoading ? (
                 <div className="flex items-center gap-2 text-text-muted text-sm py-2">
                   <Loader2 className="w-4 h-4 animate-spin" /> Loading repos...
@@ -356,7 +381,7 @@ export default function NewTaskPage() {
                   <div>
                     <label className="block text-sm text-text-muted mb-1.5">Repository</label>
                     <select
-                      required={attachRepo}
+                      required
                       value={form.repoId}
                       onChange={(e) => handleRepoChange(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
@@ -387,7 +412,7 @@ export default function NewTaskPage() {
                   <a href="/repos" className="text-primary hover:underline">
                     Add a repo
                   </a>{" "}
-                  first.
+                  first, or switch to Standalone above.
                 </div>
               )}
 
@@ -439,10 +464,10 @@ export default function NewTaskPage() {
                 </div>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* ── Why (description) ──────────────────────────────────── */}
+        {/* ── Why ──────────────────────────────────── */}
         <div>
           <div className="text-xs uppercase tracking-wider text-text-muted/60 mb-2">Why</div>
           <label className="block text-sm text-text-muted mb-1.5">
@@ -457,8 +482,8 @@ export default function NewTaskPage() {
           />
         </div>
 
-        {/* ── Priority (repo tasks) ──────────────────────────────────── */}
-        {attachRepo && (
+        {/* Priority (repo tasks) */}
+        {mode === "repo" && (
           <div>
             <label className="block text-sm text-text-muted mb-1.5">Priority</label>
             <p className="text-xs text-text-muted/60 mb-1.5">
@@ -475,7 +500,7 @@ export default function NewTaskPage() {
           </div>
         )}
 
-        {/* ── Submit ──────────────────────────────────── */}
+        {/* Submit */}
         <div>
           <button
             type="submit"
@@ -486,19 +511,61 @@ export default function NewTaskPage() {
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : runMode === "schedule" ? (
               <Clock className="w-4 h-4" />
+            ) : mode === "repo" ? (
+              <GitPullRequest className="w-4 h-4" />
             ) : (
               <Sparkles className="w-4 h-4" />
             )}
-            {loading
-              ? "Creating..."
-              : runMode === "schedule"
-                ? "Create Schedule"
-                : attachRepo
-                  ? "Create Repo Task"
-                  : "Run Task"}
+            {loading ? "Creating..." : submitLabel}
           </button>
         </div>
       </form>
     </div>
+  );
+}
+
+function ModeCard({
+  active,
+  onClick,
+  icon,
+  title,
+  subtitle,
+  description,
+  disabled,
+  disabledHint,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  description: string;
+  disabled?: boolean;
+  disabledHint?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      className={cn(
+        "p-4 rounded-lg border-2 text-left transition-all",
+        active
+          ? "border-primary bg-primary/5"
+          : disabled
+            ? "border-border bg-bg-card/40 opacity-60 cursor-not-allowed"
+            : "border-border bg-bg-card hover:border-primary/40 cursor-pointer",
+      )}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className={cn(active ? "text-primary" : "text-text-muted")}>{icon}</span>
+        <h3 className="font-semibold text-sm">{title}</h3>
+      </div>
+      <p className={cn("text-xs font-medium mb-1.5", active ? "text-primary" : "text-text")}>
+        {subtitle}
+      </p>
+      <p className="text-xs text-text-muted leading-relaxed">{description}</p>
+      {disabled && disabledHint && <p className="text-xs text-text-muted mt-2">{disabledHint}</p>}
+    </button>
   );
 }

@@ -99,19 +99,75 @@ export default function ApiReferencePage() {
 
       <h2 className="mt-10 text-2xl font-bold text-text-heading">Tasks</h2>
       <p className="mt-3 text-text-muted leading-relaxed">
-        Tasks are the core resource. Each task represents an agent run against a repository.
+        Tasks are the core resource. The <code>/api/tasks</code> endpoint is polymorphic over three
+        kinds, distinguished by a <code>type</code> field:
       </p>
+      <ul className="mt-3 list-disc pl-5 space-y-1 text-[14px] text-text-muted">
+        <li>
+          <strong>repo-task</strong> — an ad-hoc Repo Task (agent clones repo, opens PR).
+        </li>
+        <li>
+          <strong>repo-blueprint</strong> — a scheduled Repo Task config; triggers spawn fresh runs.
+        </li>
+        <li>
+          <strong>standalone</strong> — a Standalone Task (agent runs with no repo).
+        </li>
+      </ul>
       <RouteTable
         routes={[
           {
             method: "GET",
-            path: "/api/tasks",
-            description: "List tasks (filterable by state, repo, type)",
+            path: "/api/tasks?type=...",
+            description:
+              "List tasks (type=repo-task|repo-blueprint|standalone|all; default repo-task)",
           },
-          { method: "POST", path: "/api/tasks", description: "Create a new task" },
-          { method: "GET", path: "/api/tasks/:id", description: "Get task details" },
+          {
+            method: "POST",
+            path: "/api/tasks",
+            description: "Create a task (body.type discriminates the kind)",
+          },
+          {
+            method: "GET",
+            path: "/api/tasks/:id",
+            description: "Get any task by id; response includes a type discriminator",
+          },
           { method: "PATCH", path: "/api/tasks/:id", description: "Update a task" },
           { method: "DELETE", path: "/api/tasks/:id", description: "Delete a task" },
+          {
+            method: "GET",
+            path: "/api/tasks/:id/runs",
+            description: "List runs under a blueprint or standalone Task",
+          },
+          {
+            method: "POST",
+            path: "/api/tasks/:id/runs",
+            description: "Kick off a run (for blueprints/standalone)",
+          },
+          {
+            method: "GET",
+            path: "/api/tasks/:id/runs/:runId",
+            description: "Get a single run",
+          },
+          {
+            method: "GET",
+            path: "/api/tasks/:id/triggers",
+            description: "List triggers on a blueprint or standalone Task",
+          },
+          {
+            method: "POST",
+            path: "/api/tasks/:id/triggers",
+            description: "Attach a trigger (schedule/webhook/ticket/manual)",
+          },
+          {
+            method: "PATCH",
+            path: "/api/tasks/:id/triggers/:triggerId",
+            description: "Update a trigger",
+          },
+          {
+            method: "DELETE",
+            path: "/api/tasks/:id/triggers/:triggerId",
+            description: "Delete a trigger",
+          },
           {
             method: "POST",
             path: "/api/tasks/:id/cancel",
