@@ -46,7 +46,7 @@ local releaseServices = [
   { name: 'optio', dockerfile: 'Dockerfile.optio' },
 ];
 
-local agentPresets = ['node', 'python', 'go', 'rust', 'full'];
+local agentPresets = ['node', 'python', 'go', 'rust', 'ruby', 'dart', 'full'];
 
 // ── CI ──────────────────────────────────────────────────────────────────────
 local ci = base.pipeline(

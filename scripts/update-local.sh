@@ -53,7 +53,7 @@ WEB_PID=$!
 if [ "$QUICK" = false ]; then
   # Check if any agent image needs rebuilding
   REBUILD_AGENTS=false
-  for preset in base node python go rust full; do
+  for preset in base node python go rust ruby dart full; do
     if ! docker image inspect "optio-${preset}:latest" &>/dev/null; then
       REBUILD_AGENTS=true
       break
@@ -68,6 +68,8 @@ if [ "$QUICK" = false ]; then
     docker build -t optio-python:latest -f images/python.Dockerfile . -q &
     docker build -t optio-go:latest -f images/go.Dockerfile . -q &
     docker build -t optio-rust:latest -f images/rust.Dockerfile . -q &
+    docker build -t optio-ruby:latest -f images/ruby.Dockerfile . -q &
+    docker build -t optio-dart:latest -f images/dart.Dockerfile . -q &
     wait
     docker build -t optio-full:latest -f images/full.Dockerfile . -q
   fi
