@@ -1063,52 +1063,22 @@ export function startTaskWorker() {
             detectedPrUrl,
           );
           log.info({ prUrl: detectedPrUrl }, "PR opened");
-        } else if (result.success || isReviewTask) {
-          // For pr_review tasks, parse the structured review output before cleanup
-          if (task.taskType === "pr_review") {
-            try {
-              const { parseReviewOutput } = await import("../services/pr-review-service.js");
-              await parseReviewOutput(taskId);
-            } catch (err) {
-              log.warn({ err }, "Failed to parse pr_review output — draft may need manual editing");
-            }
-          }
-          // Planning mode: agent finished planning — wait for human approval
-          if (isPlanningRun && !isReviewTask) {
-            await repoPool.updateWorktreeState(taskId, "preserved");
-            await taskService.transitionTask(
-              taskId,
-              TaskState.NEEDS_ATTENTION,
-              "plan_review",
-              "Agent has created an implementation plan and is waiting for approval",
-            );
-            log.info("Planning phase complete — awaiting human review");
-          } else {
-            await repoPool.updateWorktreeState(taskId, "removed");
-            await taskService.transitionTask(
-              taskId,
-              TaskState.COMPLETED,
-              "agent_success",
-              result.summary,
-            );
-            log.info("Task completed");
-          }
         } else {
-          // Before failing, check if a PR was actually created via the API.
+          // No PR detected from logs — check via API before deciding success/failure.
           // Log-based PR detection can miss URLs (e.g. agent created a PR but
-          // the URL wasn't in stdout, or repo validation filtered it out).
+          // the URL wasn't in stdout, or repo validation filtered it out, or
+          // force-redo cleared the prUrl field).
           let apiFallbackPr: ExistingPr | null = null;
           if (!isReviewTask) {
             try {
               apiFallbackPr = await checkExistingPr(task.repoUrl, taskId, taskWorkspaceId);
             } catch {
-              // Non-fatal — proceed with failure
+              // Non-fatal — proceed with success/failure logic
             }
           }
 
           if (apiFallbackPr) {
-            // PR exists despite agent reporting failure — go to pr_opened so the
-            // PR watcher can track CI/review and auto-resume works correctly.
+            // PR exists — go to pr_opened so the PR watcher can track CI/review
             await taskService.updateTaskPr(taskId, apiFallbackPr.url);
             await repoPool.updateWorktreeState(taskId, "preserved");
             await taskService.transitionTask(
@@ -1118,9 +1088,42 @@ export function startTaskWorker() {
               apiFallbackPr.url,
             );
             log.info(
-              { prUrl: apiFallbackPr.url, inferredError: result.error },
-              "PR found via API fallback — transitioning to pr_opened instead of failed",
+              { prUrl: apiFallbackPr.url, agentSuccess: result.success },
+              "PR found via API fallback — transitioning to pr_opened",
             );
+          } else if (result.success || isReviewTask) {
+            // For pr_review tasks, parse the structured review output before cleanup
+            if (task.taskType === "pr_review") {
+              try {
+                const { parseReviewOutput } = await import("../services/pr-review-service.js");
+                await parseReviewOutput(taskId);
+              } catch (err) {
+                log.warn(
+                  { err },
+                  "Failed to parse pr_review output — draft may need manual editing",
+                );
+              }
+            }
+            // Planning mode: agent finished planning — wait for human approval
+            if (isPlanningRun && !isReviewTask) {
+              await repoPool.updateWorktreeState(taskId, "preserved");
+              await taskService.transitionTask(
+                taskId,
+                TaskState.NEEDS_ATTENTION,
+                "plan_review",
+                "Agent has created an implementation plan and is waiting for approval",
+              );
+              log.info("Planning phase complete — awaiting human review");
+            } else {
+              await repoPool.updateWorktreeState(taskId, "removed");
+              await taskService.transitionTask(
+                taskId,
+                TaskState.COMPLETED,
+                "agent_success",
+                result.summary,
+              );
+              log.info("Task completed");
+            }
           } else {
             await repoPool.updateWorktreeState(taskId, "dirty");
             await taskService.transitionTask(
