@@ -19,12 +19,8 @@ const adapters: Record<string, AgentAdapter> = {
   codex: new CodexAdapter(),
   copilot: new CopilotAdapter(),
   gemini: new GeminiAdapter(),
+  opencode: new OpenCodeAdapter(),
 };
-
-// OpenCode is experimental — only register when explicitly enabled
-if (process.env.OPTIO_OPENCODE_ENABLED === "true") {
-  adapters.opencode = new OpenCodeAdapter();
-}
 
 // OpenClaw is experimental — only register when explicitly enabled
 if (process.env.OPTIO_OPENCLAW_ENABLED === "true") {
@@ -34,11 +30,6 @@ if (process.env.OPTIO_OPENCLAW_ENABLED === "true") {
 export function getAdapter(type: string): AgentAdapter {
   const adapter = adapters[type];
   if (!adapter) {
-    if (type === "opencode" && process.env.OPTIO_OPENCODE_ENABLED !== "true") {
-      throw new Error(
-        "OpenCode adapter is disabled. Set OPTIO_OPENCODE_ENABLED=true to enable it.",
-      );
-    }
     if (type === "openclaw" && process.env.OPTIO_OPENCLAW_ENABLED !== "true") {
       throw new Error(
         "OpenClaw adapter is disabled. Set OPTIO_OPENCLAW_ENABLED=true to enable it.",

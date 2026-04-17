@@ -133,7 +133,7 @@ function ActivityCard({ item }: { item: ActivityItem }) {
     item.resourceType === "task" && item.resourceId
       ? `/tasks/${item.resourceId}`
       : item.resourceType === "workflow" && item.resourceId
-        ? `/workflows/${item.resourceId}`
+        ? `/jobs/${item.resourceId}`
         : item.resourceType === "session" && item.resourceId
           ? `/sessions/${item.resourceId}`
           : null;

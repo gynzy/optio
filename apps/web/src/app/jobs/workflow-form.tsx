@@ -435,10 +435,10 @@ export function WorkflowForm({
       if (mode === "create") {
         const res = await api.createWorkflow(payload as any);
         savedWorkflowId = res.workflow.id;
-        toast.success("Agent workflow created");
+        toast.success("Task created");
       } else {
         await api.updateWorkflow(savedWorkflowId!, payload);
-        toast.success("Agent workflow updated");
+        toast.success("Task updated");
       }
 
       // Save triggers
@@ -464,9 +464,9 @@ export function WorkflowForm({
         }
       }
 
-      router.push(`/workflows/${savedWorkflowId}`);
+      router.push(`/jobs/${savedWorkflowId}`);
     } catch (err) {
-      toast.error(`Failed to ${mode === "create" ? "create" : "update"} agent workflow`, {
+      toast.error(`Failed to ${mode === "create" ? "create" : "update"} job`, {
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
@@ -482,7 +482,7 @@ export function WorkflowForm({
       <section className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-4">
         <div>
           <h2 className="text-sm font-medium mb-1">Basics</h2>
-          <p className="text-xs text-text-muted">Name and description for this agent workflow.</p>
+          <p className="text-xs text-text-muted">Name and description for this job.</p>
         </div>
 
         <div>
@@ -503,7 +503,7 @@ export function WorkflowForm({
             rows={2}
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            placeholder="Optional description of what this agent workflow does"
+            placeholder="Optional description of what this job does"
             className={INPUT_CLASS + " resize-y"}
           />
         </div>
@@ -706,7 +706,7 @@ export function WorkflowForm({
         <div>
           <h2 className="text-sm font-medium mb-1">Parameters</h2>
           <p className="text-xs text-text-muted">
-            Define input parameters for this agent workflow. These are filled at runtime.
+            Define input parameters for this job. These are filled at runtime.
           </p>
         </div>
 
@@ -723,7 +723,7 @@ export function WorkflowForm({
           <div>
             <h2 className="text-sm font-medium mb-1">Triggers</h2>
             <p className="text-xs text-text-muted">
-              How this agent workflow gets started: manually, on a schedule, or via webhook.
+              How this job gets started: manually, on a schedule, or via webhook.
             </p>
           </div>
           <button
@@ -738,7 +738,7 @@ export function WorkflowForm({
 
         {visibleTriggers.length === 0 && (
           <p className="text-xs text-text-muted/60 py-2">
-            No triggers configured. Add a trigger to automate agent workflow execution.
+            No triggers configured. Add a trigger to automate job execution.
           </p>
         )}
 
@@ -831,11 +831,11 @@ export function WorkflowForm({
           className="flex items-center gap-2 px-6 py-2.5 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          {saving ? "Saving..." : mode === "create" ? "Create Agent Workflow" : "Save Changes"}
+          {saving ? "Saving..." : mode === "create" ? "Create Task" : "Save Changes"}
         </button>
         <button
           type="button"
-          onClick={() => router.push("/workflows")}
+          onClick={() => router.push("/jobs")}
           className="px-4 py-2.5 rounded-md bg-bg-card border border-border text-text-muted text-sm font-medium hover:text-text hover:bg-bg-hover transition-colors"
         >
           Cancel

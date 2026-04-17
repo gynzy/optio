@@ -45,6 +45,8 @@ import { mcpServerRoutes } from "./routes/mcp-servers.js";
 import { connectionRoutes } from "./routes/connections.js";
 import { skillRoutes } from "./routes/skills.js";
 import { workflowRoutes } from "./routes/workflows.js";
+import { taskConfigRoutes } from "./routes/task-configs.js";
+import { tasksUnifiedRoutes } from "./routes/tasks-unified.js";
 import { sharedDirectoryRoutes } from "./routes/shared-directories.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { optioRoutes } from "./routes/optio.js";
@@ -275,6 +277,8 @@ export async function buildServer() {
   await app.register(connectionRoutes);
   await app.register(skillRoutes);
   await app.register(workflowRoutes);
+  await app.register(taskConfigRoutes);
+  await app.register(tasksUnifiedRoutes);
   await app.register(sharedDirectoryRoutes);
   await app.register(notificationRoutes);
   await app.register(optioRoutes);

@@ -68,6 +68,42 @@ vi.mock("../services/review-service.js", () => ({
   launchReview: vi.fn().mockResolvedValue("review-task-1"),
 }));
 
+// The unified resolver falls through to task_configs and workflows when the
+// tasks table lookup returns null. Stub to null so existing repo-task tests
+// continue to see 404s.
+const mockResolveAnyTaskById = vi.fn().mockResolvedValue(null);
+vi.mock("../services/unified-task-service.js", () => ({
+  resolveAnyTaskById: (...args: unknown[]) => mockResolveAnyTaskById(...args),
+  listUnifiedTasks: vi.fn().mockResolvedValue([]),
+  listUnifiedRuns: vi.fn().mockResolvedValue([]),
+  getUnifiedRun: vi.fn().mockResolvedValue(null),
+  listTriggersForParent: vi.fn().mockResolvedValue([]),
+  getTriggerForParent: vi.fn().mockResolvedValue(null),
+}));
+
+// POST /api/tasks now dispatches to workflow-service and task-config-service
+// when the body's `type` is "standalone" or "repo-blueprint". Stub both so
+// the default "repo-task" path keeps working.
+vi.mock("../services/workflow-service.js", () => ({
+  createWorkflow: vi.fn(),
+  getWorkflow: vi.fn(),
+  listWorkflows: vi.fn().mockResolvedValue([]),
+  createWorkflowTrigger: vi.fn(),
+  updateWorkflowTrigger: vi.fn(),
+  deleteWorkflowTrigger: vi.fn(),
+  createWorkflowRun: vi.fn(),
+}));
+
+vi.mock("../services/task-config-service.js", () => ({
+  createTaskConfig: vi.fn(),
+  getTaskConfig: vi.fn(),
+  listTaskConfigs: vi.fn().mockResolvedValue([]),
+  instantiateTask: vi.fn(),
+  createTaskConfigTrigger: vi.fn(),
+  updateTaskConfigTrigger: vi.fn(),
+  deleteTaskConfigTrigger: vi.fn(),
+}));
+
 import { taskRoutes } from "./tasks.js";
 
 // ─── Helpers ───

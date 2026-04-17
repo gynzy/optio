@@ -71,7 +71,9 @@ export const WorkflowRunSchema = z
 export const WorkflowTriggerSchema = z
   .object({
     id: z.string(),
-    workflowId: z.string(),
+    workflowId: z.string().nullable(),
+    targetType: z.string().describe("`job` | `task_config`"),
+    targetId: z.string().describe("UUID of the target entity (job or task_config)"),
     type: z.string().describe("`manual` | `schedule` | `webhook`"),
     config: z
       .record(z.unknown())

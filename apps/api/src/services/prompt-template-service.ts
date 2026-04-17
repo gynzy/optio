@@ -126,14 +126,117 @@ export async function saveRepoPromptTemplate(
 }
 
 /**
- * List all prompt templates, optionally scoped to a workspace.
+ * List all prompt templates, optionally scoped to a workspace and filtered by kind.
  */
-export async function listPromptTemplates(workspaceId?: string | null) {
-  if (workspaceId) {
+export async function listPromptTemplates(opts?: { workspaceId?: string | null; kind?: string }) {
+  const conditions = [];
+  if (opts?.workspaceId) {
+    conditions.push(
+      or(eq(promptTemplates.workspaceId, opts.workspaceId), isNull(promptTemplates.workspaceId))!,
+    );
+  }
+  if (opts?.kind) conditions.push(eq(promptTemplates.kind, opts.kind));
+
+  if (conditions.length > 0) {
     return db
       .select()
       .from(promptTemplates)
-      .where(or(eq(promptTemplates.workspaceId, workspaceId), isNull(promptTemplates.workspaceId)));
+      .where(and(...conditions));
   }
   return db.select().from(promptTemplates);
+}
+
+export async function getPromptTemplateById(id: string) {
+  const [row] = await db.select().from(promptTemplates).where(eq(promptTemplates.id, id));
+  return row ?? null;
+}
+
+/**
+ * Render a template string by substituting {{param}} placeholders with values
+ * from the params bag. Unknown placeholders are left intact so callers can
+ * detect missing params. Supports simple {{#if param}}...{{/if}} blocks too.
+ */
+export function renderTemplateString(template: string, params: Record<string, unknown>): string {
+  // Handle {{#if param}}...{{/if}} blocks first — keep the body if the param
+  // is truthy, drop it otherwise.
+  let rendered = template.replace(
+    /\{\{#if\s+(\w+)\s*\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    (_match, key: string, body: string) => {
+      const value = params[key];
+      return value ? body : "";
+    },
+  );
+
+  // Simple {{param}} substitution.
+  rendered = rendered.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key: string) => {
+    if (Object.prototype.hasOwnProperty.call(params, key)) {
+      const value = params[key];
+      return value == null ? "" : String(value);
+    }
+    return match;
+  });
+
+  return rendered;
+}
+
+export async function renderTemplateById(
+  id: string,
+  params: Record<string, unknown>,
+): Promise<string> {
+  const template = await getPromptTemplateById(id);
+  if (!template) throw new Error(`Template ${id} not found`);
+  return renderTemplateString(template.template, params);
+}
+
+export async function createNamedTemplate(input: {
+  name: string;
+  template: string;
+  kind?: string;
+  description?: string | null;
+  paramsSchema?: Record<string, unknown> | null;
+  defaultAgentType?: string | null;
+  workspaceId?: string | null;
+}) {
+  const [row] = await db
+    .insert(promptTemplates)
+    .values({
+      name: input.name,
+      template: input.template,
+      kind: input.kind ?? "prompt",
+      description: input.description ?? null,
+      paramsSchema: input.paramsSchema ?? null,
+      defaultAgentType: input.defaultAgentType ?? null,
+      workspaceId: input.workspaceId ?? null,
+      isDefault: false,
+    })
+    .returning();
+  return row;
+}
+
+export async function updateNamedTemplate(
+  id: string,
+  input: Partial<{
+    name: string;
+    template: string;
+    kind: string;
+    description: string | null;
+    paramsSchema: Record<string, unknown> | null;
+    defaultAgentType: string | null;
+  }>,
+) {
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  for (const [k, v] of Object.entries(input)) {
+    if (v !== undefined) updates[k] = v;
+  }
+  const [row] = await db
+    .update(promptTemplates)
+    .set(updates)
+    .where(eq(promptTemplates.id, id))
+    .returning();
+  return row ?? null;
+}
+
+export async function deleteNamedTemplate(id: string): Promise<boolean> {
+  const deleted = await db.delete(promptTemplates).where(eq(promptTemplates.id, id)).returning();
+  return deleted.length > 0;
 }

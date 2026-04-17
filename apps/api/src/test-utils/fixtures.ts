@@ -160,6 +160,8 @@ export const mockWorkflowRun = {
 export const mockWorkflowTrigger = {
   id: "trg-1",
   workflowId: "wf-1",
+  targetType: "job",
+  targetId: "wf-1",
   type: "manual",
   config: {},
   paramMapping: null,

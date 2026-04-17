@@ -271,6 +271,18 @@ export function startTaskWorker() {
                 taskWorkspaceId,
               ).catch(() => null)) as any) ?? undefined)
             : undefined;
+        const opencodeDefaultBaseUrl =
+          ((await retrieveSecretWithFallback(
+            "OPENCODE_DEFAULT_BASE_URL",
+            "global",
+            taskWorkspaceId,
+          ).catch(() => null)) as any) ?? undefined;
+        const opencodeDefaultModel =
+          ((await retrieveSecretWithFallback(
+            "OPENCODE_DEFAULT_MODEL",
+            "global",
+            taskWorkspaceId,
+          ).catch(() => null)) as any) ?? undefined;
         const optioApiUrl = `http://${process.env.API_HOST ?? "host.docker.internal"}:${process.env.API_PORT ?? "4000"}`;
 
         // Load and render prompt template
@@ -336,8 +348,9 @@ export function startTaskWorker() {
           claudeEffort: repoConfig?.claudeEffort ?? undefined,
           copilotModel: repoConfig?.copilotModel ?? undefined,
           copilotEffort: repoConfig?.copilotEffort ?? undefined,
-          opencodeModel: repoConfig?.opencodeModel ?? undefined,
+          opencodeModel: repoConfig?.opencodeModel ?? opencodeDefaultModel,
           opencodeAgent: repoConfig?.opencodeAgent ?? undefined,
+          opencodeBaseUrl: repoConfig?.opencodeBaseUrl ?? opencodeDefaultBaseUrl,
           geminiAuthMode,
           geminiModel: repoConfig?.geminiModel ?? undefined,
           geminiApprovalMode:

@@ -213,6 +213,7 @@ export async function listWorkflowsWithStats(workspaceId?: string) {
       .where(sql`${workflowTriggers.workflowId} in ${workflowIds}`);
 
     for (const t of triggers) {
+      if (!t.workflowId) continue;
       if (!triggerMap[t.workflowId]) triggerMap[t.workflowId] = [];
       if (!triggerMap[t.workflowId].includes(t.type)) {
         triggerMap[t.workflowId].push(t.type);
@@ -306,6 +307,19 @@ export async function createWorkflowRun(
     .returning();
 
   logger.info({ workflowRunId: run.id, workflowId }, "Workflow run created");
+
+  // Enqueue for the workflow-worker to pick up. Dynamic import avoids a cycle
+  // between services/workflow-service and workers/workflow-worker. This is
+  // the ONE place every run-creation path hits — keeping the enqueue here
+  // means trigger firings, webhook ingress, and the unified /api/tasks
+  // endpoints all get processed without each caller remembering to enqueue.
+  import("../workers/workflow-worker.js")
+    .then(({ workflowRunQueue }) =>
+      workflowRunQueue.add("process-workflow-run", { workflowRunId: run.id }, { jobId: run.id }),
+    )
+    .catch((err) =>
+      logger.error({ err, runId: run.id }, "Failed to enqueue workflow run for processing"),
+    );
 
   // Fire outbound webhook (fire-and-forget). Dynamic import to avoid a cycle
   // with workers/webhook-worker -> services/workflow-service.
@@ -489,6 +503,8 @@ export async function createWorkflowTrigger(input: {
     .insert(workflowTriggers)
     .values({
       workflowId: input.workflowId,
+      targetType: "job",
+      targetId: input.workflowId,
       type: input.type,
       config: input.config ?? null,
       paramMapping: input.paramMapping ?? null,
@@ -546,6 +562,11 @@ export async function deleteWorkflowTrigger(id: string): Promise<boolean> {
 
 // ── Schedule trigger evaluation ─────────────────────────────────────────────
 
+/**
+ * Job-only schedule due list. Retained for any legacy caller that specifically
+ * wants workflow triggers paired with their workflow. New dispatch logic should
+ * use `getDueScheduleTriggersAll()` and resolve the target per row.
+ */
 export async function getDueScheduleTriggers() {
   const now = new Date();
   return db
@@ -560,6 +581,25 @@ export async function getDueScheduleTriggers() {
         eq(workflowTriggers.type, "schedule"),
         eq(workflowTriggers.enabled, true),
         eq(workflows.enabled, true),
+        lte(workflowTriggers.nextFireAt, now),
+      ),
+    );
+}
+
+/**
+ * Generic schedule due list — returns every enabled schedule trigger whose
+ * next_fire_at has passed, regardless of target_type. Callers must resolve
+ * the target (workflow, task_config, ...) and check its own enabled flag.
+ */
+export async function getDueScheduleTriggersAll() {
+  const now = new Date();
+  return db
+    .select()
+    .from(workflowTriggers)
+    .where(
+      and(
+        eq(workflowTriggers.type, "schedule"),
+        eq(workflowTriggers.enabled, true),
         lte(workflowTriggers.nextFireAt, now),
       ),
     );

@@ -11,7 +11,7 @@ import { toast } from "sonner";
 export default function EditWorkflowPage() {
   const params = useParams();
   const id = params.id as string;
-  usePageTitle("Edit Agent Workflow");
+  usePageTitle("Edit Task");
 
   const [workflow, setWorkflow] = useState<any>(null);
   const [triggers, setTriggers] = useState<any[] | null>(null);
@@ -57,7 +57,7 @@ export default function EditWorkflowPage() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-semibold tracking-tight mb-6">Edit Agent Workflow</h1>
+      <h1 className="text-2xl font-semibold tracking-tight mb-6">Edit Task</h1>
       <WorkflowForm
         mode="edit"
         workflowId={id}

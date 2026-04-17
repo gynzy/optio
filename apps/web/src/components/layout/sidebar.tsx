@@ -20,29 +20,61 @@ import {
   Plug,
   BarChart3,
   Activity,
+  FileText,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 import { useOptioChatStore } from "@/hooks/use-optio-chat";
 
-const MAIN_NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/tasks", label: "Tasks", icon: ListTodo },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/workflows", label: "Agent Workflows", icon: GitBranch },
-  { href: "/sessions", label: "Sessions", icon: Terminal },
-  { href: "/repos", label: "Repos", icon: FolderGit2 },
-  { href: "/connections", label: "Connections", icon: Plug },
-  { href: "/cluster", label: "Cluster", icon: Server },
-  { href: "/costs", label: "Costs", icon: DollarSign },
-];
+interface NavItem {
+  href: string;
+  label: string;
+  icon: any;
+}
 
-const SECONDARY_NAV = [
-  { href: "/secrets", label: "Secrets", icon: KeyRound },
-  { href: "/webhooks", label: "Webhooks", icon: Webhook },
-  { href: "/activity", label: "Activity", icon: Activity },
-  { href: "/workspace-settings", label: "Workspace", icon: Building2 },
-  { href: "/settings", label: "Settings", icon: Settings },
+interface NavGroup {
+  label: string | null;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: null,
+    items: [{ href: "/", label: "Overview", icon: LayoutDashboard }],
+  },
+  {
+    label: "Run",
+    items: [
+      { href: "/tasks", label: "Tasks", icon: ListTodo },
+      { href: "/sessions", label: "Sessions", icon: Terminal },
+    ],
+  },
+  {
+    label: "Library",
+    items: [
+      { href: "/templates", label: "Templates", icon: FileText },
+      { href: "/repos", label: "Repos", icon: FolderGit2 },
+      { href: "/connections", label: "Connections", icon: Plug },
+    ],
+  },
+  {
+    label: "Insights",
+    items: [
+      { href: "/analytics", label: "Analytics", icon: BarChart3 },
+      { href: "/costs", label: "Costs", icon: DollarSign },
+      { href: "/activity", label: "Activity", icon: Activity },
+      { href: "/cluster", label: "Cluster", icon: Server },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { href: "/secrets", label: "Secrets", icon: KeyRound },
+      { href: "/webhooks", label: "Webhooks", icon: Webhook },
+      { href: "/workspace-settings", label: "Workspace", icon: Building2 },
+      { href: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 function NavLink({
@@ -115,17 +147,20 @@ export function Sidebar({ open, onClose }: { open?: boolean; onClose?: () => voi
         <WorkspaceSwitcher />
       </div>
       <nav className="flex-1 px-2.5 py-3 overflow-y-auto">
-        <div className="space-y-0.5">
-          {MAIN_NAV.map((item) => (
-            <NavLink key={item.href} {...item} active={isActive(item.href)} onClick={onClose} />
-          ))}
-        </div>
-        <div className="my-3 mx-1 gradient-divider" />
-        <div className="space-y-0.5">
-          {SECONDARY_NAV.map((item) => (
-            <NavLink key={item.href} {...item} active={isActive(item.href)} onClick={onClose} />
-          ))}
-        </div>
+        {NAV_GROUPS.map((group, idx) => (
+          <div key={group.label ?? `group-${idx}`} className={idx > 0 ? "mt-4" : ""}>
+            {group.label && (
+              <div className="px-2.5 mb-1 text-[10px] font-semibold tracking-widest uppercase text-text-muted/60">
+                {group.label}
+              </div>
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item) => (
+                <NavLink key={item.href} {...item} active={isActive(item.href)} onClick={onClose} />
+              ))}
+            </div>
+          </div>
+        ))}
       </nav>
       {/* Optio chat button */}
       <div className="px-2.5 py-2 border-t border-border/50">

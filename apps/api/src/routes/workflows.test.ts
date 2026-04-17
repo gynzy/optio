@@ -46,7 +46,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
   return buildRouteTestApp(workflowRoutes);
 }
 
-describe("GET /api/workflows", () => {
+describe("GET /api/jobs", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -64,7 +64,7 @@ describe("GET /api/workflows", () => {
       },
     ]);
 
-    const res = await app.inject({ method: "GET", url: "/api/workflows" });
+    const res = await app.inject({ method: "GET", url: "/api/jobs" });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().workflows).toHaveLength(1);
@@ -76,14 +76,14 @@ describe("GET /api/workflows", () => {
   it("returns empty array when no workflows", async () => {
     mockListWorkflowsWithStats.mockResolvedValue([]);
 
-    const res = await app.inject({ method: "GET", url: "/api/workflows" });
+    const res = await app.inject({ method: "GET", url: "/api/jobs" });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().workflows).toEqual([]);
   });
 });
 
-describe("POST /api/workflows", () => {
+describe("POST /api/jobs", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -96,7 +96,7 @@ describe("POST /api/workflows", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows",
+      url: "/api/jobs",
       payload: { name: "Deploy", promptTemplate: "Deploy the app" },
     });
 
@@ -116,7 +116,7 @@ describe("POST /api/workflows", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows",
+      url: "/api/jobs",
       payload: { name: "Bad", promptTemplate: "Do it" },
     });
 
@@ -127,7 +127,7 @@ describe("POST /api/workflows", () => {
   it("rejects missing promptTemplate (400 from Zod body schema)", async () => {
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows",
+      url: "/api/jobs",
       payload: { name: "Missing prompt" },
     });
 
@@ -135,7 +135,7 @@ describe("POST /api/workflows", () => {
   });
 });
 
-describe("GET /api/workflows/:id", () => {
+describe("GET /api/jobs/:id", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -151,7 +151,7 @@ describe("GET /api/workflows/:id", () => {
       totalCostUsd: "2.0000",
     });
 
-    const res = await app.inject({ method: "GET", url: "/api/workflows/w-1" });
+    const res = await app.inject({ method: "GET", url: "/api/jobs/w-1" });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().workflow.runCount).toBe(5);
@@ -161,13 +161,13 @@ describe("GET /api/workflows/:id", () => {
   it("returns 404 when not found", async () => {
     mockGetWorkflowWithStats.mockResolvedValue(null);
 
-    const res = await app.inject({ method: "GET", url: "/api/workflows/nonexistent" });
+    const res = await app.inject({ method: "GET", url: "/api/jobs/nonexistent" });
 
     expect(res.statusCode).toBe(404);
   });
 });
 
-describe("PATCH /api/workflows/:id", () => {
+describe("PATCH /api/jobs/:id", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -180,7 +180,7 @@ describe("PATCH /api/workflows/:id", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/w-1",
+      url: "/api/jobs/w-1",
       payload: { name: "Updated" },
     });
 
@@ -193,7 +193,7 @@ describe("PATCH /api/workflows/:id", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/w-1",
+      url: "/api/jobs/w-1",
       payload: { name: "Updated" },
     });
 
@@ -205,7 +205,7 @@ describe("PATCH /api/workflows/:id", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/w-1",
+      url: "/api/jobs/w-1",
       payload: { name: "Bad" },
     });
 
@@ -213,7 +213,7 @@ describe("PATCH /api/workflows/:id", () => {
   });
 });
 
-describe("DELETE /api/workflows/:id", () => {
+describe("DELETE /api/jobs/:id", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -224,7 +224,7 @@ describe("DELETE /api/workflows/:id", () => {
   it("deletes a workflow", async () => {
     mockDeleteWorkflow.mockResolvedValue(true);
 
-    const res = await app.inject({ method: "DELETE", url: "/api/workflows/w-1" });
+    const res = await app.inject({ method: "DELETE", url: "/api/jobs/w-1" });
 
     expect(res.statusCode).toBe(204);
   });
@@ -232,7 +232,7 @@ describe("DELETE /api/workflows/:id", () => {
   it("returns 404 when not found", async () => {
     mockDeleteWorkflow.mockResolvedValue(false);
 
-    const res = await app.inject({ method: "DELETE", url: "/api/workflows/nonexistent" });
+    const res = await app.inject({ method: "DELETE", url: "/api/jobs/nonexistent" });
 
     expect(res.statusCode).toBe(404);
   });
@@ -240,7 +240,7 @@ describe("DELETE /api/workflows/:id", () => {
 
 // ─── Workflow Runs ───
 
-describe("POST /api/workflows/:id/runs", () => {
+describe("POST /api/jobs/:id/runs", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -253,7 +253,7 @@ describe("POST /api/workflows/:id/runs", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/runs",
+      url: "/api/jobs/wf-1/runs",
       payload: {},
     });
 
@@ -266,7 +266,7 @@ describe("POST /api/workflows/:id/runs", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/nonexistent/runs",
+      url: "/api/jobs/nonexistent/runs",
       payload: {},
     });
 
@@ -274,7 +274,7 @@ describe("POST /api/workflows/:id/runs", () => {
   });
 });
 
-describe("GET /api/workflows/:id/runs", () => {
+describe("GET /api/jobs/:id/runs", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -289,7 +289,7 @@ describe("GET /api/workflows/:id/runs", () => {
       { ...mockWorkflowRun, id: "run-2" },
     ]);
 
-    const res = await app.inject({ method: "GET", url: "/api/workflows/w-1/runs" });
+    const res = await app.inject({ method: "GET", url: "/api/jobs/w-1/runs" });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().runs).toHaveLength(2);
