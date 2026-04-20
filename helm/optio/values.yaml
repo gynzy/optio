@@ -298,6 +298,9 @@ publicUrl: ""  # e.g. https://optio.example.com
 auth:
   # Set to true to disable authentication (NOT recommended for production).
   disabled: false
+  # Restrict OAuth logins to specific email domains (comma-separated).
+  # Leave empty to allow all domains.
+  allowedLoginDomains: ""  # e.g., "gynzy.com,gynzy.nl"
   # OAuth provider credentials — configure at least one when auth is enabled.
   github:
     clientId: ""

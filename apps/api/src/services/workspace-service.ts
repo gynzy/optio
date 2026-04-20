@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { workspaces, workspaceMembers, users } from "../db/schema.js";
 import { revokeAllUserSessions } from "./session-service.js";
@@ -58,6 +58,8 @@ export async function updateWorkspace(
     slug?: string;
     description?: string | null;
     allowDockerInDocker?: boolean;
+    allowedDomains?: string[];
+    autoAssignEnabled?: boolean;
   },
 ): Promise<Workspace | null> {
   const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -66,6 +68,10 @@ export async function updateWorkspace(
   if (data.description !== undefined) updates.description = data.description;
   if (data.allowDockerInDocker !== undefined)
     updates.allowDockerInDocker = data.allowDockerInDocker;
+  if (data.allowedDomains !== undefined) {
+    updates.allowedDomains = data.allowedDomains.map((d) => d.toLowerCase().trim());
+  }
+  if (data.autoAssignEnabled !== undefined) updates.autoAssignEnabled = data.autoAssignEnabled;
 
   const [ws] = await db.update(workspaces).set(updates).where(eq(workspaces.id, id)).returning();
   return (ws as Workspace) ?? null;
@@ -165,6 +171,21 @@ export async function removeMember(workspaceId: string, userId: string): Promise
   await revokeAllUserSessions(userId);
 }
 
+/** Find all workspaces that allow auto-assignment for a given email domain. */
+export async function findWorkspacesByDomain(emailDomain: string): Promise<Workspace[]> {
+  const rows = await db
+    .select()
+    .from(workspaces)
+    .where(
+      and(
+        eq(workspaces.autoAssignEnabled, true),
+        sql`${workspaces.allowedDomains} ? ${emailDomain.toLowerCase()}`,
+      ),
+    )
+    .orderBy(workspaces.name);
+  return rows as Workspace[];
+}
+
 /**
  * Ensure a user has at least one workspace. If not, create a default one.
  * Returns the user's default workspace ID.
@@ -184,6 +205,22 @@ export async function ensureUserHasWorkspace(userId: string): Promise<string> {
       .set({ defaultWorkspaceId: memberships[0].id })
       .where(eq(users.id, userId));
     return memberships[0].id;
+  }
+
+  // Domain-based auto-assignment
+  const emailDomain = user?.email?.split("@")[1]?.toLowerCase();
+  if (emailDomain) {
+    const matchingWorkspaces = await findWorkspacesByDomain(emailDomain);
+    if (matchingWorkspaces.length > 0) {
+      for (const ws of matchingWorkspaces) {
+        await addMember(ws.id, userId, "member");
+      }
+      await db
+        .update(users)
+        .set({ defaultWorkspaceId: matchingWorkspaces[0].id })
+        .where(eq(users.id, userId));
+      return matchingWorkspaces[0].id;
+    }
   }
 
   // Create a default workspace

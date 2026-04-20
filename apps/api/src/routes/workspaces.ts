@@ -29,6 +29,11 @@ const updateWorkspaceSchema = z
       .optional(),
     description: z.string().max(500).nullable().optional(),
     allowDockerInDocker: z.boolean().optional(),
+    allowedDomains: z
+      .array(z.string().regex(/^[a-z0-9]+([-\.][a-z0-9]+)*\.[a-z]{2,}$/i, "Invalid domain format"))
+      .max(50)
+      .optional(),
+    autoAssignEnabled: z.boolean().optional(),
   })
   .describe("Partial update to a workspace");
 

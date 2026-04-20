@@ -90,7 +90,9 @@ export default function LoginPage() {
               ? "Login session expired. Please try again."
               : error === "missing_params"
                 ? "Missing authorization parameters."
-                : `Authentication error: ${error}`}
+                : error === "domain_not_allowed"
+                  ? "Your email domain is not allowed to access this instance."
+                  : `Authentication error: ${error}`}
           </div>
         )}
 
