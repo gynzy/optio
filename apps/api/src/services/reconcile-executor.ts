@@ -292,16 +292,17 @@ async function applyRequeueForAgent(
     if (casResult === "stale") return { status: "stale", reason: "cas_failed_requeue_patch" };
   }
 
-  // Use jobId=id so BullMQ dedups against any existing process-task already
-  // queued for this task. The reconciler's requeueForAgent is meant as a
-  // safety net ("wake the worker if work isn't already in flight"), not an
-  // additional job that races the original.
+  // Unique jobId per enqueue. A stable jobId would be silently no-op'd by
+  // BullMQ when a previous job for this task is in the completed/failed set,
+  // permanently blocking re-execution after the first run. The worker's own
+  // "skip if state != queued" defensive check (task-worker.ts:106) protects
+  // against duplicate concurrent claims.
   const { taskQueue } = await import("../workers/task-worker.js");
   await taskQueue.add(
     "process-task",
     { taskId: id },
     {
-      jobId: id,
+      jobId: `${id}-reconcile-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       priority: snapshot.run.spec.priority ?? 100,
     },
   );
@@ -316,9 +317,15 @@ async function applyEnqueueAgent(
     return { status: "error", reason: "wrong_kind", error: new Error("not standalone") };
   }
   const id = snapshot.run.ref.id;
-  // jobId=id dedups against any existing process-workflow-run for this run.
+  // Unique jobId per enqueue — same reasoning as applyRequeueForAgent. The
+  // workflow-worker's "skip if state != queued" check (workflow-worker.ts:276)
+  // is the race guard.
   const { workflowRunQueue } = await import("../workers/workflow-worker.js");
-  await workflowRunQueue.add("process-workflow-run", { workflowRunId: id }, { jobId: id });
+  await workflowRunQueue.add(
+    "process-workflow-run",
+    { workflowRunId: id },
+    { jobId: `${id}-reconcile-${Date.now()}-${Math.floor(Math.random() * 1000)}` },
+  );
   return { status: "applied", reason: `enqueued:${action.trigger}` };
 }
 
