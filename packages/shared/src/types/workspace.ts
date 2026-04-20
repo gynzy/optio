@@ -7,6 +7,8 @@ export interface Workspace {
   description?: string | null;
   createdBy?: string | null;
   allowDockerInDocker: boolean;
+  allowedDomains: string[];
+  autoAssignEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

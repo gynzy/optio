@@ -448,6 +448,20 @@ export async function authRoutes(rawApp: FastifyInstance) {
       try {
         const tokens = await provider.exchangeCode(code);
         const profile = await provider.fetchUser(tokens.accessToken);
+
+        // Check domain restriction
+        const allowedDomains = (process.env.ALLOWED_LOGIN_DOMAINS ?? "")
+          .split(",")
+          .map((d) => d.trim().toLowerCase())
+          .filter(Boolean);
+
+        if (allowedDomains.length > 0) {
+          const emailDomain = profile.email?.split("@")[1]?.toLowerCase();
+          if (!emailDomain || !allowedDomains.includes(emailDomain)) {
+            return reply.redirect(`${WEB_URL}/login?error=domain_not_allowed`);
+          }
+        }
+
         const session = await createSession(providerName, profile);
 
         // Store GitHub App user tokens for git/API operations
