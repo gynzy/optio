@@ -161,6 +161,12 @@ vi.mock("./task-worker.js", () => ({
   taskQueue: { add: (...args: unknown[]) => mockTaskQueueAdd(...args) },
 }));
 
+const mockEnqueueReconcile = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("../services/reconcile-queue.js", () => ({
+  enqueueReconcile: (...args: unknown[]) => mockEnqueueReconcile(...args),
+}));
+
 // ── drizzle-orm mock — eq() and sql`` just pass-through ────────────────────
 
 vi.mock("../services/k8s-workload-service.js", () => ({
@@ -344,7 +350,7 @@ describe("repo-cleanup-worker", () => {
       );
     });
 
-    it("fails active tasks on dead pod", async () => {
+    it("marks worktrees dirty and wakes the reconciler on dead pod", async () => {
       const pod = makePod();
       const task = makeTask({ id: "task-dead-1", state: "running" });
       selectResults = [
@@ -359,17 +365,19 @@ describe("repo-cleanup-worker", () => {
 
       await processorFn();
 
+      // Cleanup worker no longer fires the FAILED transition itself —
+      // the reconciler observes pod.phase=error from the snapshot and
+      // owns the FAILED transition via decideRunning / decideProvisioning.
       expect(mockUpdateWorktree).toHaveBeenCalledWith("task-dead-1", "dirty");
-      expect(mockTransitionTask).toHaveBeenCalledWith(
-        "task-dead-1",
-        TaskState.FAILED,
-        "pod_crashed",
-        expect.stringContaining("Terminated"),
-      );
+      expect(mockTransitionTask).not.toHaveBeenCalled();
       expect(mockUpdateTaskResult).toHaveBeenCalledWith(
         "task-dead-1",
         undefined,
         expect.stringContaining("Terminated"),
+      );
+      expect(mockEnqueueReconcile).toHaveBeenCalledWith(
+        { kind: "repo", id: "task-dead-1" },
+        expect.objectContaining({ reason: expect.stringMatching(/^pod_/) }),
       );
     });
 

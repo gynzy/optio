@@ -3,17 +3,47 @@
 import { useState, useEffect, Suspense } from "react";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { TaskList } from "@/components/task-list";
+import { StandaloneList } from "@/components/standalone-list";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { Plus, RotateCcw, XCircle, Loader2, Zap, GitBranch, CircleDot, Check } from "lucide-react";
+import {
+  Plus,
+  RotateCcw,
+  XCircle,
+  Loader2,
+  Zap,
+  GitBranch,
+  CircleDot,
+  Check,
+  Clock,
+} from "lucide-react";
 import { PrBrowser } from "@/components/pr-browser";
+
+type TabKey = "repo" | "standalone" | "issues" | "prs";
 
 export default function TasksPage() {
   usePageTitle("Tasks");
-  const [tab, setTab] = useState<"tasks" | "issues" | "prs">("tasks");
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const initialTab = ((): TabKey => {
+    const q = searchParams.get("tab");
+    if (q === "standalone" || q === "issues" || q === "prs" || q === "repo") return q;
+    return "repo";
+  })();
+  const [tab, setTabState] = useState<TabKey>(initialTab);
   const [bulkLoading, setBulkLoading] = useState(false);
+
+  const setTab = (next: TabKey) => {
+    setTabState(next);
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "repo") params.delete("tab");
+    else params.set("tab", next);
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "", { scroll: false });
+  };
 
   const handleRetryFailed = async () => {
     if (!confirm("Retry all failed tasks?")) return;
@@ -44,7 +74,7 @@ export default function TasksPage() {
       <div className="flex flex-col gap-3 mb-8 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
         <div className="flex items-center gap-2 flex-wrap">
-          {tab === "tasks" && (
+          {tab === "repo" && (
             <>
               <button
                 onClick={handleRetryFailed}
@@ -65,6 +95,13 @@ export default function TasksPage() {
             </>
           )}
           <Link
+            href="/tasks/scheduled"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-bg-card border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors"
+          >
+            <Clock className="w-4 h-4" />
+            Scheduled
+          </Link>
+          <Link
             href="/tasks/new"
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-hover transition-colors"
           >
@@ -76,42 +113,30 @@ export default function TasksPage() {
 
       {/* Tabs */}
       <div className="flex gap-0 border-b border-border mb-6">
-        <button
-          onClick={() => setTab("tasks")}
-          className={cn(
-            "px-5 py-3 text-[13px] font-medium border-b-2 transition-colors",
-            tab === "tasks"
-              ? "border-primary text-text"
-              : "border-transparent text-text-muted hover:text-text",
-          )}
-        >
-          Optio Tasks
-        </button>
-        <button
-          onClick={() => setTab("issues")}
-          className={cn(
-            "px-5 py-3 text-[13px] font-medium border-b-2 transition-colors",
-            tab === "issues"
-              ? "border-primary text-text"
-              : "border-transparent text-text-muted hover:text-text",
-          )}
-        >
-          Issues
-        </button>
-        <button
-          onClick={() => setTab("prs")}
-          className={cn(
-            "px-5 py-3 text-[13px] font-medium border-b-2 transition-colors",
-            tab === "prs"
-              ? "border-primary text-text"
-              : "border-transparent text-text-muted hover:text-text",
-          )}
-        >
-          Pull Requests
-        </button>
+        {(
+          [
+            { key: "repo", label: "Repo Tasks" },
+            { key: "standalone", label: "Standalone" },
+            { key: "issues", label: "Issues" },
+            { key: "prs", label: "Pull Requests" },
+          ] as { key: TabKey; label: string }[]
+        ).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={cn(
+              "px-5 py-3 text-[13px] font-medium border-b-2 transition-colors",
+              tab === key
+                ? "border-primary text-text"
+                : "border-transparent text-text-muted hover:text-text",
+            )}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {tab === "tasks" && (
+      {tab === "repo" && (
         <Suspense
           fallback={
             <div className="flex items-center justify-center py-16 text-text-muted">
@@ -123,6 +148,7 @@ export default function TasksPage() {
           <TaskList />
         </Suspense>
       )}
+      {tab === "standalone" && <StandaloneList />}
       {tab === "issues" && <IssuesBrowser />}
       {tab === "prs" && <PrBrowser />}
     </div>

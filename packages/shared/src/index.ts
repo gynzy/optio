@@ -24,4 +24,8 @@ export * from "./types/optio-action.js";
 export * from "./types/git-platform.js";
 export * from "./utils/parse-repo-url.js";
 export * from "./utils/is-stalled.js";
+export * from "./utils/parse-int-env.js";
 export * from "./optio-tools.js";
+export * from "./reconcile/types.js";
+export * from "./reconcile/reconcile-standalone.js";
+export * from "./reconcile/reconcile-repo.js";

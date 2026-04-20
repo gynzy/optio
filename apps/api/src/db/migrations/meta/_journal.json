@@ -435,6 +435,55 @@
       "when": 1776050234000,
       "tag": "1776050234_auth_events_source",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1776281186000,
+      "tag": "1776281186_opencode_base_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1776396730000,
+      "tag": "1776396730_generic_trigger_target",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1776397040000,
+      "tag": "1776397040_task_configs",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1776398039000,
+      "tag": "1776398039_template_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1776410298000,
+      "tag": "1776410298_ticket_provider_error_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1776686400000,
+      "tag": "1776686400_reconcile_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1776686500000,
+      "tag": "1776686500_workflow_pod_pooling",
+      "breakpoints": true
     }
   ]
 }

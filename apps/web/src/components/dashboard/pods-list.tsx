@@ -181,7 +181,7 @@ export function PodsList({
       {events.filter((_: any, i: number) => !dismissedEvents.has(i)).length > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-medium text-text-muted">Recent Events</h3>
+            <h2 className="text-sm font-medium text-text-heading">Recent Events</h2>
             {dismissedEvents.size < events.length && (
               <button
                 onClick={() => setDismissedEvents(new Set(events.map((_: any, i: number) => i)))}

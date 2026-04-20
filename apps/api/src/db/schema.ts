@@ -129,6 +129,11 @@ export const tasks = pgTable(
     activitySubstate: taskActivitySubstateEnum("activity_substate").notNull().default("active"),
     workspaceId: uuid("workspace_id"), // nullable for backward compat; new tasks should always set this
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    // Control plane: declarative user intent. Reconciler observes and clears.
+    controlIntent: text("control_intent"), // "cancel" | "retry" | "resume" | "restart" | null
+    // Control plane: durable reconcile backoff for transient world-read failures.
+    reconcileBackoffUntil: timestamp("reconcile_backoff_until", { withTimezone: true }),
+    reconcileAttempts: integer("reconcile_attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -250,6 +255,7 @@ export const repos = pgTable(
     opencodeModel: text("opencode_model"), // e.g. "anthropic/claude-sonnet-4", null = OpenCode default
     opencodeAgent: text("opencode_agent"), // e.g. "build", "plan", null = default
     opencodeProvider: text("opencode_provider"), // "anthropic" | "openai" | ... for default provider inference
+    opencodeBaseUrl: text("opencode_base_url"), // Custom OpenAI-compatible endpoint URL (e.g. http://lightllm:8080/v1)
     geminiModel: text("gemini_model").default("gemini-2.5-pro"),
     geminiApprovalMode: text("gemini_approval_mode").default("yolo"), // "default" | "auto_edit" | "yolo"
     openclawModel: text("openclaw_model"), // model selection, null = OpenClaw default
@@ -297,6 +303,9 @@ export const ticketProviders = pgTable("ticket_providers", {
   source: text("source").notNull(),
   config: jsonb("config").$type<Record<string, unknown>>().notNull(),
   enabled: boolean("enabled").notNull().default(true),
+  lastError: text("last_error"),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -442,53 +451,6 @@ export const sessionPrs = pgTable(
   (table) => [index("session_prs_session_id_idx").on(table.sessionId)],
 );
 
-export const schedules = pgTable(
-  "schedules",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    name: text("name").notNull(),
-    description: text("description"),
-    cronExpression: text("cron_expression").notNull(),
-    enabled: boolean("enabled").notNull().default(true),
-    taskConfig: jsonb("task_config")
-      .$type<{
-        title: string;
-        prompt: string;
-        repoUrl: string;
-        repoBranch?: string;
-        agentType: string;
-        maxRetries?: number;
-        priority?: number;
-      }>()
-      .notNull(),
-    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
-    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
-    createdBy: uuid("created_by"),
-    workspaceId: uuid("workspace_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    index("schedules_enabled_next_run_idx").on(table.enabled, table.nextRunAt),
-    index("schedules_workspace_id_idx").on(table.workspaceId),
-  ],
-);
-
-export const scheduleRuns = pgTable(
-  "schedule_runs",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    scheduleId: uuid("schedule_id")
-      .notNull()
-      .references(() => schedules.id, { onDelete: "cascade" }),
-    taskId: uuid("task_id").references(() => tasks.id),
-    status: text("status").notNull().default("triggered"), // "triggered" | "completed" | "failed"
-    error: text("error"),
-    triggeredAt: timestamp("triggered_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index("schedule_runs_schedule_id_idx").on(table.scheduleId)],
-);
-
 export const taskComments = pgTable(
   "task_comments",
   {
@@ -551,6 +513,40 @@ export const taskDependencies = pgTable(
   ],
 );
 
+// ── Task Configs (reusable task blueprints) ─────────────────────────────────
+
+// A task_config is a saved, reusable task definition — the "blueprint" that
+// a trigger (schedule/webhook/manual) instantiates into a concrete task run.
+// Pattern intentionally mirrors `workflows` so that both targets plug into
+// the same generic trigger table.
+export const taskConfigs = pgTable(
+  "task_configs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    workspaceId: uuid("workspace_id"),
+    // Task spawn blueprint — fields passed to taskService.createTask() when instantiated.
+    title: text("title").notNull(),
+    prompt: text("prompt").notNull(),
+    promptTemplateId: uuid("prompt_template_id"),
+    repoUrl: text("repo_url").notNull(),
+    repoBranch: text("repo_branch").notNull().default("main"),
+    agentType: text("agent_type"),
+    maxRetries: integer("max_retries").notNull().default(3),
+    priority: integer("priority").notNull().default(100),
+    enabled: boolean("enabled").notNull().default(true),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("task_configs_workspace_name_key").on(table.workspaceId, table.name),
+    index("task_configs_workspace_id_idx").on(table.workspaceId),
+    index("task_configs_enabled_idx").on(table.enabled),
+  ],
+);
+
 // ── Workflows ────────────────────────────────────────────────────────────────
 
 export const workflows = pgTable(
@@ -570,6 +566,10 @@ export const workflows = pgTable(
     maxConcurrent: integer("max_concurrent").notNull().default(2),
     maxRetries: integer("max_retries").notNull().default(1),
     warmPoolSize: integer("warm_pool_size").notNull().default(0),
+    // Pod pooling — mirrors repos.maxPodInstances / maxAgentsPerPod. Runs share
+    // pods within a workflow, scaling out to maxPodInstances replicas.
+    maxPodInstances: integer("max_pod_instances").notNull().default(1),
+    maxAgentsPerPod: integer("max_agents_per_pod").notNull().default(2),
     enabled: boolean("enabled").notNull().default(true),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -581,13 +581,18 @@ export const workflows = pgTable(
   ],
 );
 
+// Generic trigger table — dispatches to any target (jobs or task_configs).
+// Historical name "workflow_triggers" kept to avoid a large rename migration;
+// treat it as the generic `triggers` table.
 export const workflowTriggers = pgTable(
   "workflow_triggers",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    workflowId: uuid("workflow_id")
-      .notNull()
-      .references(() => workflows.id, { onDelete: "cascade" }),
+    // Legacy FK retained for back-compat with workflow_runs.triggerId joins.
+    // For target_type='job' this mirrors target_id; for other types it is null.
+    workflowId: uuid("workflow_id").references(() => workflows.id, { onDelete: "cascade" }),
+    targetType: text("target_type").notNull().default("job"), // "job" | "task_config"
+    targetId: uuid("target_id").notNull(),
     type: text("type").notNull(), // "manual" | "schedule" | "webhook"
     config: jsonb("config").$type<Record<string, unknown>>(),
     paramMapping: jsonb("param_mapping").$type<Record<string, unknown>>(),
@@ -600,6 +605,7 @@ export const workflowTriggers = pgTable(
   (table) => [
     index("workflow_triggers_workflow_id_idx").on(table.workflowId),
     index("workflow_triggers_schedule_due_idx").on(table.enabled, table.nextFireAt),
+    index("workflow_triggers_target_idx").on(table.targetType, table.targetId),
   ],
 );
 
@@ -621,9 +627,21 @@ export const workflowRuns = pgTable(
     errorMessage: text("error_message"),
     sessionId: text("session_id"),
     podName: text("pod_name"),
+    // FK to the workflow pod currently running this run. Null when queued or
+    // released. Cleared on completion so activeRunCount reflects live runs.
+    podId: uuid("pod_id"),
+    // Retry affinity — the last pod that ran this, even after release. Used to
+    // prefer same-pod retries (mirrors tasks.lastPodId). Not a hard FK so pod
+    // cleanup doesn't require nulling out historical references.
+    lastPodId: uuid("last_pod_id"),
     retryCount: integer("retry_count").notNull().default(0),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
+    // Control plane: declarative user intent. Reconciler observes and clears.
+    controlIntent: text("control_intent"), // "cancel" | "retry" | "resume" | "restart" | null
+    // Control plane: durable reconcile backoff.
+    reconcileBackoffUntil: timestamp("reconcile_backoff_until", { withTimezone: true }),
+    reconcileAttempts: integer("reconcile_attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -631,6 +649,7 @@ export const workflowRuns = pgTable(
     index("workflow_runs_workflow_id_idx").on(table.workflowId),
     index("workflow_runs_trigger_id_idx").on(table.triggerId),
     index("workflow_runs_state_idx").on(table.state),
+    index("workflow_runs_pod_id_idx").on(table.podId),
   ],
 );
 
@@ -938,10 +957,21 @@ export const promptTemplates = pgTable(
     repoUrl: text("repo_url"), // null = global default, set = repo-specific
     autoMerge: boolean("auto_merge").notNull().default(false),
     workspaceId: uuid("workspace_id"),
+    // Discriminator: "prompt" (coding template, existing usage)
+    //                "review" (review agent template)
+    //                "job"    (Job prompt template — previously inline on workflows)
+    //                "task"   (Task config template)
+    kind: text("kind").notNull().default("prompt"),
+    paramsSchema: jsonb("params_schema").$type<Record<string, unknown>>(),
+    defaultAgentType: text("default_agent_type"),
+    description: text("description"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("prompt_templates_workspace_id_idx").on(table.workspaceId)],
+  (table) => [
+    index("prompt_templates_workspace_id_idx").on(table.workspaceId),
+    index("prompt_templates_kind_idx").on(table.kind),
+  ],
 );
 
 // ── Repo Shared Directories (persistent cache) ───────────────────────────────
@@ -982,13 +1012,17 @@ export const workflowPodStateEnum = pgEnum("workflow_pod_state", [
   "terminating",
 ]);
 
+// Workflow pods are pooled per-workflow, scaled out to workflows.maxPodInstances
+// replicas, each hosting up to workflows.maxAgentsPerPod concurrent runs. Keyed
+// by (workflow_id, instance_index) — mirrors repo_pods shape.
 export const workflowPods = pgTable(
   "workflow_pods",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    workflowRunId: uuid("workflow_run_id")
+    workflowId: uuid("workflow_id")
       .notNull()
-      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    instanceIndex: integer("instance_index").notNull().default(0),
     workspaceId: uuid("workspace_id"),
     podName: text("pod_name"),
     podId: text("pod_id"),
@@ -1002,7 +1036,8 @@ export const workflowPods = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index("workflow_pods_run_id_idx").on(table.workflowRunId),
+    unique("workflow_pods_workflow_instance_key").on(table.workflowId, table.instanceIndex),
+    index("workflow_pods_workflow_id_idx").on(table.workflowId),
     index("workflow_pods_workspace_id_idx").on(table.workspaceId),
   ],
 );

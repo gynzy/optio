@@ -208,23 +208,23 @@ const MIGRATED_ROUTES: MigratedRoute[] = [
 
   // Phase 3 — workflows & scheduling (24 routes)
   // workflows.ts (12)
-  { method: "get", path: "/api/workflows" },
-  { method: "post", path: "/api/workflows" },
-  { method: "get", path: "/api/workflows/{id}" },
-  { method: "patch", path: "/api/workflows/{id}" },
-  { method: "post", path: "/api/workflows/{id}/clone" },
-  { method: "delete", path: "/api/workflows/{id}" },
-  { method: "post", path: "/api/workflows/{id}/runs" },
-  { method: "get", path: "/api/workflows/{id}/runs" },
+  { method: "get", path: "/api/jobs" },
+  { method: "post", path: "/api/jobs" },
+  { method: "get", path: "/api/jobs/{id}" },
+  { method: "patch", path: "/api/jobs/{id}" },
+  { method: "post", path: "/api/jobs/{id}/clone" },
+  { method: "delete", path: "/api/jobs/{id}" },
+  { method: "post", path: "/api/jobs/{id}/runs" },
+  { method: "get", path: "/api/jobs/{id}/runs" },
   { method: "get", path: "/api/workflow-runs/{id}" },
   { method: "post", path: "/api/workflow-runs/{id}/retry" },
   { method: "post", path: "/api/workflow-runs/{id}/cancel" },
   { method: "get", path: "/api/workflow-runs/{id}/logs" },
   // workflow-triggers.ts (4)
-  { method: "get", path: "/api/workflows/{id}/triggers" },
-  { method: "post", path: "/api/workflows/{id}/triggers" },
-  { method: "patch", path: "/api/workflows/{id}/triggers/{triggerId}" },
-  { method: "delete", path: "/api/workflows/{id}/triggers/{triggerId}" },
+  { method: "get", path: "/api/jobs/{id}/triggers" },
+  { method: "post", path: "/api/jobs/{id}/triggers" },
+  { method: "patch", path: "/api/jobs/{id}/triggers/{triggerId}" },
+  { method: "delete", path: "/api/jobs/{id}/triggers/{triggerId}" },
   // Phase 4 — sessions, PR reviews, issues (17 routes)
   // sessions.ts (7)
   { method: "get", path: "/api/sessions" },

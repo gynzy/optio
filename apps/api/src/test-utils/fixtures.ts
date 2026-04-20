@@ -127,6 +127,8 @@ export const mockWorkflow = {
   maxConcurrent: 1,
   maxRetries: 0,
   warmPoolSize: 0,
+  maxPodInstances: 1,
+  maxAgentsPerPod: 2,
   enabled: true,
   environmentSpec: null,
   paramsSchema: null,
@@ -160,6 +162,8 @@ export const mockWorkflowRun = {
 export const mockWorkflowTrigger = {
   id: "trg-1",
   workflowId: "wf-1",
+  targetType: "job",
+  targetId: "wf-1",
   type: "manual",
   config: {},
   paramMapping: null,
