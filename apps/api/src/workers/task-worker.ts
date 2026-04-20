@@ -12,6 +12,7 @@ import {
   classifyError,
   parseRepoUrl,
   parsePrUrl,
+  parseIntEnv,
 } from "@optio/shared";
 import { getAdapter } from "@optio/agent-adapters";
 import { parseClaudeEvent } from "../services/agent-event-parser.js";
@@ -33,6 +34,7 @@ import { isGitHubAppConfigured } from "../services/github-app-service.js";
 import { getCredentialSecret } from "../services/credential-secret-service.js";
 import { subscribeToTaskMessages } from "../services/task-message-bus.js";
 import * as messageService from "../services/task-message-service.js";
+import { detectAuthFailureInLogs, recordAuthEvent } from "../services/auth-failure-detector.js";
 import { logger } from "../logger.js";
 import {
   recordTaskComplete,
@@ -178,7 +180,7 @@ export function startTaskWorker() {
         const effectiveRepoConcurrency = maxAgentsPerPod * maxPodInstances;
 
         const claimed = await withClaimLock(async () => {
-          const globalMax = parseInt(process.env.OPTIO_MAX_CONCURRENT ?? "5", 10);
+          const globalMax = parseIntEnv("OPTIO_MAX_CONCURRENT", 5);
 
           // Global concurrency check
           const [{ count: activeCount }] = await db
@@ -618,6 +620,24 @@ export function startTaskWorker() {
 
         // For oauth-token mode, read the token from the secrets store
         if (claudeAuthMode === "oauth-token") {
+          // Pre-flight: check the cached validation from the background worker
+          // to fail fast before wasting ~10s on pod provisioning + worktree setup
+          try {
+            const { getCachedTokenValidation } = await import("./token-validation-worker.js");
+            const cached = await getCachedTokenValidation();
+            if (cached?.tokenExists && !cached.valid) {
+              throw new Error(
+                "Claude OAuth token is expired (detected by pre-flight validation). " +
+                  "Go to Secrets to update CLAUDE_CODE_OAUTH_TOKEN, or re-run 'claude setup-token'.",
+              );
+            }
+          } catch (preflight) {
+            // Re-throw if it's our own validation error; swallow infra errors
+            if (preflight instanceof Error && preflight.message.includes("pre-flight")) {
+              throw preflight;
+            }
+          }
+
           const oauthToken = await retrieveSecretWithFallback(
             "CLAUDE_CODE_OAUTH_TOKEN",
             "global",
@@ -976,6 +996,26 @@ export function startTaskWorker() {
         // Detect exit code from logs (agent-type-specific patterns)
         const inferredExitCode = inferExitCode(task.agentType, allLogs);
         const result = adapter.parseResult(inferredExitCode, allLogs);
+
+        // Override a nominally-successful result if the agent emitted an auth
+        // failure mid-run. Many agent CLIs catch 401s internally and exit 0,
+        // which would otherwise mark the task as completed despite no useful
+        // work. Mutating the result here propagates to every downstream branch.
+        const authDetection = detectAuthFailureInLogs(allLogs);
+        if (authDetection.matched && result.success) {
+          log.warn(
+            { pattern: authDetection.pattern, excerpt: authDetection.excerpt },
+            "Auth failure detected in agent output — overriding result",
+          );
+          result.success = false;
+          result.error = `Agent authentication failed: ${authDetection.excerpt ?? authDetection.pattern}`;
+          recordAuthEvent(
+            "claude",
+            authDetection.excerpt ?? authDetection.pattern ?? "auth_failure",
+            "task-worker",
+          ).catch(() => {});
+        }
+
         await taskService.updateTaskResult(taskId, result.summary, result.error);
 
         // Persist cost, token usage, and model data
@@ -1083,6 +1123,49 @@ export function startTaskWorker() {
               "Agent has created an implementation plan and is waiting for approval",
             );
             log.info("Planning phase complete — awaiting human review");
+          } else if (
+            shouldEscalateNoPr({
+              success: result.success,
+              isReviewTask,
+              isPlanningRun,
+              hasRepoUrl: !!task.repoUrl,
+              detectedPrUrl,
+            })
+          ) {
+            // Repo Task completed without opening a PR. Before escalating,
+            // check the API as a fallback — the agent may have pushed a PR
+            // that wasn't captured in log output.
+            let apiFallbackPr: ExistingPr | null = null;
+            try {
+              apiFallbackPr = await checkExistingPr(task.repoUrl, taskId, taskWorkspaceId);
+            } catch {
+              // Non-fatal — proceed with escalation
+            }
+
+            if (apiFallbackPr) {
+              await taskService.updateTaskPr(taskId, apiFallbackPr.url);
+              await repoPool.updateWorktreeState(taskId, "preserved");
+              await taskService.transitionTask(
+                taskId,
+                TaskState.PR_OPENED,
+                "pr_detected_api",
+                apiFallbackPr.url,
+              );
+              log.info(
+                { prUrl: apiFallbackPr.url },
+                "PR found via API fallback after successful agent exit",
+              );
+            } else {
+              await repoPool.updateWorktreeState(taskId, "preserved");
+              await taskService.transitionTask(
+                taskId,
+                TaskState.NEEDS_ATTENTION,
+                "completed_without_pr",
+                "Agent completed successfully but did not open a pull request. " +
+                  "The work may need to be committed and pushed manually, or the agent can be restarted to open a PR.",
+              );
+              log.warn("Repo Task completed without opening a PR — escalating to needs_attention");
+            }
           } else {
             await repoPool.updateWorktreeState(taskId, "removed");
             await taskService.transitionTask(
@@ -1284,7 +1367,7 @@ export function startTaskWorker() {
     }),
     {
       connection: connectionOpts,
-      concurrency: parseInt(process.env.OPTIO_MAX_CONCURRENT ?? "5", 10),
+      concurrency: parseIntEnv("OPTIO_MAX_CONCURRENT", 5),
       // Task jobs run for minutes/hours — BullMQ defaults (30s lock, 30s stall
       // check, max 1 stall) are far too aggressive and cause "job stalled" failures.
       lockDuration: 600_000, // 10 min lock
@@ -1641,6 +1724,29 @@ export function buildAgentCommand(
     default:
       return [`echo "Unknown agent type: ${agentType}" && exit 1`];
   }
+}
+
+/**
+ * Determines whether a Repo Task that completed successfully should be
+ * escalated to needs_attention because no PR was opened.
+ *
+ * Repo Tasks are expected to produce a PR. If the agent exits cleanly without
+ * opening one, the work didn't ship — the user should be notified so they can
+ * resume or restart the agent.
+ */
+export function shouldEscalateNoPr(opts: {
+  success: boolean;
+  isReviewTask: boolean;
+  isPlanningRun: boolean;
+  hasRepoUrl: boolean;
+  detectedPrUrl: string | undefined | null;
+}): boolean {
+  if (!opts.success) return false;
+  if (opts.isReviewTask) return false;
+  if (opts.isPlanningRun) return false;
+  if (!opts.hasRepoUrl) return false;
+  if (opts.detectedPrUrl) return false;
+  return true;
 }
 
 /** Infer exit code from agent logs based on agent-specific error patterns */

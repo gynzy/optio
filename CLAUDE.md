@@ -31,6 +31,8 @@ Optio is an orchestration system for AI coding agents. Think of it as "CI/CD whe
 
 **Backend-naming note.** For historical reasons the tables are `tasks` (Repo Tasks' one-time runs), `task_configs` (Repo Task blueprints), and `workflows` / `workflow_runs` / `workflow_triggers` (Standalone Tasks and their shared trigger surface). User-facing copy never uses "Workflow" or "Job" — everything is "Task" / "Repo Task" / "Standalone Task" in the UI. The legacy `/api/workflows` path was renamed to `/api/jobs` at the HTTP layer and the `/jobs/*` web routes remain for Standalone detail/runs.
 
+For the long-form explanation of how the two flavors map to the three internal types, the polymorphic HTTP layer, and how the UI presents them, see `docs/tasks.md`.
+
 **Unified `/api/tasks` HTTP layer.** All three kinds (`repo-task`, `repo-blueprint`, `standalone`) are reachable through one polymorphic HTTP resource:
 
 - `GET /api/tasks?type=repo-task|repo-blueprint|standalone|all` — unified list
@@ -114,7 +116,7 @@ When a limit is hit, task is re-queued with 10s delay.
 
 ### Authentication
 
-**Web UI**: Multi-provider OAuth (GitHub, Google, GitLab). Enable by setting `<PROVIDER>_OAUTH_CLIENT_ID` + `<PROVIDER>_OAUTH_CLIENT_SECRET`. Sessions use SHA256-hashed tokens (30-day TTL). Local dev bypass: `OPTIO_AUTH_DISABLED=true`.
+**Web UI**: Multi-provider OAuth (GitHub, Google, GitLab, generic OIDC). Enable by setting `<PROVIDER>_OAUTH_CLIENT_ID` + `<PROVIDER>_OAUTH_CLIENT_SECRET` (or `OIDC_ISSUER_URL` + `OIDC_CLIENT_ID` + `OIDC_CLIENT_SECRET` for generic OIDC). Sessions use SHA256-hashed tokens (30-day TTL). Local dev bypass: `OPTIO_AUTH_DISABLED=true`.
 
 **Claude Code** (three modes, selected in setup wizard):
 
@@ -133,11 +135,12 @@ These are well-documented in code; read the relevant service files for details:
 - **Shared cache directories**: per-repo persistent PVCs for tool caches (npm, pip, cargo, etc.), managed via `/api/repos/:id/shared-directories`
 - **Interactive sessions**: persistent workspaces with terminal + agent chat, at `/sessions`
 - **Workspaces**: multi-tenancy via `workspaceId` column. Roles (admin/member/viewer) in schema but not fully enforced
-- **Standalone Tasks** (`workflow-service.ts`, `workflow-worker.ts`): reached from the "Standalone" link on `/tasks` (list at `/jobs`, detail at `/jobs/:id`, runs at `/jobs/:id/runs/:runId`). Agent runs with no repo, `{{PARAM}}` prompt templates, four trigger types (manual/schedule/webhook/ticket), isolated pod execution, real-time log streaming, auto-retry with exponential backoff. Schema: `workflows`, `workflow_triggers`, `workflow_runs`, `workflow_run_logs`, `workflow_pods`
+- **Standalone Tasks** (`workflow-service.ts`, `workflow-worker.ts`): reached from the "Standalone" link on `/tasks` (list at `/jobs`, detail at `/jobs/:id`, runs at `/jobs/:id/runs/:runId`). Agent runs with no repo, `{{PARAM}}` prompt templates, four trigger types (manual/schedule/webhook/ticket), pooled pod execution, real-time log streaming, auto-retry with exponential backoff. Pods are **shared across runs within a workflow**, keyed on `(workflow_id, instance_index)`: each workflow has `workflows.maxPodInstances` pod replicas (default 1, max 20) and `workflows.maxAgentsPerPod` concurrent runs per pod (default 2, max 50) — mirrors repo pod scaling. Runs track their assigned pod via `workflow_runs.pod_id` and remember it for retry affinity via `last_pod_id`. Schema: `workflows`, `workflow_triggers`, `workflow_runs`, `workflow_run_logs`, `workflow_pods`
 - **Repo Task Configs** (`task-config-service.ts`, routes in `task-configs.ts`): reusable Repo Task blueprints that spawn tasks when triggers fire. `instantiateTask(configId, { triggerId, params })` creates a task with rendered prompt + title, transitions it to QUEUED, and enqueues the BullMQ job. UI at `/tasks/scheduled`. Schema: `task_configs`
 - **Triggers** (`workflow-trigger-service.ts`, `workflow-trigger-worker.ts`): polymorphic trigger table (`workflow_triggers`) keyed by `(target_type, target_id)`. `target_type="job"` dispatches to `createWorkflowRun`; `target_type="task_config"` dispatches to `instantiateTask`. Schedule trigger worker polls every 60s (`OPTIO_WORKFLOW_TRIGGER_INTERVAL`).
 - **Templates** (`prompt-template-service.ts`, routes in `prompt-templates.ts`): reusable prompt templates with `kind` discriminator (`prompt` / `review` / `job` / `task`). `renderTemplateString(template, params)` handles `{{param}}` substitution + `{{#if}}` blocks. UI at `/templates`.
 - **Connections** (`connection-service.ts`): external service integrations via MCP. Built-in providers: Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem. Also supports custom MCP servers and HTTP APIs. Three-layer model: providers (catalog) → connections (configured instances) → assignments (per-repo/agent-type rules). Injected into agent pods at task runtime via `getConnectionsForTask()` in task-worker
+- **Reconciliation control plane** (`workers/reconcile-worker.ts`, `services/reconcile-{snapshot,executor,queue}.ts`, `packages/shared/src/reconcile/`): K8s-style reconciler for Repo Task runs (`tasks`) and Standalone runs (`workflow_runs`). Pure decision functions consume a frozen `WorldSnapshot` and return a typed `Action`; the executor applies it under CAS so concurrent passes can't trample each other. Producers — `taskService.transitionTask`, `workflow-worker`'s `transitionRun`, `pr-watcher` poll cycle, `repo-cleanup` pod-health detection — wake the reconciler via `enqueueReconcile`. Periodic resync (`OPTIO_RECONCILE_RESYNC_INTERVAL`, 5 min) catches anything missed. The reconciler owns: PR-driven transitions (auto-merge, complete-on-merge, fail-on-close), auto-resume on CI/conflict/review (capped by `OPTIO_MAX_AUTO_RESUMES`), review launch, stall + pod-death detection, control-intent (cancel/retry/resume/restart). Schema: `control_intent`, `reconcile_backoff_until`, `reconcile_attempts` columns on both `tasks` and `workflow_runs`. See `docs/reconciliation.md`
 - **Task dependencies**: `task_dependencies` table for multi-step pipelines
 - **Cost tracking**: `GET /api/analytics/costs` with daily/repo/type breakdowns, UI at `/costs`
 - **Error classification**: `packages/shared/src/error-classifier.ts` pattern-matches errors into categories with remedies

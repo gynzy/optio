@@ -422,7 +422,13 @@ export const api = {
 
   getAuthStatus: () =>
     request<{
-      subscription: { available: boolean; expiresAt?: string; error?: string; expired?: boolean };
+      subscription: {
+        available: boolean;
+        expiresAt?: string;
+        error?: string;
+        expired?: boolean;
+        lastValidated?: string | null;
+      };
     }>("/api/auth/status"),
 
   refreshAuth: () =>
@@ -1094,6 +1100,17 @@ export const api = {
   // Workflows
   listWorkflows: () => request<{ workflows: any[] }>("/api/jobs"),
 
+  getJobStats: () =>
+    request<{
+      stats: {
+        total: number;
+        queued: number;
+        running: number;
+        failed: number;
+        completed: number;
+      };
+    }>("/api/jobs/stats"),
+
   getWorkflow: (id: string) => request<{ workflow: any }>(`/api/jobs/${id}`),
 
   createWorkflow: (data: {
@@ -1107,6 +1124,8 @@ export const api = {
     maxConcurrent?: number;
     maxRetries?: number;
     warmPoolSize?: number;
+    maxPodInstances?: number;
+    maxAgentsPerPod?: number;
     enabled?: boolean;
     environmentSpec?: Record<string, unknown>;
     paramsSchema?: Record<string, unknown>;
@@ -1468,7 +1487,7 @@ export const api = {
   createTaskConfigTrigger: (
     id: string,
     data: {
-      type: "manual" | "schedule" | "webhook";
+      type: "manual" | "schedule" | "webhook" | "ticket";
       config?: Record<string, unknown>;
       paramMapping?: Record<string, unknown>;
       enabled?: boolean;

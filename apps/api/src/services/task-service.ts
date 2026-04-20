@@ -4,8 +4,10 @@ import { tasks, taskEvents, taskLogs, users, reviewDrafts, repos } from "../db/s
 import {
   TaskState,
   transition,
+  InvalidTransitionError,
   normalizeRepoUrl,
   DEFAULT_STALL_THRESHOLD_MS,
+  parseIntEnv,
   type CreateTaskInput,
 } from "@optio/shared";
 import { publishEvent } from "./event-bus.js";
@@ -350,6 +352,14 @@ export async function transitionTask(
       .catch((err) => logger.warn({ err, taskId: id }, "Failed to cascade failure to dependents"));
   }
 
+  // Wake the reconciler. Every state change is a signal it may want to act
+  // (capacity opened up, PR-related state changed, dependency cascade, etc).
+  import("./reconcile-queue.js")
+    .then(({ enqueueReconcile }) =>
+      enqueueReconcile({ kind: "repo", id }, { reason: `transition:${currentState}->${toState}` }),
+    )
+    .catch((err) => logger.warn({ err, taskId: id }, "Failed to enqueue reconcile"));
+
   return updated[0];
 }
 
@@ -372,6 +382,13 @@ async function closeIssue(repoUrl: string, issueNumber: string, prUrl?: string |
  * Like transitionTask, but returns null instead of throwing when another
  * worker wins the race. Used by the task worker at the critical
  * queued → provisioning claim point.
+ *
+ * Two race shapes are both treated as "lost the race, exit cleanly":
+ *   - StateRaceError: the CAS update returned 0 rows (state changed between
+ *     our read and write of the *same* transition).
+ *   - InvalidTransitionError: another worker advanced the state to the same
+ *     target ahead of us, so the validator throws (e.g. provisioning →
+ *     provisioning when the winner already moved us into provisioning).
  */
 export async function tryTransitionTask(
   id: string,
@@ -383,7 +400,7 @@ export async function tryTransitionTask(
   try {
     return await transitionTask(id, toState, trigger, message, userId);
   } catch (err) {
-    if (err instanceof StateRaceError) {
+    if (err instanceof StateRaceError || err instanceof InvalidTransitionError) {
       return null;
     }
     throw err;
@@ -650,7 +667,7 @@ export function getStallThresholdForRepo(
   if (repoConfig?.stallThresholdMs != null) {
     return repoConfig.stallThresholdMs;
   }
-  return parseInt(process.env.OPTIO_STALL_THRESHOLD_MS ?? String(DEFAULT_STALL_THRESHOLD_MS), 10);
+  return parseIntEnv("OPTIO_STALL_THRESHOLD_MS", DEFAULT_STALL_THRESHOLD_MS);
 }
 
 /**
