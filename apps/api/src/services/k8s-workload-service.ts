@@ -43,7 +43,10 @@ const TERMINATION_GRACE_PERIOD = parseInt(
   process.env.OPTIO_TERMINATION_GRACE_PERIOD_SECONDS ?? "300",
   10,
 );
-const POD_READY_TIMEOUT_MS = 120_000;
+const POD_READY_TIMEOUT_MS = parseInt(process.env.OPTIO_POD_READY_TIMEOUT_MS ?? "120000", 10); // 2 min default
+if (Number.isNaN(POD_READY_TIMEOUT_MS) || POD_READY_TIMEOUT_MS <= 0) {
+  throw new Error("OPTIO_POD_READY_TIMEOUT_MS must be a positive integer");
+}
 const POD_READY_POLL_MS = 1_000;
 
 export class K8sWorkloadManager {

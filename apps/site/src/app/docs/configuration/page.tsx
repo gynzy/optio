@@ -85,6 +85,11 @@ export default function ConfigurationPage() {
                 "120000",
                 "Repo clone/init timeout in milliseconds (2 min default)",
               ],
+              [
+                "OPTIO_POD_READY_TIMEOUT_MS",
+                "120000",
+                "Pod ready timeout in milliseconds (2 min default)",
+              ],
               ["OPTIO_PR_WATCH_INTERVAL", "30000", "PR polling interval in milliseconds"],
               [
                 "OPTIO_HEALTH_CHECK_INTERVAL",
