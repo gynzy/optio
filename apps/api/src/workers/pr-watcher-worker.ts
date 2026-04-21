@@ -116,9 +116,7 @@ export function startPrWatcherWorker() {
           const prData = await platform.getPullRequest(ri, prNumber).catch(() => null);
           if (!prData) continue;
 
-          const checkRuns = await platform.getCIChecks(ri, prData.headSha).catch(() => []);
           const reviewsData = await platform.getReviews(ri, prNumber).catch(() => []);
-          const checksStatus = determineCheckStatus(checkRuns);
           const reviewResult = determineReviewStatus(reviewsData);
           const reviewStatus = reviewResult.status;
           let reviewComments = reviewResult.comments;
@@ -136,20 +134,11 @@ export function startPrWatcherWorker() {
             } catch {}
           }
 
-          // Conflicts override the raw checks status — once we've recorded
-          // conflicts, keep that label until mergeable flips back.
-          const effectiveChecksStatus =
-            task.prChecksStatus === "conflicts" && prData.mergeable === false
-              ? "conflicts"
-              : checksStatus;
-
-          // Write all PR fields in one update. The reconciler reads these
-          // from the snapshot to decide the next action.
+          // Only update non-edge-triggering fields. The reconciler handles
+          // prChecksStatus, prReviewStatus, prState updates after detecting
+          // edge transitions — updating them here would defeat edge detection.
           const updates: Record<string, unknown> = {
             prNumber,
-            prState: prData.merged ? "merged" : prData.state,
-            prChecksStatus: effectiveChecksStatus,
-            prReviewStatus: reviewStatus,
             updatedAt: new Date(),
           };
           if (reviewComments) {
