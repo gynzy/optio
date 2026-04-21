@@ -528,14 +528,14 @@ export class K8sWorkloadManager {
     }
 
     // Pod-level security context for StatefulSets — ensures PVC mounts are
-    // writable by the agent user (UID/GID 1000). fsGroup sets the group owner
-    // of all files in mounted volumes. UID 1000 matches the `agent` user
+    // writable by the agent user (UID/GID 1001). fsGroup sets the group owner
+    // of all files in mounted volumes. UID 1001 matches the `agent` user
     // created in images/base.Dockerfile and owns /workspace in the image.
     if (restartPolicy === "Always") {
       const podSecCtx = new V1PodSecurityContext();
-      podSecCtx.fsGroup = 1000;
-      podSecCtx.runAsUser = 1000;
-      podSecCtx.runAsGroup = 1000;
+      podSecCtx.fsGroup = 1001;
+      podSecCtx.runAsUser = 1001;
+      podSecCtx.runAsGroup = 1001;
       podSpec.securityContext = podSecCtx;
     }
 
@@ -550,7 +550,7 @@ export class K8sWorkloadManager {
     const initContainers: V1Container[] = [];
 
     // For StatefulSets, prepend an initContainer that chowns the home PVC
-    // mount to UID 1000 (the `agent` user in images/base.Dockerfile). This
+    // mount to UID 1001 (the `agent` user in images/base.Dockerfile). This
     // is necessary because some storage classes (docker-desktop's hostpath,
     // GKE default) don't honor the pod's fsGroup setting, leaving the mount
     // root-owned and unwritable by the main container. Running chown as
@@ -561,7 +561,7 @@ export class K8sWorkloadManager {
       permInit.name = "home-perm-fix";
       permInit.image = spec.image;
       permInit.imagePullPolicy = spec.imagePullPolicy ?? "IfNotPresent";
-      permInit.command = ["sh", "-c", "chown -R 1000:1000 /home/agent && chmod 755 /home/agent"];
+      permInit.command = ["sh", "-c", "chown -R 1001:1001 /home/agent && chmod 755 /home/agent"];
       const initSec = new V1SecurityContext();
       initSec.runAsUser = 0;
       initSec.runAsGroup = 0;
