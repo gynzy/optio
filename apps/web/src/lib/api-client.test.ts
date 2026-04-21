@@ -149,10 +149,7 @@ describe("api-client", () => {
       mockResponse({ workflows: [] });
       const result = await api.listWorkflows();
       expect(result).toEqual({ workflows: [] });
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/workflows",
-        expect.objectContaining({ headers: {} }),
-      );
+      expect(fetchMock).toHaveBeenCalledWith("/api/jobs", expect.objectContaining({ headers: {} }));
     });
   });
 
@@ -284,7 +281,7 @@ describe("api-client", () => {
       mockResponse({ workflow: { id: "w-1", name: "Deploy" } });
       const result = await api.getWorkflow("w-1");
       expect(result.workflow.name).toBe("Deploy");
-      expect(fetchMock).toHaveBeenCalledWith("/api/workflows/w-1", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/api/jobs/w-1", expect.any(Object));
     });
   });
 
@@ -296,7 +293,7 @@ describe("api-client", () => {
         promptTemplate: "Do the thing",
       });
       const [url, opts] = fetchMock.mock.calls[0];
-      expect(url).toBe("/api/workflows");
+      expect(url).toBe("/api/jobs");
       expect(opts.method).toBe("POST");
       const body = JSON.parse(opts.body);
       expect(body.name).toBe("Deploy");
@@ -309,7 +306,7 @@ describe("api-client", () => {
       mockResponse({ workflow: { id: "w-1", name: "Updated" } });
       await api.updateWorkflow("w-1", { name: "Updated" });
       const [url, opts] = fetchMock.mock.calls[0];
-      expect(url).toBe("/api/workflows/w-1");
+      expect(url).toBe("/api/jobs/w-1");
       expect(opts.method).toBe("PATCH");
     });
   });
@@ -323,7 +320,7 @@ describe("api-client", () => {
       });
       await api.deleteWorkflow("w-1");
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/workflows/w-1",
+        "/api/jobs/w-1",
         expect.objectContaining({ method: "DELETE" }),
       );
     });
@@ -334,7 +331,7 @@ describe("api-client", () => {
       mockResponse({ triggers: [{ id: "t-1", type: "manual" }] });
       const result = await api.listWorkflowTriggers("w-1");
       expect(result.triggers).toHaveLength(1);
-      expect(fetchMock).toHaveBeenCalledWith("/api/workflows/w-1/triggers", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/api/jobs/w-1/triggers", expect.any(Object));
     });
   });
 
@@ -343,7 +340,7 @@ describe("api-client", () => {
       mockResponse({ trigger: { id: "t-1" } });
       await api.createWorkflowTrigger("w-1", { type: "schedule" });
       const [url, opts] = fetchMock.mock.calls[0];
-      expect(url).toBe("/api/workflows/w-1/triggers");
+      expect(url).toBe("/api/jobs/w-1/triggers");
       expect(opts.method).toBe("POST");
       const body = JSON.parse(opts.body);
       expect(body.type).toBe("schedule");
@@ -355,7 +352,7 @@ describe("api-client", () => {
       mockResponse({ trigger: { id: "t-1" } });
       await api.updateWorkflowTrigger("w-1", "t-1", { enabled: false });
       const [url, opts] = fetchMock.mock.calls[0];
-      expect(url).toBe("/api/workflows/w-1/triggers/t-1");
+      expect(url).toBe("/api/jobs/w-1/triggers/t-1");
       expect(opts.method).toBe("PATCH");
     });
   });
@@ -369,7 +366,7 @@ describe("api-client", () => {
       });
       await api.deleteWorkflowTrigger("w-1", "t-1");
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/workflows/w-1/triggers/t-1",
+        "/api/jobs/w-1/triggers/t-1",
         expect.objectContaining({ method: "DELETE" }),
       );
     });

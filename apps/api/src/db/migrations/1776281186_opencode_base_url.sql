@@ -1,0 +1,1 @@
+ALTER TABLE "repos" ADD COLUMN "opencode_base_url" text;

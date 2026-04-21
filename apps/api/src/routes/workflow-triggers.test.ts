@@ -58,9 +58,9 @@ function mockGetWorkflowReturns(workflow: Record<string, unknown> | null) {
   });
 }
 
-// ─── GET /api/workflows/:id/triggers ───
+// ─── GET /api/jobs/:id/triggers ───
 
-describe("GET /api/workflows/:id/triggers", () => {
+describe("GET /api/jobs/:id/triggers", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -74,7 +74,7 @@ describe("GET /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
     });
 
     expect(res.statusCode).toBe(200);
@@ -87,7 +87,7 @@ describe("GET /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/workflows/nonexistent/triggers",
+      url: "/api/jobs/nonexistent/triggers",
     });
 
     expect(res.statusCode).toBe(404);
@@ -98,7 +98,7 @@ describe("GET /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
     });
 
     expect(res.statusCode).toBe(404);
@@ -112,7 +112,7 @@ describe("GET /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
     });
 
     expect(res.statusCode).toBe(200);
@@ -120,9 +120,9 @@ describe("GET /api/workflows/:id/triggers", () => {
   });
 });
 
-// ─── POST /api/workflows/:id/triggers ───
+// ─── POST /api/jobs/:id/triggers ───
 
-describe("POST /api/workflows/:id/triggers", () => {
+describe("POST /api/jobs/:id/triggers", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -136,7 +136,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "manual", config: {} },
     });
 
@@ -159,7 +159,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "schedule", config: { cronExpression: "0 0 * * *" } },
     });
 
@@ -176,7 +176,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "webhook", config: { path: "/hooks/deploy" } },
     });
 
@@ -192,7 +192,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "manual", config: {}, paramMapping: { issueId: "$.issue.id" } },
     });
 
@@ -209,7 +209,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "schedule", config: {} },
     });
 
@@ -222,7 +222,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "webhook", config: {} },
     });
 
@@ -235,7 +235,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "invalid", config: {} },
     });
 
@@ -248,7 +248,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/nonexistent/triggers",
+      url: "/api/jobs/nonexistent/triggers",
       payload: { type: "manual", config: {} },
     });
 
@@ -261,7 +261,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "manual", config: {} },
     });
 
@@ -274,7 +274,7 @@ describe("POST /api/workflows/:id/triggers", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/api/workflows/wf-1/triggers",
+      url: "/api/jobs/wf-1/triggers",
       payload: { type: "webhook", config: { path: "/hooks/deploy" } },
     });
 
@@ -282,9 +282,9 @@ describe("POST /api/workflows/:id/triggers", () => {
   });
 });
 
-// ─── PATCH /api/workflows/:id/triggers/:triggerId ───
+// ─── PATCH /api/jobs/:id/triggers/:triggerId ───
 
-describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
+describe("PATCH /api/jobs/:id/triggers/:triggerId", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -299,7 +299,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { enabled: false },
     });
 
@@ -325,7 +325,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { config: { cronExpression: "0 6 * * *" } },
     });
 
@@ -342,7 +342,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { paramMapping: { foo: "bar" } },
     });
 
@@ -359,7 +359,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/nonexistent",
+      url: "/api/jobs/wf-1/triggers/nonexistent",
       payload: { enabled: false },
     });
 
@@ -372,7 +372,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { enabled: false },
     });
 
@@ -389,7 +389,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { config: {} },
     });
 
@@ -407,7 +407,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { config: {} },
     });
 
@@ -426,7 +426,7 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "PATCH",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
       payload: { config: { path: "/hooks/other" } },
     });
 
@@ -434,9 +434,9 @@ describe("PATCH /api/workflows/:id/triggers/:triggerId", () => {
   });
 });
 
-// ─── DELETE /api/workflows/:id/triggers/:triggerId ───
+// ─── DELETE /api/jobs/:id/triggers/:triggerId ───
 
-describe("DELETE /api/workflows/:id/triggers/:triggerId", () => {
+describe("DELETE /api/jobs/:id/triggers/:triggerId", () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -451,7 +451,7 @@ describe("DELETE /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "DELETE",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
     });
 
     expect(res.statusCode).toBe(204);
@@ -464,7 +464,7 @@ describe("DELETE /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "DELETE",
-      url: "/api/workflows/wf-1/triggers/nonexistent",
+      url: "/api/jobs/wf-1/triggers/nonexistent",
     });
 
     expect(res.statusCode).toBe(404);
@@ -475,7 +475,7 @@ describe("DELETE /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "DELETE",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
     });
 
     expect(res.statusCode).toBe(404);
@@ -487,7 +487,7 @@ describe("DELETE /api/workflows/:id/triggers/:triggerId", () => {
 
     const res = await app.inject({
       method: "DELETE",
-      url: "/api/workflows/wf-1/triggers/trig-1",
+      url: "/api/jobs/wf-1/triggers/trig-1",
     });
 
     expect(res.statusCode).toBe(404);

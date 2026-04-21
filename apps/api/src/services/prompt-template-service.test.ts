@@ -26,7 +26,57 @@ import {
   saveDefaultPromptTemplate,
   saveRepoPromptTemplate,
   listPromptTemplates,
+  renderTemplateString,
 } from "./prompt-template-service.js";
+
+describe("renderTemplateString", () => {
+  it("substitutes {{param}} placeholders", () => {
+    const result = renderTemplateString("Hello {{name}}!", { name: "World" });
+    expect(result).toBe("Hello World!");
+  });
+
+  it("substitutes multiple and repeated placeholders", () => {
+    const result = renderTemplateString("{{a}} and {{b}} and {{a}}", { a: "1", b: "2" });
+    expect(result).toBe("1 and 2 and 1");
+  });
+
+  it("tolerates whitespace around placeholder names", () => {
+    expect(renderTemplateString("{{ name }}", { name: "x" })).toBe("x");
+  });
+
+  it("leaves unknown placeholders intact", () => {
+    expect(renderTemplateString("Hi {{missing}}", { name: "x" })).toBe("Hi {{missing}}");
+  });
+
+  it("renders {{#if param}}...{{/if}} when param is truthy", () => {
+    expect(renderTemplateString("a{{#if flag}} mid {{/if}}b", { flag: true })).toBe("a mid b");
+  });
+
+  it("drops {{#if}} body when param is falsy", () => {
+    expect(renderTemplateString("a{{#if flag}} mid {{/if}}b", { flag: false })).toBe("ab");
+  });
+
+  it("drops {{#if}} body when param is missing", () => {
+    expect(renderTemplateString("a{{#if flag}} mid {{/if}}b", {})).toBe("ab");
+  });
+
+  it("renders {{#if}} with nested {{param}} substitution", () => {
+    expect(
+      renderTemplateString("{{#if has_name}}Hello {{name}}{{/if}}", {
+        has_name: true,
+        name: "Ada",
+      }),
+    ).toBe("Hello Ada");
+  });
+
+  it("handles non-string params by coercing to string", () => {
+    expect(renderTemplateString("count={{n}}", { n: 42 })).toBe("count=42");
+  });
+
+  it("treats null/undefined params as empty string", () => {
+    expect(renderTemplateString("x={{v}}y", { v: null })).toBe("x=y");
+  });
+});
 
 describe("prompt-template-service", () => {
   beforeEach(() => {

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { parseIntEnv } from "@optio/shared";
 import { initTelemetry, shutdownTelemetry, registerMetricCallbacks } from "./telemetry.js";
 import { logger } from "./logger.js";
 
@@ -18,7 +19,7 @@ process.on("unhandledRejection", (reason, promise) => {
   throw reason;
 });
 
-const PORT = parseInt(process.env.API_PORT ?? "4000", 10);
+const PORT = parseIntEnv("API_PORT", 4000);
 const HOST = process.env.API_HOST ?? "0.0.0.0";
 
 async function checkMetricsServer() {
@@ -59,9 +60,11 @@ async function main() {
   const { startRepoCleanupWorker } = await import("./workers/repo-cleanup-worker.js");
   const { startPrWatcherWorker } = await import("./workers/pr-watcher-worker.js");
   const { startWebhookWorker } = await import("./workers/webhook-worker.js");
-  const { startScheduleWorker } = await import("./workers/schedule-worker.js");
   const { startWorkflowWorker } = await import("./workers/workflow-worker.js");
   const { startWorkflowTriggerWorker } = await import("./workers/workflow-trigger-worker.js");
+  const { startTokenValidationWorker } = await import("./workers/token-validation-worker.js");
+  const { startReconcileWorker, startReconcileResyncWorker } =
+    await import("./workers/reconcile-worker.js");
   const { getBullMQConnectionOptions } = await import("./services/redis-config.js");
   const { logTlsStackInfo, initTlsObservability } = await import("./services/tls-observability.js");
 
@@ -183,9 +186,11 @@ async function main() {
     cleanRepeatJobs("pr-watcher"),
     cleanRepeatJobs("repo-cleanup"),
     cleanRepeatJobs("ticket-sync"),
-    cleanRepeatJobs("schedule-checker"),
     cleanRepeatJobs("workflow-runs"),
     cleanRepeatJobs("workflow-trigger-checker"),
+    cleanRepeatJobs("token-validation"),
+    cleanRepeatJobs("reconcile"),
+    cleanRepeatJobs("reconcile-resync"),
   ]);
 
   // Start BullMQ workers (each re-registers its repeat job)
@@ -205,14 +210,18 @@ async function main() {
   const webhookWorker = startWebhookWorker();
   logger.info("Webhook worker started");
 
-  const scheduleWorker = startScheduleWorker();
-  logger.info("Schedule worker started");
-
   const workflowWorker = startWorkflowWorker();
   logger.info("Workflow worker started");
 
   const workflowTriggerWorker = startWorkflowTriggerWorker();
   logger.info("Workflow trigger worker started");
+
+  const tokenValidationWorker = startTokenValidationWorker();
+  logger.info("Token validation worker started");
+
+  const reconcileWorker = startReconcileWorker();
+  const reconcileResyncWorker = startReconcileResyncWorker();
+  logger.info("Reconcile workers started");
 
   // Check if metrics-server is available
   checkMetricsServer().catch(() => {});
@@ -231,9 +240,11 @@ async function main() {
     await repoCleanupWorker.close();
     await prWatcherWorker.close();
     await webhookWorker.close();
-    await scheduleWorker.close();
     await workflowWorker.close();
     await workflowTriggerWorker.close();
+    await tokenValidationWorker.close();
+    await reconcileWorker.close();
+    await reconcileResyncWorker.close();
     await app.close();
     // Flush pending OTel spans/metrics with 5s timeout
     await shutdownTelemetry();

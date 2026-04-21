@@ -83,7 +83,7 @@ export async function workflowTriggerRoutes(rawApp: FastifyInstance) {
   const app = rawApp.withTypeProvider<ZodTypeProvider>();
 
   app.get(
-    "/api/workflows/:id/triggers",
+    "/api/jobs/:id/triggers",
     {
       schema: {
         operationId: "listWorkflowTriggers",
@@ -112,7 +112,7 @@ export async function workflowTriggerRoutes(rawApp: FastifyInstance) {
   );
 
   app.post(
-    "/api/workflows/:id/triggers",
+    "/api/jobs/:id/triggers",
     {
       schema: {
         operationId: "createWorkflowTrigger",
@@ -183,7 +183,7 @@ export async function workflowTriggerRoutes(rawApp: FastifyInstance) {
   );
 
   app.patch(
-    "/api/workflows/:id/triggers/:triggerId",
+    "/api/jobs/:id/triggers/:triggerId",
     {
       schema: {
         operationId: "updateWorkflowTrigger",
@@ -245,7 +245,7 @@ export async function workflowTriggerRoutes(rawApp: FastifyInstance) {
   );
 
   app.delete(
-    "/api/workflows/:id/triggers/:triggerId",
+    "/api/jobs/:id/triggers/:triggerId",
     {
       schema: {
         operationId: "deleteWorkflowTrigger",

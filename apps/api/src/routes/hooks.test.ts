@@ -8,11 +8,18 @@ import { buildRouteTestApp } from "../test-utils/build-route-test-app.js";
 const mockGetWebhookTriggerByPath = vi.fn();
 const mockGetWorkflow = vi.fn();
 const mockCreateWorkflowRun = vi.fn();
+const mockGetTaskConfig = vi.fn();
+const mockInstantiateTask = vi.fn();
 
 vi.mock("../services/workflow-service.js", () => ({
   getWebhookTriggerByPath: (...args: unknown[]) => mockGetWebhookTriggerByPath(...args),
   getWorkflow: (...args: unknown[]) => mockGetWorkflow(...args),
   createWorkflowRun: (...args: unknown[]) => mockCreateWorkflowRun(...args),
+}));
+
+vi.mock("../services/task-config-service.js", () => ({
+  getTaskConfig: (...args: unknown[]) => mockGetTaskConfig(...args),
+  instantiateTask: (...args: unknown[]) => mockInstantiateTask(...args),
 }));
 
 import { hookRoutes } from "./hooks.js";
@@ -30,8 +37,23 @@ async function buildTestApp(): Promise<FastifyInstance> {
 const TRIGGER = {
   id: "trig-1",
   workflowId: "wf-1",
+  targetType: "job",
+  targetId: "wf-1",
   type: "webhook",
   config: { webhookPath: "my-hook", secret: "test-secret" },
+  paramMapping: null,
+  enabled: true,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+const TASK_CONFIG_TRIGGER = {
+  id: "trig-tc-1",
+  workflowId: null,
+  targetType: "task_config",
+  targetId: "tc-1",
+  type: "webhook",
+  config: { webhookPath: "tc-hook", secret: "test-secret" },
   paramMapping: null,
   enabled: true,
   createdAt: new Date(),
@@ -264,6 +286,48 @@ describe("POST /api/hooks/:webhookPath", () => {
       triggerId: "trig-1",
       params: payload,
     });
+  });
+
+  it("dispatches task_config webhook triggers to instantiateTask", async () => {
+    mockGetWebhookTriggerByPath.mockResolvedValue(TASK_CONFIG_TRIGGER);
+    mockGetTaskConfig.mockResolvedValue({ id: "tc-1", name: "CVE patch", enabled: true });
+    mockInstantiateTask.mockResolvedValue({ id: "task-42" });
+
+    const body = JSON.stringify({ severity: "high" });
+    const sig = hmacSign(body, "test-secret");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/hooks/tc-hook",
+      headers: { "content-type": "application/json", "x-optio-signature": sig },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ taskId: "task-42" });
+    expect(mockInstantiateTask).toHaveBeenCalledWith("tc-1", {
+      triggerId: "trig-tc-1",
+      params: { severity: "high" },
+    });
+    expect(mockCreateWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when task_config webhook target is disabled", async () => {
+    mockGetWebhookTriggerByPath.mockResolvedValue(TASK_CONFIG_TRIGGER);
+    mockGetTaskConfig.mockResolvedValue({ id: "tc-1", name: "Off", enabled: false });
+
+    const body = JSON.stringify({});
+    const sig = hmacSign(body, "test-secret");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/hooks/tc-hook",
+      headers: { "content-type": "application/json", "x-optio-signature": sig },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(mockInstantiateTask).not.toHaveBeenCalled();
   });
 
   it("handles nested JSON path expressions gracefully when path does not exist", async () => {

@@ -3,6 +3,7 @@ import {
   WorkflowRunState,
   canTransitionWorkflowRun,
   DEFAULT_MAX_TURNS_CODING,
+  parseIntEnv,
 } from "@optio/shared";
 import { getAdapter } from "@optio/agent-adapters";
 import { parseClaudeEvent } from "../services/agent-event-parser.js";
@@ -19,6 +20,7 @@ import { publishWorkflowRunEvent } from "../services/event-bus.js";
 import { enqueueWebhookEvent } from "./webhook-worker.js";
 import type { WebhookEvent } from "../services/webhook-service.js";
 import { resolveSecretsForTask, retrieveSecretWithFallback } from "../services/secret-service.js";
+import { detectAuthFailureInLogs, recordAuthEvent } from "../services/auth-failure-detector.js";
 import { logger } from "../logger.js";
 import { instrumentWorkerProcessor } from "../telemetry/instrument-worker.js";
 
@@ -187,6 +189,16 @@ async function transitionRun(
     );
   }
 
+  // Wake the reconciler so it observes the new state on the next pass.
+  import("../services/reconcile-queue.js")
+    .then(({ enqueueReconcile }) =>
+      enqueueReconcile(
+        { kind: "standalone", id: runId },
+        { reason: `transition:${currentState}->${newState}` },
+      ),
+    )
+    .catch((err) => logger.warn({ err, runId }, "Failed to enqueue reconcile"));
+
   return true;
 }
 
@@ -288,7 +300,7 @@ export function startWorkflowWorker() {
         // ── Concurrency check ─────────────────────────────────────────
         const claimed = await withClaimLock(async () => {
           // Global workflow concurrency
-          const globalMax = parseInt(process.env.OPTIO_MAX_WORKFLOW_CONCURRENT ?? "5", 10);
+          const globalMax = parseIntEnv("OPTIO_MAX_WORKFLOW_CONCURRENT", 5);
           const allRuns = await db
             .select()
             .from(workflowRuns)
@@ -407,9 +419,13 @@ export function startWorkflowWorker() {
           }
         }
 
-        // ── Provision pod ─────────────────────────────────────────────
+        // ── Provision pod (shared across runs within the workflow) ────
         const envSpec = workflow.environmentSpec as Record<string, string> | null;
-        const pod = await workflowPool.getOrCreateWorkflowPod(workflowRunId, env, {
+        const pod = await workflowPool.getOrCreateWorkflowPod(workflow.id, {
+          // Same-pod retry affinity — prefer the pod the previous attempt used.
+          preferredPodId: run.lastPodId ?? undefined,
+          maxAgentsPerPod: workflow.maxAgentsPerPod,
+          maxPodInstances: workflow.maxPodInstances,
           workspaceId,
           cpuRequest: envSpec?.cpuRequest ?? null,
           cpuLimit: envSpec?.cpuLimit ?? null,
@@ -418,10 +434,16 @@ export function startWorkflowWorker() {
         });
         workflowPodId = pod.id;
 
-        // Record pod name on the run
+        // Record the assigned pod on the run so reconcile/zombie code can find
+        // it, and remember it as lastPodId for retry affinity.
         await db
           .update(workflowRuns)
-          .set({ podName: pod.podName, updatedAt: new Date() })
+          .set({
+            podName: pod.podName,
+            podId: pod.id,
+            lastPodId: pod.id,
+            updatedAt: new Date(),
+          })
           .where(eq(workflowRuns.id, workflowRunId));
 
         log.info({ podName: pod.podName }, "Workflow pod ready, executing agent");
@@ -534,13 +556,34 @@ export function startWorkflowWorker() {
         // ── Parse result and update run ───────────────────────────────
         const result = adapter.parseResult(0, allLogs);
 
+        // Override a nominally-successful result if the agent emitted an auth
+        // failure mid-run. Claude CLIs typically catch the 401 internally and
+        // exit 0, which would otherwise mark the run as completed despite no
+        // useful work being done.
+        const authDetection = detectAuthFailureInLogs(allLogs);
+        let effectiveSuccess = result.success;
+        let effectiveError = result.error;
+        if (authDetection.matched) {
+          effectiveSuccess = false;
+          effectiveError = `Agent authentication failed: ${authDetection.excerpt ?? authDetection.pattern}`;
+          log.warn(
+            { pattern: authDetection.pattern, excerpt: authDetection.excerpt },
+            "Auth failure detected in agent output — overriding result",
+          );
+          recordAuthEvent(
+            "claude",
+            authDetection.excerpt ?? authDetection.pattern ?? "auth_failure",
+            "workflow-worker",
+          ).catch(() => {});
+        }
+
         const costFields: Record<string, unknown> = {};
         if (result.costUsd != null) costFields.costUsd = String(result.costUsd);
         if (result.inputTokens != null) costFields.inputTokens = result.inputTokens;
         if (result.outputTokens != null) costFields.outputTokens = result.outputTokens;
         if (result.model) costFields.modelUsed = result.model;
 
-        if (result.success) {
+        if (effectiveSuccess) {
           await transitionRun(
             workflowRunId,
             workflow.id,
@@ -561,42 +604,13 @@ export function startWorkflowWorker() {
             WorkflowRunState.FAILED,
             {
               ...costFields,
-              errorMessage: result.error ?? "Agent execution failed",
+              errorMessage: effectiveError ?? "Agent execution failed",
               finishedAt: new Date(),
             },
           );
-          log.warn({ error: result.error }, "Workflow run failed");
-
-          // ── Retry with exponential backoff ────────────────────────
-          const currentRetry = run.retryCount ?? 0;
-          if (currentRetry < workflow.maxRetries) {
-            log.info(
-              { retryCount: currentRetry + 1, maxRetries: workflow.maxRetries },
-              "Retrying workflow run",
-            );
-            // Transition back to queued
-            await transitionRun(
-              workflowRunId,
-              workflow.id,
-              WorkflowRunState.FAILED,
-              WorkflowRunState.QUEUED,
-              {
-                retryCount: currentRetry + 1,
-                errorMessage: null,
-              },
-            );
-            // Exponential backoff: 5s, 10s, 20s, 40s, ...
-            const backoffDelay = 5000 * Math.pow(2, currentRetry);
-            const jitter = Math.floor(Math.random() * 3000);
-            await workflowRunQueue.add(
-              "process-workflow-run",
-              { workflowRunId, provisioningRetryCount: 0 },
-              {
-                jobId: `${workflowRunId}-retry-${Date.now()}`,
-                delay: backoffDelay + jitter,
-              },
-            );
-          }
+          log.warn({ error: effectiveError }, "Workflow run failed");
+          // The reconciler's decideFailed handles the FAILED→QUEUED retry +
+          // exponential backoff. transitionRun above wakes it.
         }
       } catch (err) {
         log.error({ err }, "Workflow worker error");
@@ -663,15 +677,22 @@ export function startWorkflowWorker() {
         }
         throw err;
       } finally {
-        // Release pod task count
+        // Release the pool slot so activeRunCount reflects only live runs.
+        // Clearing pod_id on the run keeps reconcileActiveRunCounts accurate
+        // if the worker later crashes; lastPodId is preserved for retry affinity.
         if (workflowPodId) {
           await workflowPool.releaseRun(workflowPodId).catch(() => {});
+          await db
+            .update(workflowRuns)
+            .set({ podId: null, updatedAt: new Date() })
+            .where(eq(workflowRuns.id, workflowRunId))
+            .catch(() => {});
         }
       }
     }),
     {
       connection: connectionOpts,
-      concurrency: parseInt(process.env.OPTIO_MAX_WORKFLOW_CONCURRENT ?? "5", 10),
+      concurrency: parseIntEnv("OPTIO_MAX_WORKFLOW_CONCURRENT", 5),
       lockDuration: 600_000, // 10 min lock (workflows can run long)
       stalledInterval: 300_000, // check for stalls every 5 min
       maxStalledCount: 3,

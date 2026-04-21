@@ -7,7 +7,13 @@ import {
   saveDefaultPromptTemplate,
   saveRepoPromptTemplate,
   listPromptTemplates,
+  getPromptTemplateById,
+  createNamedTemplate,
+  updateNamedTemplate,
+  deleteNamedTemplate,
+  renderTemplateString,
 } from "../services/prompt-template-service.js";
+import { IdParamsSchema } from "../schemas/common.js";
 import { db } from "../db/client.js";
 import { promptTemplates } from "../db/schema.js";
 import { DEFAULT_PROMPT_TEMPLATE } from "@optio/shared";
@@ -108,6 +114,15 @@ export async function promptTemplateRoutes(rawApp: FastifyInstance) {
     },
   );
 
+  const listTemplatesQuerySchema = z
+    .object({
+      kind: z
+        .enum(["prompt", "review", "job", "task"])
+        .optional()
+        .describe("Filter by template kind"),
+    })
+    .describe("Query parameters for listing prompt templates");
+
   app.get(
     "/api/prompt-templates",
     {
@@ -116,12 +131,14 @@ export async function promptTemplateRoutes(rawApp: FastifyInstance) {
         summary: "List all prompt templates",
         description: "Return all prompt template rows in the current workspace.",
         tags: ["Repos & Integrations"],
+        querystring: listTemplatesQuerySchema,
         response: { 200: TemplateListResponseSchema },
       },
     },
     async (req, reply) => {
       const workspaceId = req.user?.workspaceId ?? null;
-      const templates = await listPromptTemplates(workspaceId);
+      const { kind } = req.query;
+      const templates = await listPromptTemplates({ workspaceId, kind });
       reply.send({ templates });
     },
   );
@@ -171,6 +188,139 @@ export async function promptTemplateRoutes(rawApp: FastifyInstance) {
         await saveDefaultPromptTemplate(body.template, body.autoMerge ?? false);
       }
       reply.status(201).send({ ok: true });
+    },
+  );
+
+  // ── Named-template CRUD (kinds: prompt | review | job | task) ──────────────
+
+  const namedCreateSchema = z.object({
+    name: z.string().min(1),
+    template: z.string().min(1),
+    kind: z.enum(["prompt", "review", "job", "task"]).default("prompt"),
+    description: z.string().optional(),
+    paramsSchema: z.record(z.unknown()).optional(),
+    defaultAgentType: z.string().optional(),
+  });
+
+  const namedUpdateSchema = z.object({
+    name: z.string().min(1).optional(),
+    template: z.string().min(1).optional(),
+    kind: z.enum(["prompt", "review", "job", "task"]).optional(),
+    description: z.string().nullable().optional(),
+    paramsSchema: z.record(z.unknown()).nullable().optional(),
+    defaultAgentType: z.string().nullable().optional(),
+  });
+
+  app.post(
+    "/api/prompt-templates/named",
+    {
+      schema: {
+        operationId: "createNamedTemplate",
+        summary: "Create a named template",
+        description:
+          "Create a reusable template of any kind (coding prompt, review, job, task). " +
+          "Supports {{param}} placeholders plus {{#if param}}...{{/if}} blocks.",
+        tags: ["Repos & Integrations"],
+        body: namedCreateSchema,
+        response: {
+          201: z.object({ template: PromptTemplateSchema }),
+          400: ErrorResponseSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const template = await createNamedTemplate({
+          ...req.body,
+          workspaceId: req.user?.workspaceId ?? null,
+        });
+        reply.status(201).send({ template });
+      } catch (err) {
+        reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/prompt-templates/:id",
+    {
+      schema: {
+        operationId: "updateNamedTemplate",
+        summary: "Update a named template",
+        tags: ["Repos & Integrations"],
+        params: IdParamsSchema,
+        body: namedUpdateSchema,
+        response: {
+          200: z.object({ template: PromptTemplateSchema }),
+          404: ErrorResponseSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const existing = await getPromptTemplateById(id);
+      if (!existing) return reply.status(404).send({ error: "Template not found" });
+      const wsId = req.user?.workspaceId;
+      if (wsId && existing.workspaceId && existing.workspaceId !== wsId) {
+        return reply.status(404).send({ error: "Template not found" });
+      }
+      const template = await updateNamedTemplate(id, req.body);
+      if (!template) return reply.status(404).send({ error: "Template not found" });
+      reply.send({ template });
+    },
+  );
+
+  app.delete(
+    "/api/prompt-templates/:id",
+    {
+      schema: {
+        operationId: "deleteNamedTemplate",
+        summary: "Delete a named template",
+        tags: ["Repos & Integrations"],
+        params: IdParamsSchema,
+        response: { 204: z.null(), 404: ErrorResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const existing = await getPromptTemplateById(id);
+      if (!existing) return reply.status(404).send({ error: "Template not found" });
+      const wsId = req.user?.workspaceId;
+      if (wsId && existing.workspaceId && existing.workspaceId !== wsId) {
+        return reply.status(404).send({ error: "Template not found" });
+      }
+      await deleteNamedTemplate(id);
+      reply.status(204).send(null);
+    },
+  );
+
+  app.post(
+    "/api/prompt-templates/:id/preview",
+    {
+      schema: {
+        operationId: "previewTemplate",
+        summary: "Render a template with sample params",
+        description:
+          "Substitute {{param}} placeholders and {{#if}} blocks, returning the rendered string.",
+        tags: ["Repos & Integrations"],
+        params: IdParamsSchema,
+        body: z.object({ params: z.record(z.unknown()).default({}) }),
+        response: {
+          200: z.object({ rendered: z.string() }),
+          404: ErrorResponseSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      const existing = await getPromptTemplateById(id);
+      if (!existing) return reply.status(404).send({ error: "Template not found" });
+      const wsId = req.user?.workspaceId;
+      if (wsId && existing.workspaceId && existing.workspaceId !== wsId) {
+        return reply.status(404).send({ error: "Template not found" });
+      }
+      const rendered = renderTemplateString(existing.template, req.body.params);
+      reply.send({ rendered });
     },
   );
 }

@@ -2,9 +2,12 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { TaskState, isTaskStalled, getSilentDuration } from "@optio/shared";
+import { TaskState, isTaskStalled, getSilentDuration, parseIntEnv } from "@optio/shared";
 import * as taskService from "../services/task-service.js";
 import * as dependencyService from "../services/dependency-service.js";
+import * as unifiedTaskService from "../services/unified-task-service.js";
+import * as taskConfigService from "../services/task-config-service.js";
+import * as workflowService from "../services/workflow-service.js";
 import { taskQueue } from "../workers/task-worker.js";
 import { db } from "../db/client.js";
 import { tasks } from "../db/schema.js";
@@ -26,11 +29,16 @@ import {
 
 // ─── Request schemas ───
 
+const TaskKindEnum = z.enum(["repo-task", "repo-blueprint", "standalone", "all"]);
+
 const listQuerySchema = z
   .object({
-    state: TaskStateSchema.optional().describe("Filter by task state"),
+    state: TaskStateSchema.optional().describe("Filter by task state (repo-task only)"),
     limit: z.coerce.number().int().min(1).max(1000).default(50).describe("Page size (1–1000)"),
     offset: z.coerce.number().int().min(0).default(0).describe("Offset from start"),
+    type: TaskKindEnum.optional().describe(
+      "Filter by task kind: repo-task (ad-hoc Repo Tasks, default), repo-blueprint (scheduled Repo Task configs), standalone (Standalone Tasks), all (union of all three)",
+    ),
   })
   .describe("Task list query parameters");
 
@@ -81,38 +89,49 @@ const logsQuerySchema = z
 
 const createTaskSchema = z
   .object({
-    title: z.string().min(1).describe("Human-readable task title"),
+    type: z
+      .enum(["repo-task", "repo-blueprint", "standalone"])
+      .optional()
+      .describe(
+        "Task kind. Defaults to `repo-task` (ad-hoc Repo Task). Use `repo-blueprint` for a scheduled Repo Task config, `standalone` for a Standalone Task definition.",
+      ),
+    // Fields common to all kinds
+    title: z.string().min(1).optional().describe("Human-readable task title"),
+    name: z.string().min(1).optional().describe("Name (required for blueprints)"),
     prompt: z.string().min(1).describe("Prompt passed to the agent"),
-    repoUrl: z.string().url().describe("Repository URL (http/https)"),
+    description: z.string().optional(),
+    agentType: AgentTypeSchema.optional().describe("Agent runtime override"),
+    maxRetries: z.number().int().min(0).max(10).optional(),
+    // Repo-task / repo-blueprint fields
+    repoUrl: z.string().url().optional().describe("Repository URL (required for repo kinds)"),
     repoBranch: z
       .string()
       .regex(/^[a-zA-Z0-9._/-]+$/, "Invalid branch name")
-      .optional()
-      .describe("Target branch (defaults to repo's configured default)"),
-    agentType: AgentTypeSchema.optional().describe("Agent runtime override"),
-    ticketSource: z.string().optional().describe("Origin ticket provider"),
-    ticketExternalId: z.string().optional().describe("External ID in the ticket provider"),
-    metadata: z.record(z.unknown()).optional().describe("Arbitrary metadata passed through"),
-    maxRetries: z
-      .number()
-      .int()
-      .min(0)
-      .max(10)
-      .optional()
-      .describe("Max retry attempts on failure"),
-    priority: z.number().int().min(1).max(1000).optional().describe("Priority (lower = higher)"),
-    dependsOn: z
-      .array(z.string().uuid())
-      .optional()
-      .describe("Task IDs that must complete before this one runs"),
+      .optional(),
+    priority: z.number().int().min(1).max(1000).optional(),
+    // Repo-task-only fields
+    ticketSource: z.string().optional(),
+    ticketExternalId: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+    dependsOn: z.array(z.string().uuid()).optional(),
+    // Repo-blueprint-only fields
+    enabled: z.boolean().optional(),
   })
-  .describe("Body for creating a new task");
+  .describe("Body for creating a task (polymorphic via `type`)");
 
 // ─── Response envelopes ───
 
 const TaskListResponseSchema = z
   .object({
-    tasks: z.array(EnrichedTaskSchema).describe("Page of tasks"),
+    tasks: z
+      .array(
+        z
+          .record(z.unknown())
+          .describe(
+            "Task row. For `type=repo-task` rows match EnrichedTaskSchema; for `type=repo-blueprint` and `type=standalone` the shape follows the respective backing table. Every row has a `type` discriminator.",
+          ),
+      )
+      .describe("Page of tasks"),
     limit: z.number().int(),
     offset: z.number().int(),
   })
@@ -135,16 +154,24 @@ const TaskStatsResponseSchema = z
 
 const TaskDetailResponseSchema = z
   .object({
-    task: TaskSchema,
+    task: z
+      .record(z.unknown())
+      .describe(
+        "Task row with a `type` discriminator. repo-task: tasks schema + pendingReason/pipelineProgress/stallInfo. repo-blueprint: task_config row. standalone: workflow row.",
+      ),
     pendingReason: PendingReasonSchema,
     pipelineProgress: PipelineProgressSchema,
     stallInfo: StallInfoSchema,
   })
-  .describe("Task detail with stall/pending/pipeline enrichment");
+  .describe("Task detail with stall/pending/pipeline enrichment (repo-task only)");
 
 const TaskResponseSchema = z
   .object({
-    task: TaskSchema,
+    task: z
+      .record(z.unknown())
+      .describe(
+        "Task row with a `type` discriminator. Shape depends on type: repo-task (matches TaskSchema), repo-blueprint (task_config row), standalone (workflow row).",
+      ),
   })
   .describe("Task envelope");
 
@@ -198,24 +225,37 @@ export async function taskRoutes(rawApp: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const { state, limit, offset } = req.query;
+      const { state, limit, offset, type } = req.query;
       const workspaceId = req.user?.workspaceId ?? null;
-      const taskList = await taskService.listTasks({
-        state,
-        limit,
-        offset,
+
+      // Default (no type, or type=repo-task) — preserves existing shape for back-compat
+      if (!type || type === "repo-task") {
+        const taskList = await taskService.listTasks({
+          state,
+          limit,
+          offset,
+          workspaceId,
+        });
+
+        // Enrich running tasks with isStalled flag (lightweight — no lastLogSummary)
+        const globalThreshold = parseIntEnv("OPTIO_STALL_THRESHOLD_MS", 300000);
+        const now = new Date();
+        const enriched = taskList.map((t) => ({
+          ...t,
+          type: "repo-task" as const,
+          isStalled: isTaskStalled(t, now, globalThreshold),
+        }));
+        return reply.send({ tasks: enriched, limit, offset });
+      }
+
+      // Polymorphic list — blueprint or standalone or all
+      const resolved = await unifiedTaskService.listUnifiedTasks({
+        type: type === "all" ? undefined : type,
         workspaceId,
+        limit,
       });
-
-      // Enrich running tasks with isStalled flag (lightweight — no lastLogSummary)
-      const globalThreshold = parseInt(process.env.OPTIO_STALL_THRESHOLD_MS ?? "300000", 10);
-      const now = new Date();
-      const enriched = taskList.map((t) => ({
-        ...t,
-        isStalled: isTaskStalled(t, now, globalThreshold),
-      }));
-
-      reply.send({ tasks: enriched, limit, offset });
+      const tasksOut = resolved.map((r) => ({ type: r.type, ...r.data }));
+      return reply.send({ tasks: tasksOut, limit, offset });
     },
   );
 
@@ -304,42 +344,57 @@ export async function taskRoutes(rawApp: FastifyInstance) {
     },
     async (req, reply) => {
       const { id } = req.params;
+      const workspaceId = req.user?.workspaceId ?? null;
+
+      // Try the repo-task (tasks table) path first — this is the most common
+      // case and returns the full enriched shape (pendingReason, pipelineProgress,
+      // stallInfo).
       const task = await taskService.getTask(id);
-      if (!task) return reply.status(404).send({ error: "Task not found" });
-      const wsId = req.user?.workspaceId;
-      if (wsId && task.workspaceId !== wsId) {
-        return reply.status(404).send({ error: "Task not found" });
+      if (task) {
+        if (workspaceId && task.workspaceId !== workspaceId) {
+          return reply.status(404).send({ error: "Task not found" });
+        }
+
+        let pendingReason: string | null = null;
+        if (["pending", "waiting_on_deps", "queued"].includes(task.state)) {
+          const { computePendingReason } = await import("../services/dependency-service.js");
+          pendingReason = await computePendingReason(id);
+        }
+
+        const { getPipelineProgress } = await import("../services/subtask-service.js");
+        const pipelineProgress = await getPipelineProgress(id);
+
+        let stallInfo = null;
+        if (task.state === "running" && task.lastActivityAt) {
+          const repoConfig = await taskService.getRepoConfig(task.repoUrl);
+          const thresholdMs = taskService.getStallThresholdForRepo(repoConfig);
+          const now = new Date();
+          const stalled = isTaskStalled(task, now, thresholdMs);
+          const silentForMs = getSilentDuration(task, now);
+          const lastLogSummary = stalled ? await taskService.getLastLogSummary(id) : undefined;
+          stallInfo = { isStalled: stalled, silentForMs, thresholdMs, lastLogSummary };
+        }
+
+        return reply.send({
+          task: { type: "repo-task", ...task },
+          pendingReason,
+          pipelineProgress,
+          stallInfo,
+        });
       }
 
-      let pendingReason: string | null = null;
-      if (["pending", "waiting_on_deps", "queued"].includes(task.state)) {
-        const { computePendingReason } = await import("../services/dependency-service.js");
-        pendingReason = await computePendingReason(id);
-      }
+      // Fall through: maybe this id refers to a blueprint (task_config) or a
+      // standalone workflow. Return the native row with a type discriminator
+      // and no enrichment fields.
+      const resolved = await unifiedTaskService.resolveAnyTaskById(id, workspaceId);
+      if (!resolved) return reply.status(404).send({ error: "Task not found" });
 
-      let pipelineProgress = null;
-      const { getPipelineProgress } = await import("../services/subtask-service.js");
-      pipelineProgress = await getPipelineProgress(id);
-
-      let stallInfo = null;
-      if (task.state === "running" && task.lastActivityAt) {
-        const repoConfig = await taskService.getRepoConfig(task.repoUrl);
-        const thresholdMs = taskService.getStallThresholdForRepo(repoConfig);
-        const now = new Date();
-        const stalled = isTaskStalled(task, now, thresholdMs);
-        const silentForMs = getSilentDuration(task, now);
-
-        const lastLogSummary = stalled ? await taskService.getLastLogSummary(id) : undefined;
-
-        stallInfo = {
-          isStalled: stalled,
-          silentForMs,
-          thresholdMs,
-          lastLogSummary,
-        };
-      }
-
-      reply.send({ task, pendingReason, pipelineProgress, stallInfo });
+      return reply.send({
+        task: { type: resolved.type, ...resolved.data },
+        pendingReason: null,
+        pipelineProgress: null,
+        stallInfo: null,
+      });
     },
   );
 
@@ -366,19 +421,107 @@ export async function taskRoutes(rawApp: FastifyInstance) {
     },
     async (req, reply) => {
       const input = req.body;
-      const { dependsOn, ...taskInput } = input;
+      const type = input.type ?? "repo-task";
+
+      // ── Standalone: create a workflow row ─────────────────────────────
+      if (type === "standalone") {
+        const name = input.name ?? input.title;
+        if (!name) {
+          return reply.status(400).send({ error: "Standalone tasks require `name` or `title`" });
+        }
+        try {
+          const workflow = await workflowService.createWorkflow({
+            name,
+            description: input.description,
+            promptTemplate: input.prompt,
+            agentRuntime: input.agentType,
+            maxRetries: input.maxRetries,
+            enabled: input.enabled ?? true,
+            createdBy: req.user?.id,
+            workspaceId: req.user?.workspaceId ?? undefined,
+          });
+          logAction({
+            userId: req.user?.id,
+            action: "task.create",
+            params: { type, workflowId: workflow.id, name },
+            result: { id: workflow.id },
+            success: true,
+          }).catch(() => {});
+          return reply.status(201).send({ task: { type: "standalone", ...workflow } });
+        } catch (err) {
+          return reply
+            .status(400)
+            .send({ error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
+      // ── Repo blueprint: create a task_config row ──────────────────────
+      if (type === "repo-blueprint") {
+        if (!input.repoUrl) {
+          return reply.status(400).send({ error: "repo-blueprint requires `repoUrl`" });
+        }
+        const name = input.name ?? input.title;
+        if (!name) {
+          return reply.status(400).send({ error: "repo-blueprint requires `name` or `title`" });
+        }
+        try {
+          const row = await taskConfigService.createTaskConfig({
+            name,
+            description: input.description ?? null,
+            title: input.title ?? name,
+            prompt: input.prompt,
+            repoUrl: input.repoUrl,
+            repoBranch: input.repoBranch ?? "main",
+            agentType: input.agentType ?? null,
+            maxRetries: input.maxRetries ?? 3,
+            priority: input.priority ?? 100,
+            enabled: input.enabled ?? true,
+            workspaceId: req.user?.workspaceId ?? null,
+            createdBy: req.user?.id ?? null,
+          });
+          logAction({
+            userId: req.user?.id,
+            action: "task.create",
+            params: { type, taskConfigId: row.id, name },
+            result: { id: row.id },
+            success: true,
+          }).catch(() => {});
+          return reply.status(201).send({ task: { type: "repo-blueprint", ...row } });
+        } catch (err) {
+          return reply
+            .status(400)
+            .send({ error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
+      // ── Default: ad-hoc Repo Task ─────────────────────────────────────
+      if (!input.repoUrl) {
+        return reply.status(400).send({ error: "repo-task requires `repoUrl`" });
+      }
+      if (!input.title) {
+        return reply.status(400).send({ error: "repo-task requires `title`" });
+      }
+      const { dependsOn, type: _t, name: _n, description: _d, enabled: _e, ...taskInput } = input;
 
       let resolvedAgentType: string = taskInput.agentType ?? "";
       if (!resolvedAgentType) {
         const repoConfig = await import("../services/repo-service.js").then((m) =>
-          m.getRepoByUrl(taskInput.repoUrl, req.user?.workspaceId ?? null),
+          m.getRepoByUrl(taskInput.repoUrl!, req.user?.workspaceId ?? null),
         );
         resolvedAgentType = repoConfig?.defaultAgentType ?? "claude-code";
       }
 
       const task = await taskService.createTask({
-        ...taskInput,
+        title: taskInput.title!,
+        prompt: taskInput.prompt,
+        repoUrl: taskInput.repoUrl!,
+        repoBranch: taskInput.repoBranch,
         agentType: resolvedAgentType,
+        ticketSource: taskInput.ticketSource,
+        ticketExternalId: taskInput.ticketExternalId,
+        metadata: taskInput.metadata,
+        maxRetries: taskInput.maxRetries,
+        priority: taskInput.priority,
         createdBy: req.user?.id,
         workspaceId: req.user?.workspaceId ?? null,
       });
@@ -428,7 +571,7 @@ export async function taskRoutes(rawApp: FastifyInstance) {
         );
       }
 
-      reply.status(201).send({ task });
+      reply.status(201).send({ task: { type: "repo-task", ...task } });
     },
   );
 

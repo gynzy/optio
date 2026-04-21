@@ -45,6 +45,7 @@ const updateRepoSchema = z
     opencodeModel: z.string().optional(),
     opencodeAgent: z.string().optional(),
     opencodeProvider: z.string().optional(),
+    opencodeBaseUrl: z.string().url().nullable().optional(),
     geminiModel: z.string().optional(),
     geminiApprovalMode: z.string().optional(),
     maxTurnsCoding: z.number().int().min(1).max(10000).optional(),

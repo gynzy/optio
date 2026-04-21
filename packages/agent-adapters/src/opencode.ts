@@ -24,7 +24,9 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly displayName = "OpenCode";
 
   validateSecrets(availableSecrets: string[]): { valid: boolean; missing: string[] } {
-    // OpenCode is provider-agnostic — it needs at least one provider API key
+    // OpenCode is provider-agnostic — it needs at least one provider API key.
+    // Note: when opencodeBaseUrl is set, buildContainerConfig() skips requiredSecrets
+    // and injects a placeholder key, so missing provider keys won't block execution.
     const acceptedKeys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY"];
     const hasAny = acceptedKeys.some((k) => availableSecrets.includes(k));
     return {
@@ -49,9 +51,12 @@ export class OpenCodeAdapter implements AgentAdapter {
     // These are injected via requiredSecrets
     const requiredSecrets: string[] = [];
 
-    // Determine which provider keys to request based on what's configured
-    // The task worker resolves these against available secrets
-    requiredSecrets.push("ANTHROPIC_API_KEY", "OPENAI_API_KEY");
+    // When using a custom base URL, provider API keys are optional — the adapter
+    // sets a placeholder OPENAI_API_KEY in env that will be overridden if a real
+    // secret exists. Without a custom base URL, require standard provider keys.
+    if (!input.opencodeBaseUrl) {
+      requiredSecrets.push("ANTHROPIC_API_KEY", "OPENAI_API_KEY");
+    }
 
     const setupFiles: AgentContainerConfig["setupFiles"] = [];
 
@@ -62,6 +67,14 @@ export class OpenCodeAdapter implements AgentAdapter {
     // Set named agent if configured (e.g. "build", "plan")
     if (input.opencodeAgent) {
       env.OPTIO_OPENCODE_AGENT = input.opencodeAgent;
+    }
+
+    // Custom OpenAI-compatible endpoint (e.g. vLLM, lightllm, Ollama)
+    if (input.opencodeBaseUrl) {
+      env.OPENAI_BASE_URL = input.opencodeBaseUrl;
+      // Local endpoints typically don't require a real API key — set a
+      // placeholder that gets overridden if a real secret is configured.
+      env.OPENAI_API_KEY = "sk-no-key-required";
     }
 
     // Pre-seed a minimal opencode config so the CLI doesn't hit first-run setup
@@ -186,6 +199,9 @@ export class OpenCodeAdapter implements AgentAdapter {
       if (usage) {
         if (usage.input_tokens) totalInputTokens += usage.input_tokens;
         if (usage.output_tokens) totalOutputTokens += usage.output_tokens;
+        if (usage.cache_creation_input_tokens)
+          totalInputTokens += usage.cache_creation_input_tokens;
+        if (usage.cache_read_input_tokens) totalInputTokens += usage.cache_read_input_tokens;
         if (usage.prompt_tokens) totalInputTokens += usage.prompt_tokens;
         if (usage.completion_tokens) totalOutputTokens += usage.completion_tokens;
       }

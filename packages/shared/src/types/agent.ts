@@ -30,6 +30,7 @@ export interface AgentTaskInput {
   copilotEffort?: string;
   opencodeModel?: string;
   opencodeAgent?: string;
+  opencodeBaseUrl?: string;
   openclawModel?: string;
   openclawAgent?: string;
   geminiAuthMode?: GeminiAuthMode;

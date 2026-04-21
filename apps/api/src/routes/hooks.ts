@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { timingSafeEqual, createHmac } from "node:crypto";
 import { z } from "zod";
 import * as workflowService from "../services/workflow-service.js";
+import * as taskConfigService from "../services/task-config-service.js";
 import { logger } from "../logger.js";
 import { ErrorResponseSchema } from "../schemas/common.js";
 
@@ -19,9 +20,10 @@ const webhookBodySchema = z
 
 const WebhookAcceptedResponseSchema = z
   .object({
-    runId: z.string().describe("ID of the workflow run created by this webhook"),
+    runId: z.string().optional().describe("Workflow run id when the target is a job"),
+    taskId: z.string().optional().describe("Task id when the target is a task_config"),
   })
-  .describe("Webhook accepted and workflow run queued");
+  .describe("Webhook accepted and run/task queued");
 
 /**
  * Resolve a simple JSON-path expression (e.g. "$.foo.bar") against an object.
@@ -118,30 +120,45 @@ export async function hookRoutes(rawApp: FastifyInstance) {
         }
       }
 
-      const workflow = await workflowService.getWorkflow(trigger.workflowId);
-      if (!workflow) {
-        return reply.status(404).send({ error: "Workflow not found" });
-      }
-      if (!workflow.enabled) {
-        return reply.status(404).send({ error: "Workflow is disabled" });
-      }
-
       const body = req.body;
       const paramMapping = trigger.paramMapping as Record<string, unknown> | null;
-
       const params = paramMapping ? applyParamMapping(body, paramMapping) : body;
 
-      const run = await workflowService.createWorkflowRun(trigger.workflowId, {
-        triggerId: trigger.id,
-        params,
-      });
+      if (trigger.targetType === "job") {
+        if (!trigger.workflowId) {
+          return reply.status(404).send({ error: "Webhook trigger has no workflow" });
+        }
+        const workflow = await workflowService.getWorkflow(trigger.workflowId);
+        if (!workflow) return reply.status(404).send({ error: "Workflow not found" });
+        if (!workflow.enabled) return reply.status(404).send({ error: "Workflow is disabled" });
+        const run = await workflowService.createWorkflowRun(trigger.workflowId, {
+          triggerId: trigger.id,
+          params,
+        });
+        logger.info(
+          { runId: run.id, workflowId: trigger.workflowId, triggerId: trigger.id },
+          "Webhook trigger created workflow run",
+        );
+        return reply.status(202).send({ runId: run.id });
+      }
 
-      logger.info(
-        { runId: run.id, workflowId: trigger.workflowId, triggerId: trigger.id },
-        "Webhook trigger created workflow run",
-      );
+      if (trigger.targetType === "task_config") {
+        const taskConfig = await taskConfigService.getTaskConfig(trigger.targetId);
+        if (!taskConfig || !taskConfig.enabled) {
+          return reply.status(404).send({ error: "Target task config not found or disabled" });
+        }
+        const task = await taskConfigService.instantiateTask(taskConfig.id, {
+          triggerId: trigger.id,
+          params,
+        });
+        logger.info(
+          { taskId: task.id, taskConfigId: taskConfig.id, triggerId: trigger.id },
+          "Webhook trigger created task from task_config",
+        );
+        return reply.status(202).send({ taskId: task.id });
+      }
 
-      return reply.status(202).send({ runId: run.id });
+      return reply.status(404).send({ error: "Unknown trigger target type" });
     },
   );
 }
