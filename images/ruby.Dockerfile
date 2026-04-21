@@ -9,16 +9,17 @@ RUN apt-get update && apt-get install -y \
     libyaml-dev libffi-dev libgmp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-USER agent
 
 # Install rbenv and ruby-build
-ENV RBENV_ROOT="/home/agent/.rbenv"
+ENV RBENV_ROOT="/opt/rbenv"
 ENV PATH="${RBENV_ROOT}/bin:${RBENV_ROOT}/shims:${PATH}"
-RUN git clone https://github.com/rbenv/rbenv.git ~/.rbenv \
-    && git clone https://github.com/rbenv/ruby-build.git ~/.rbenv/plugins/ruby-build
+RUN mkdir /opt/rbenv && git clone https://github.com/rbenv/rbenv.git ${RBENV_ROOT} \
+    && git clone https://github.com/rbenv/ruby-build.git ${RBENV_ROOT}/plugins/ruby-build
 
 # Install latest stable Ruby (3.3)
 RUN rbenv install 3.3.6 && rbenv global 3.3.6
 
 # Common tools
 RUN gem install bundler rake rubocop solargraph
+
+USER agent
