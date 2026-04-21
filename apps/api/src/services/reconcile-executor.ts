@@ -22,6 +22,22 @@ export type ExecuteOutcome =
   | { status: "error"; reason: string; error: unknown };
 
 /**
+ * Patch PR status fields in the task row after an edge-triggered action.
+ * This prevents duplicate edge detections on subsequent reconcile passes.
+ */
+async function patchPrStatusFields(taskId: string, snapshot: WorldSnapshot): Promise<void> {
+  if (snapshot.run.kind !== "repo" || !snapshot.pr) return;
+  await db
+    .update(tasks)
+    .set({
+      prChecksStatus: snapshot.pr.checksStatus,
+      prReviewStatus: snapshot.pr.reviewStatus,
+      prState: snapshot.pr.state,
+    })
+    .where(eq(tasks.id, taskId));
+}
+
+/**
  * Apply a reconcile action. All DB mutations are CAS-gated on
  * updated_at == snapshot.run.status.updatedAt so a decision made from
  * a stale snapshot cannot overwrite a concurrent transition.
@@ -142,6 +158,13 @@ async function applyRepoTransition(
   try {
     await taskService.transitionTask(id, action.to, action.trigger, action.reason);
     await scheduleBackoffReconcile(snapshot.run.ref, patch.reconcileBackoffUntil);
+
+    // Patch PR status fields if this was a PR-related edge trigger, to prevent
+    // duplicate edge detections on subsequent reconcile passes.
+    if (action.trigger?.match(/ci_failing|review_changes|conflicts/)) {
+      await patchPrStatusFields(id, snapshot);
+    }
+
     return { status: "applied", reason: `transition:${action.to}` };
   } catch (err) {
     // StateRaceError means another worker won; treat as stale.
@@ -375,6 +398,8 @@ async function applyResumeAgent(
     },
     { jobId: `${taskId}-${jobSuffix}-${Date.now()}` },
   );
+
+  await patchPrStatusFields(taskId, snapshot);
   return { status: "applied", reason: `resume:${action.resumeReason}` };
 }
 
@@ -386,6 +411,7 @@ async function applyLaunchReview(snapshot: WorldSnapshot): Promise<ExecuteOutcom
   const { launchReview } = await import("./review-service.js");
   try {
     await launchReview(taskId);
+    await patchPrStatusFields(taskId, snapshot);
     return { status: "applied", reason: "review_launched" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
