@@ -28,7 +28,11 @@ import { eq, sql } from "drizzle-orm";
 import * as taskService from "../services/task-service.js";
 import * as repoPool from "../services/repo-pool-service.js";
 import { publishEvent } from "../services/event-bus.js";
-import { resolveSecretsForTask, retrieveSecretWithFallback } from "../services/secret-service.js";
+import {
+  resolveSecretsForTask,
+  resolveSecretsForSetup,
+  retrieveSecretWithFallback,
+} from "../services/secret-service.js";
 import { getPromptTemplate } from "../services/prompt-template-service.js";
 import { isGitHubAppConfigured } from "../services/github-app-service.js";
 import { getCredentialSecret } from "../services/credential-secret-service.js";
@@ -676,6 +680,15 @@ export function startTaskWorker() {
             ? { OPTIO_SETUP_COMMANDS: allEnv.OPTIO_SETUP_COMMANDS }
             : {}),
         };
+
+        // Inject secrets into pod env for setup commands (global + repo-scoped).
+        // Repo-scoped secrets override global secrets with the same name.
+        const setupSecrets = await resolveSecretsForSetup(task.repoUrl, taskWorkspaceId);
+        const setupSecretCount = Object.keys(setupSecrets).length;
+        if (setupSecretCount > 0) {
+          Object.assign(podEnv, setupSecrets);
+          log.info({ count: setupSecretCount }, "Injected secrets for setup");
+        }
 
         // Get or create a repo pod (with multi-pod scheduling)
         log.info("Getting repo pod");
