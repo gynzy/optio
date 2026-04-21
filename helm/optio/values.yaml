@@ -32,6 +32,7 @@ api:
       memory: 1Gi
   env:
     LOG_LEVEL: info
+    OPTIO_PR_WATCH_INTERVAL: "120000"
   # Pod anti-affinity spreads API replicas across nodes.
   # "soft" = preferredDuringSchedulingIgnoredDuringExecution (default)
   # "hard" = requiredDuringSchedulingIgnoredDuringExecution

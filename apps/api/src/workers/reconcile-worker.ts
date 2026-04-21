@@ -118,7 +118,7 @@ export function startReconcileResyncWorker() {
       const nonTerminalTasks = await db
         .select({ id: tasks.id })
         .from(tasks)
-        .where(sql`${tasks.state} NOT IN ('completed')`);
+        .where(sql`${tasks.state} NOT IN ('completed', 'cancelled', 'failed')`);
 
       const nonTerminalRuns = await db
         .select({ id: workflowRuns.id })

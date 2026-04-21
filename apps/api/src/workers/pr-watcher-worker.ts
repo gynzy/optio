@@ -96,7 +96,7 @@ export function startPrWatcherWorker() {
         .select()
         .from(tasks)
         .where(
-          sql`${tasks.state} IN ('pr_opened', 'failed') AND ${tasks.prUrl} IS NOT NULL AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+          sql`${tasks.state} IN ('pr_opened', 'failed') AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
         );
 
       for (const task of openPrTasks) {
