@@ -23,7 +23,10 @@ import type { ContainerSpec, ContainerHandle, ContainerStatus, ExecSession } fro
 import type { ContainerRuntime, LogOptions, ExecOptions } from "./types.js";
 
 const CONTAINER_NAME = "main";
-const POD_READY_TIMEOUT_MS = 120_000;
+const POD_READY_TIMEOUT_MS = parseInt(process.env.OPTIO_POD_READY_TIMEOUT_MS ?? "120000", 10); // 2 min default
+if (Number.isNaN(POD_READY_TIMEOUT_MS) || POD_READY_TIMEOUT_MS <= 0) {
+  throw new Error("OPTIO_POD_READY_TIMEOUT_MS must be a positive integer");
+}
 const POD_READY_POLL_MS = 1_000;
 
 /**

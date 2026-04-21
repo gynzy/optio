@@ -179,6 +179,8 @@ agent:
     defaultSizePerDirectoryGi: 10     # Default size when creating a cache directory
   # Repo init timeout (how long to wait for clone to complete)
   repoInitTimeoutMs: 300000           # 5 minutes. default is 2 minutes
+  # Pod ready timeout (how long to wait for pod to reach Running state)
+  podReadyTimeoutMs: 300000           # 5 minutes. default is 2 minutes
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Network Policy
