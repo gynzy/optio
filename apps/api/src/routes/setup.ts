@@ -139,8 +139,8 @@ export async function setupRoutes(rawApp: FastifyInstance) {
 
       const hasCopilotToken = secretNames.includes("COPILOT_GITHUB_TOKEN");
 
-      const opencodeEnabled = process.env.OPTIO_OPENCODE_ENABLED === "true";
-      const opencodeConfigured = opencodeEnabled && (hasAnthropicKey || hasOpenAIKey);
+      const hasOpencodeBaseUrl = secretNames.includes("OPENCODE_DEFAULT_BASE_URL");
+      const opencodeConfigured = hasAnthropicKey || hasOpenAIKey || hasOpencodeBaseUrl;
 
       const hasGeminiKey = secretNames.includes("GEMINI_API_KEY");
       let hasGeminiVertexAi = false;
@@ -161,7 +161,8 @@ export async function setupRoutes(rawApp: FastifyInstance) {
         hasCodexAppServer ||
         hasCopilotToken ||
         hasGeminiKey ||
-        hasGeminiVertexAi;
+        hasGeminiVertexAi ||
+        hasOpencodeBaseUrl;
 
       let runtimeHealthy = false;
       try {
@@ -181,10 +182,9 @@ export async function setupRoutes(rawApp: FastifyInstance) {
           openaiKey: { done: hasOpenAIKey, label: "OpenAI API key" },
           codexAppServer: { done: hasCodexAppServer, label: "Codex app-server" },
           copilotToken: { done: hasCopilotToken, label: "GitHub Copilot token" },
-          opencodeEnabled: { done: opencodeEnabled, label: "OpenCode enabled (experimental)" },
           opencodeConfigured: {
             done: opencodeConfigured,
-            label: "OpenCode configured (experimental)",
+            label: "OpenCode configured",
           },
           geminiKey: { done: hasGeminiKey || hasGeminiVertexAi, label: "Google Gemini API key" },
           anyAgentKey: { done: hasAnyAgentKey, label: "At least one agent API key" },

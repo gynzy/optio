@@ -10,10 +10,15 @@ import {
   killOrphanedAgentInPod,
 } from "../services/repo-pool-service.js";
 import { cleanupIdleWorkflowPods } from "../services/workflow-pool-service.js";
+import {
+  cleanupZombieWorkflowRuns,
+  cleanupOrphanedRepoTasks,
+} from "../services/zombie-cleanup-service.js";
 import { getRuntime } from "../services/container-service.js";
 import { isStatefulSetEnabled, getWorkloadManager } from "../services/k8s-workload-service.js";
-import { TaskState, DEFAULT_STALL_THRESHOLD_MS } from "@optio/shared";
+import { TaskState, DEFAULT_STALL_THRESHOLD_MS, parseIntEnv } from "@optio/shared";
 import * as taskService from "../services/task-service.js";
+import { enqueueReconcile } from "../services/reconcile-queue.js";
 import { cleanupExpiredSessions } from "../services/session-service.js";
 import { publishEvent } from "../services/event-bus.js";
 import { logger } from "../logger.js";
@@ -54,7 +59,7 @@ export function startRepoCleanupWorker() {
     {},
     {
       repeat: {
-        every: parseInt(process.env.OPTIO_HEALTH_CHECK_INTERVAL ?? "60000", 10),
+        every: parseIntEnv("OPTIO_HEALTH_CHECK_INTERVAL", 60000),
       },
     },
   );
@@ -65,7 +70,7 @@ export function startRepoCleanupWorker() {
     {},
     {
       repeat: {
-        every: parseInt(process.env.OPTIO_STALL_CHECK_INTERVAL ?? "30000", 10),
+        every: parseIntEnv("OPTIO_STALL_CHECK_INTERVAL", 30000),
       },
     },
   );
@@ -98,7 +103,9 @@ export function startRepoCleanupWorker() {
 
             await recordHealthEvent(pod.id, pod.repoUrl, eventType, pod.podName, message);
 
-            // Fail any tasks that were running on this pod
+            // Mark worktrees dirty for tasks on this pod and wake the
+            // reconciler — it observes pod.phase=error from the snapshot and
+            // fires the FAILED transition via decideRunning / decideProvisioning.
             const activeTasks = await db
               .select({ id: tasks.id, state: tasks.state })
               .from(tasks)
@@ -109,13 +116,11 @@ export function startRepoCleanupWorker() {
             for (const task of activeTasks) {
               try {
                 await updateWorktreeState(task.id, "dirty");
-                await taskService.transitionTask(
-                  task.id,
-                  TaskState.FAILED,
-                  `pod_${eventType}`,
-                  message,
-                );
                 await taskService.updateTaskResult(task.id, undefined, message);
+                await enqueueReconcile(
+                  { kind: "repo", id: task.id },
+                  { reason: `pod_${eventType}` },
+                );
               } catch {}
             }
 
@@ -402,8 +407,20 @@ export function startRepoCleanupWorker() {
         logger.warn({ err }, "Soft stall detection pass failed");
       }
 
-      // Detect stale running/provisioning tasks (agent exec died without updating state)
-      const STALE_TASK_MS = parseInt(process.env.OPTIO_STALE_TASK_MS ?? "600000", 10); // 10 min
+      // Detect stale running/provisioning tasks (agent exec died without updating state).
+      //
+      // TODO(reconciler): move this block into the reconciler. It needs:
+      //   1. Stale-retry counter exposed in the snapshot (count of
+      //      auto_retry_stale events) so the decision function can cap retries.
+      //   2. A new side-effect action in the executor that calls
+      //      killOrphanedAgentInPod + updateWorktreeState before the
+      //      FAILED→QUEUED transition.
+      //   3. An "escalate to NEEDS_ATTENTION on cleanup failure" branch in
+      //      decideRunning, which today only emits a plain FAILED transition.
+      // Until then, this loop owns stall recovery for tasks whose updatedAt
+      // hasn't moved in OPTIO_STALE_TASK_MS — the reconciler's heartbeat-based
+      // decideRunning stall handler is a safety net, not a replacement.
+      const STALE_TASK_MS = parseIntEnv("OPTIO_STALE_TASK_MS", 600000); // 10 min
       const MAX_STALE_RETRIES = 3;
       const staleTasks = await db
         .select()
@@ -520,6 +537,26 @@ export function startRepoCleanupWorker() {
         }
       } catch (err) {
         logger.warn({ err }, "Failed to clean up idle workflow pods");
+      }
+
+      // Detect zombie workflow_runs (running but pod terminated/gone)
+      try {
+        const zombieRuns = await cleanupZombieWorkflowRuns();
+        if (zombieRuns > 0) {
+          logger.info({ zombieRuns }, "Cleaned up zombie workflow runs");
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to clean up zombie workflow runs");
+      }
+
+      // Detect orphaned repo tasks (running but pod record gone)
+      try {
+        const orphanedTasks = await cleanupOrphanedRepoTasks();
+        if (orphanedTasks > 0) {
+          logger.info({ orphanedTasks }, "Cleaned up orphaned repo tasks");
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to clean up orphaned repo tasks");
       }
 
       // Clean up expired auth sessions

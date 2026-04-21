@@ -87,6 +87,13 @@ export default function SetupPage() {
   const [copilotValidated, setCopilotValidated] = useState(false);
   const [copilotError, setCopilotError] = useState("");
 
+  // Step 3: OpenCode (optional, experimental — reuses Anthropic/OpenAI keys or a custom base URL)
+  const [opencodeMode, setOpencodeMode] = useState<"provider-key" | "custom-endpoint">(
+    "provider-key",
+  );
+  const [opencodeBaseUrl, setOpencodeBaseUrl] = useState("");
+  const [opencodeDefaultModel, setOpencodeDefaultModel] = useState("");
+
   // Step 3b: Gemini
   const [geminiAuthMode, setGeminiAuthMode] = useState<"api-key" | "vertex-ai">("api-key");
   const [geminiKey, setGeminiKey] = useState("");
@@ -188,6 +195,11 @@ export default function SetupPage() {
     codexAuthMode === "app-server" ? codexAppServerUrl.trim().length > 0 : openaiValidated;
 
   const copilotReady = copilotValidated;
+
+  const opencodeReady =
+    opencodeMode === "custom-endpoint"
+      ? opencodeBaseUrl.trim().length > 0
+      : claudeReady || openaiValidated;
 
   const geminiReady =
     geminiAuthMode === "vertex-ai" ? geminiVertexProject.trim().length > 0 : geminiValidated;
@@ -408,6 +420,19 @@ export default function SetupPage() {
       // Save Copilot token
       if (copilotToken.trim() && copilotValidated) {
         await api.createSecret({ name: "COPILOT_GITHUB_TOKEN", value: copilotToken });
+      }
+      // Save OpenCode custom endpoint defaults
+      if (opencodeMode === "custom-endpoint" && opencodeBaseUrl.trim()) {
+        await api.createSecret({
+          name: "OPENCODE_DEFAULT_BASE_URL",
+          value: opencodeBaseUrl.trim(),
+        });
+        if (opencodeDefaultModel.trim()) {
+          await api.createSecret({
+            name: "OPENCODE_DEFAULT_MODEL",
+            value: opencodeDefaultModel.trim(),
+          });
+        }
       }
       // Save Gemini credentials
       if (geminiAuthMode === "vertex-ai" && geminiVertexProject.trim()) {
@@ -1225,6 +1250,110 @@ export default function SetupPage() {
                 </div>
               </div>
 
+              {/* OpenCode */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-text">
+                    OpenCode{" "}
+                    <span className="text-text-muted font-normal">— optional, experimental</span>
+                  </span>
+                  {opencodeReady && (
+                    <span className="text-success text-xs flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> Ready
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-text-muted">
+                  Provider-agnostic agent. Use the Anthropic/OpenAI keys configured above, or point
+                  it at a local OpenAI-compatible endpoint (vLLM, lightllm, Ollama, etc.).
+                </p>
+                <div className="space-y-2">
+                  <label
+                    className={cn(
+                      "flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors",
+                      opencodeMode === "provider-key"
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-text-muted",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="opencode-mode"
+                      checked={opencodeMode === "provider-key"}
+                      onChange={() => setOpencodeMode("provider-key")}
+                      className="mt-0.5"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium">Use provider API key</span>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        Piggybacks on the Anthropic or OpenAI key configured above.
+                      </p>
+                      {opencodeMode === "provider-key" && (
+                        <p className="text-xs text-text-muted mt-2">
+                          {claudeReady || openaiValidated ? (
+                            <span className="text-success flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" /> Provider key detected
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" /> Configure an Anthropic or OpenAI
+                              key above to enable this mode.
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </label>
+                  <label
+                    className={cn(
+                      "flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors",
+                      opencodeMode === "custom-endpoint"
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-text-muted",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="opencode-mode"
+                      checked={opencodeMode === "custom-endpoint"}
+                      onChange={() => setOpencodeMode("custom-endpoint")}
+                      className="mt-0.5"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium">
+                        Use custom OpenAI-compatible endpoint
+                      </span>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        For self-hosted inference servers. API key is optional — a placeholder is
+                        injected if your endpoint doesn't require one.
+                      </p>
+                      {opencodeMode === "custom-endpoint" && (
+                        <div className="mt-2 space-y-2">
+                          <input
+                            type="text"
+                            value={opencodeBaseUrl}
+                            onChange={(e) => setOpencodeBaseUrl(e.target.value)}
+                            placeholder="https://your-inference-server/v1"
+                            className="w-full px-3 py-2 rounded-md bg-bg-card border border-border text-sm focus:outline-none focus:border-primary"
+                          />
+                          <input
+                            type="text"
+                            value={opencodeDefaultModel}
+                            onChange={(e) => setOpencodeDefaultModel(e.target.value)}
+                            placeholder="Default model (optional, e.g. openai/gpt-oss-120b)"
+                            className="w-full px-3 py-2 rounded-md bg-bg-card border border-border text-sm focus:outline-none focus:border-primary"
+                          />
+                          <p className="text-xs text-text-muted">
+                            These become defaults for all repos. Each repo can override them in its
+                            settings.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </div>
+              </div>
+
               {/* Gemini */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -1364,7 +1493,12 @@ export default function SetupPage() {
                 <button
                   onClick={saveAgentKeysStep}
                   disabled={
-                    (!claudeReady && !codexReady && !copilotReady && !geminiReady) || loading
+                    (!claudeReady &&
+                      !codexReady &&
+                      !copilotReady &&
+                      !opencodeReady &&
+                      !geminiReady) ||
+                    loading
                   }
                   className="flex items-center gap-2 px-5 py-2 rounded-md bg-primary text-white text-sm hover:bg-primary-hover disabled:opacity-50"
                 >

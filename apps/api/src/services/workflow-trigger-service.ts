@@ -52,6 +52,8 @@ export async function createTrigger(input: {
     .insert(workflowTriggers)
     .values({
       workflowId: input.workflowId,
+      targetType: "job",
+      targetId: input.workflowId,
       type: input.type,
       config: input.config ?? {},
       paramMapping: input.paramMapping,

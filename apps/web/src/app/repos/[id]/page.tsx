@@ -59,6 +59,9 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
   const [copilotEffort, setCopilotEffort] = useState("");
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-pro");
   const [geminiApprovalMode, setGeminiApprovalMode] = useState("yolo");
+  const [opencodeModel, setOpencodeModel] = useState("");
+  const [opencodeAgent, setOpencodeAgent] = useState("");
+  const [opencodeBaseUrl, setOpencodeBaseUrl] = useState("");
   const [openclawModel, setOpenclawModel] = useState("");
   const [maxTurnsCoding, setMaxTurnsCoding] = useState(250);
   const [maxTurnsReview, setMaxTurnsReview] = useState(30);
@@ -140,6 +143,9 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         setCopilotEffort(r.copilotEffort ?? "");
         setGeminiModel(r.geminiModel ?? "gemini-2.5-pro");
         setGeminiApprovalMode(r.geminiApprovalMode ?? "yolo");
+        setOpencodeModel(r.opencodeModel ?? "");
+        setOpencodeAgent(r.opencodeAgent ?? "");
+        setOpencodeBaseUrl(r.opencodeBaseUrl ?? "");
         setOpenclawModel(r.openclawModel ?? "");
         setMaxTurnsCoding(r.maxTurnsCoding ?? 250);
         setMaxTurnsReview(r.maxTurnsReview ?? 30);
@@ -217,6 +223,9 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
         copilotEffort: copilotEffort || undefined,
         geminiModel: geminiModel || undefined,
         geminiApprovalMode: geminiApprovalMode || undefined,
+        opencodeModel: opencodeModel || undefined,
+        opencodeAgent: opencodeAgent || undefined,
+        opencodeBaseUrl: opencodeBaseUrl || null,
         openclawModel: openclawModel || undefined,
         maxTurnsCoding,
         maxTurnsReview,
@@ -997,6 +1006,51 @@ export default function RepoDetailPage({ params }: { params: Promise<{ id: strin
               <option value="high">High</option>
             </select>
           </div>
+        </div>
+      </section>
+
+      {/* OpenCode Settings */}
+      <section className="p-5 rounded-xl border border-border/50 bg-bg-card space-y-3">
+        <h2 className="text-sm font-medium">OpenCode Settings</h2>
+        <p className="text-xs text-text-muted">
+          Configure OpenCode model, agent, and custom endpoint. Use a custom base URL to connect to
+          local or self-hosted OpenAI-compatible inference servers (vLLM, lightllm, Ollama, etc.).
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Model</label>
+            <input
+              value={opencodeModel}
+              onChange={(e) => setOpencodeModel(e.target.value)}
+              placeholder="Default (auto-detect)"
+              className="w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+            />
+            <p className="text-xs text-text-muted mt-1">
+              e.g. anthropic/claude-sonnet-4, openai/gpt-4o, meta-llama/Llama-3.1-70B
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Agent</label>
+            <input
+              value={opencodeAgent}
+              onChange={(e) => setOpencodeAgent(e.target.value)}
+              placeholder="Default"
+              className="w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Custom Base URL</label>
+          <input
+            value={opencodeBaseUrl}
+            onChange={(e) => setOpencodeBaseUrl(e.target.value)}
+            placeholder="https://your-inference-server/v1"
+            className="w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+          />
+          <p className="text-xs text-text-muted mt-1">
+            OpenAI-compatible endpoint URL. When set, API keys are optional — a placeholder key is
+            used if none is configured in Secrets.
+          </p>
         </div>
       </section>
 

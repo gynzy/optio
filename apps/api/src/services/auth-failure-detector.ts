@@ -82,6 +82,21 @@ async function hasClaudeFailuresInLogs(cutoff: Date): Promise<boolean> {
 }
 
 /**
+ * Check if any Claude auth failures exist in auth_events after the cutoff.
+ * This is the mechanism by which Standalone Task runs surface auth failures:
+ * their logs live in `workflow_run_logs` (not `task_logs`), so the workflow
+ * worker records a claude auth_event when it detects a 401 mid-run.
+ */
+async function hasClaudeFailuresInEvents(cutoff: Date): Promise<boolean> {
+  const rows = await db
+    .select({ exists: sql<number>`1` })
+    .from(authEvents)
+    .where(and(eq(authEvents.tokenType, "claude"), gt(authEvents.createdAt, cutoff)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
  * Check if any GitHub auth failures exist in the auth_events table after the cutoff.
  * Only considers failures from the central token path (pr-watcher, legacy/null source).
  * Provider-specific failures (ticket-sync:*) are excluded — they don't reflect global
@@ -133,17 +148,19 @@ export async function getRecentAuthFailures(
   const githubCutoff = effectiveCutoff(windowMs, githubWatermark);
 
   // Check failures in parallel
-  const [claudeFailure, githubEventFailure, githubLogFailure] = await Promise.all([
-    hasClaudeFailuresInLogs(claudeCutoff),
-    hasGithubFailuresInEvents(githubCutoff),
-    hasGithubFailuresInLogs(githubCutoff),
-  ]);
+  const [claudeLogFailure, claudeEventFailure, githubEventFailure, githubLogFailure] =
+    await Promise.all([
+      hasClaudeFailuresInLogs(claudeCutoff),
+      hasClaudeFailuresInEvents(claudeCutoff),
+      hasGithubFailuresInEvents(githubCutoff),
+      hasGithubFailuresInLogs(githubCutoff),
+    ]);
 
   // Prune stale rows in the background to prevent unbounded table growth
   pruneStaleAuthEvents(windowMs).catch(() => {});
 
   return {
-    claude: claudeFailure,
+    claude: claudeLogFailure || claudeEventFailure,
     github: githubEventFailure || githubLogFailure,
   };
 }
@@ -181,4 +198,56 @@ export async function recordAuthEvent(
 async function pruneStaleAuthEvents(windowMs: number): Promise<void> {
   const cutoff = new Date(Date.now() - windowMs);
   await db.delete(authEvents).where(lt(authEvents.createdAt, cutoff));
+}
+
+export interface AuthFailureDetection {
+  matched: boolean;
+  pattern?: (typeof AUTH_FAILURE_PATTERNS)[number];
+  /** Short, whitespace-normalized excerpt around the match, capped at ~240 chars. */
+  excerpt?: string;
+}
+
+/**
+ * Scan a raw log blob (accumulated agent stdout/stderr) for Claude auth failure
+ * markers. Pure function; does no DB I/O. Returns the first matching pattern.
+ *
+ * Callers should use this to override a nominally-successful agent result when
+ * the agent emitted a 401 mid-run — claude-code and similar CLIs often swallow
+ * the error and exit 0, which would otherwise mark the run as completed.
+ *
+ * Lines that are stream-json `{"type":"user",...}` or `{"type":"assistant",...}`
+ * events are skipped: they carry agent-internal content (tool_result file
+ * dumps, Edit/Write input, the agent's own narration) which can contain
+ * literal pattern text — e.g. a Read of a test fixture that asserts on an
+ * `Invalid API key` response. Real claude-code auth failures arrive as plain
+ * text from the runtime ("Failed to authenticate. API Error: 401 …"), not as
+ * NDJSON events, so this filter only removes false positives.
+ */
+export function detectAuthFailureInLogs(logs: string): AuthFailureDetection {
+  if (!logs) return { matched: false };
+  for (const line of logs.split("\n")) {
+    if (!line.trim()) continue;
+    if (isAgentInternalEvent(line)) continue;
+    const lower = line.toLowerCase();
+    for (const pattern of AUTH_FAILURE_PATTERNS) {
+      const idx = lower.indexOf(pattern);
+      if (idx === -1) continue;
+      const start = Math.max(0, idx - 40);
+      const end = Math.min(line.length, idx + pattern.length + 200);
+      const excerpt = line.slice(start, end).replace(/\s+/g, " ").trim().slice(0, 240);
+      return { matched: true, pattern, excerpt };
+    }
+  }
+  return { matched: false };
+}
+
+function isAgentInternalEvent(line: string): boolean {
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("{")) return false;
+  try {
+    const event = JSON.parse(trimmed);
+    return event?.type === "user" || event?.type === "assistant";
+  } catch {
+    return false;
+  }
 }

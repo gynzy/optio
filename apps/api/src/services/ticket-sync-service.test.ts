@@ -4,12 +4,17 @@ vi.mock("../db/client.js", () => ({
   db: {
     select: vi.fn(),
     insert: vi.fn(),
+    update: vi.fn(),
   },
 }));
 
 vi.mock("../db/schema.js", () => ({
   ticketProviders: {
     enabled: "ticket_providers.enabled",
+    id: "ticket_providers.id",
+    lastError: "ticket_providers.last_error",
+    lastErrorAt: "ticket_providers.last_error_at",
+    consecutiveFailures: "ticket_providers.consecutive_failures",
   },
   repos: {
     repoUrl: "repos.repoUrl",
@@ -40,11 +45,16 @@ vi.mock("./secret-service.js", () => ({
   retrieveSecret: vi.fn(),
 }));
 
+vi.mock("./github-token-service.js", () => ({
+  getGitHubToken: vi.fn(),
+}));
+
 vi.mock("../logger.js", () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    debug: vi.fn(),
   },
 }));
 
@@ -54,7 +64,9 @@ import { getTicketProvider } from "@optio/ticket-providers";
 import * as taskService from "./task-service.js";
 import { taskQueue } from "../workers/task-worker.js";
 import { retrieveSecret } from "./secret-service.js";
+import { getGitHubToken } from "./github-token-service.js";
 import { syncAllTickets } from "./ticket-sync-service.js";
+import { logger } from "../logger.js";
 
 /**
  * Mock db.select() to handle two query patterns, matching on the .from() argument:
@@ -77,11 +89,30 @@ function mockDbSelect(providers: any[], configuredRepos: any[] = []) {
   }));
 }
 
+/** Mock db.update() — captures the set/where calls for assertions. */
+function mockDbUpdate() {
+  const updateState = { setCalls: [] as any[], whereCalls: [] as any[] };
+  (db.update as any) = vi.fn().mockImplementation(() => ({
+    set: vi.fn().mockImplementation((values: any) => {
+      updateState.setCalls.push(values);
+      return {
+        where: vi.fn().mockImplementation((clause: any) => {
+          updateState.whereCalls.push(clause);
+          return Promise.resolve();
+        }),
+      };
+    }),
+  }));
+  return updateState;
+}
+
 describe("ticket-sync-service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: no secrets stored
     vi.mocked(retrieveSecret).mockRejectedValue(new Error("Secret not found"));
+    // Default: no GitHub App / PAT available (triggers warn but doesn't throw)
+    vi.mocked(getGitHubToken).mockRejectedValue(new Error("No GitHub token available"));
   });
 
   it("syncs new tickets and creates tasks", async () => {
@@ -259,7 +290,10 @@ describe("ticket-sync-service", () => {
   });
 
   it("handles provider errors gracefully", async () => {
-    mockDbSelect([{ id: "p1", source: "github", config: {}, enabled: true }]);
+    mockDbSelect([
+      { id: "p1", source: "github", config: {}, enabled: true, consecutiveFailures: 0 },
+    ]);
+    mockDbUpdate();
 
     vi.mocked(getTicketProvider).mockReturnValue({
       fetchActionableTickets: vi.fn().mockRejectedValue(new Error("API error")),
@@ -396,5 +430,197 @@ describe("ticket-sync-service", () => {
 
     // Secret should be retrieved with the provider ID
     expect(retrieveSecret).toHaveBeenCalledWith("ticket-provider:p1", "ticket-provider");
+  });
+
+  it("persists last_error and increments consecutive_failures on provider error", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "github",
+        config: { repoUrl: "https://github.com/o/r" },
+        enabled: true,
+        consecutiveFailures: 0,
+      },
+    ]);
+    const updateState = mockDbUpdate();
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockRejectedValue(new Error("Bad credentials")),
+    } as any);
+
+    await syncAllTickets();
+
+    // Should have called db.update to persist the error
+    expect(db.update).toHaveBeenCalled();
+    expect(updateState.setCalls[0]).toEqual(
+      expect.objectContaining({
+        lastError: "Bad credentials",
+        consecutiveFailures: 1,
+      }),
+    );
+  });
+
+  it("clears error fields on successful provider sync", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "github",
+        config: { repoUrl: "https://github.com/o/r" },
+        enabled: true,
+        consecutiveFailures: 3,
+        lastError: "Bad credentials",
+        lastErrorAt: new Date(),
+      },
+    ]);
+    const updateState = mockDbUpdate();
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    } as any);
+
+    await syncAllTickets();
+
+    // Should reset error fields on success
+    expect(db.update).toHaveBeenCalled();
+    expect(updateState.setCalls[0]).toEqual(
+      expect.objectContaining({
+        lastError: null,
+        lastErrorAt: null,
+        consecutiveFailures: 0,
+      }),
+    );
+  });
+
+  it("auto-disables provider after 5 consecutive failures", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "github",
+        config: { repoUrl: "https://github.com/o/r" },
+        enabled: true,
+        consecutiveFailures: 4, // one more will hit 5
+      },
+    ]);
+    const updateState = mockDbUpdate();
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockRejectedValue(new Error("Bad credentials")),
+    } as any);
+
+    await syncAllTickets();
+
+    // Should have disabled the provider (enabled: false) on the 5th failure
+    expect(db.update).toHaveBeenCalled();
+    expect(updateState.setCalls[0]).toEqual(
+      expect.objectContaining({
+        consecutiveFailures: 5,
+        enabled: false,
+      }),
+    );
+  });
+
+  it("falls back to getGitHubToken for GitHub providers without a configured token", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "github",
+        config: { owner: "o", repo: "r" },
+        enabled: true,
+      },
+    ]);
+
+    vi.mocked(getGitHubToken).mockResolvedValue("ghs_app_installation_token");
+
+    const mockProvider = {
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    };
+    vi.mocked(getTicketProvider).mockReturnValue(mockProvider as any);
+
+    await syncAllTickets();
+
+    expect(getGitHubToken).toHaveBeenCalledWith({ server: true });
+    const configPassedToProvider = mockProvider.fetchActionableTickets.mock.calls[0][0];
+    expect(configPassedToProvider.token).toBe("ghs_app_installation_token");
+  });
+
+  it("does not call getGitHubToken when a token is already supplied via config", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "github",
+        config: { owner: "o", repo: "r", token: "inline-token" },
+        enabled: true,
+      },
+    ]);
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    } as any);
+
+    await syncAllTickets();
+
+    expect(getGitHubToken).not.toHaveBeenCalled();
+  });
+
+  it("does not call getGitHubToken when a token is supplied via provider secret", async () => {
+    mockDbSelect([
+      { id: "p1", source: "github", config: { owner: "o", repo: "r" }, enabled: true },
+    ]);
+    vi.mocked(retrieveSecret).mockResolvedValue(JSON.stringify({ token: "secret-token" }));
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    } as any);
+
+    await syncAllTickets();
+
+    expect(getGitHubToken).not.toHaveBeenCalled();
+  });
+
+  it("does not call getGitHubToken for non-github providers", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "jira",
+        config: { baseUrl: "https://j.example.com", email: "a@b.com" },
+        enabled: true,
+      },
+    ]);
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockResolvedValue([]),
+    } as any);
+
+    await syncAllTickets();
+
+    expect(getGitHubToken).not.toHaveBeenCalled();
+  });
+
+  it("downgrades repeated sync errors to debug level", async () => {
+    mockDbSelect([
+      {
+        id: "p1",
+        source: "github",
+        config: { repoUrl: "https://github.com/o/r" },
+        enabled: true,
+        consecutiveFailures: 2,
+        lastError: "Bad credentials",
+      },
+    ]);
+    mockDbUpdate();
+
+    vi.mocked(getTicketProvider).mockReturnValue({
+      fetchActionableTickets: vi.fn().mockRejectedValue(new Error("Bad credentials")),
+    } as any);
+
+    await syncAllTickets();
+
+    // Repeated failure with same message — should log at debug, not error
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "github" }),
+      expect.stringContaining("sync tickets"),
+    );
+    // Should NOT have logged at error level
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

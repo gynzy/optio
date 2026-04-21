@@ -4,23 +4,45 @@ Context and conventions for AI assistants working on the Optio codebase.
 
 ## What is Optio?
 
-Optio is a workflow orchestration system for AI coding agents. Think of it as "CI/CD where the build step is an AI agent." It operates in three modes:
+Optio is an orchestration system for AI coding agents. Think of it as "CI/CD where the build step is an AI agent." One primary user-facing concept (Tasks) with one attribute (has a repo) flipping the pipeline, plus shared primitives:
 
-**Tasks** — ticket to merged PR. Users submit tasks (manually or from GitHub Issues, Linear, Jira, or Notion), and Optio:
+**Tasks** — a configured unit of agent work. A Task has a **Who** (agent type), **What** (prompt or template), **When** (trigger: manual / schedule / webhook / ticket), optional **Where** (repo + branch), and **Why** (description). Tasks come in two flavors based on whether a repo is attached:
 
-1. Spins up an isolated Kubernetes pod for the repository (pod-per-repo)
-2. Creates a git worktree for the task (multiple tasks can run concurrently per repo)
-3. Runs Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, or OpenCode with a configurable prompt
-4. Streams structured logs back to a web UI in real time
-5. Agent stops after opening a PR (no CI blocking)
-6. PR watcher tracks CI checks, review status, and merge state
-7. Auto-triggers code review agent on CI pass or PR open (if enabled)
-8. Auto-resumes agent when reviewer requests changes (if enabled)
-9. Auto-completes on merge, auto-fails on close
+- **Repo Task** — `Where` is set. The agent clones the repo into a worktree and opens a PR:
+  1. Spins up an isolated Kubernetes pod for the repository (pod-per-repo)
+  2. Creates a git worktree for the task (multiple run concurrently per repo)
+  3. Runs Claude Code, OpenAI Codex, GitHub Copilot, Google Gemini, or OpenCode with the prompt
+  4. Streams structured logs back to a web UI in real time
+  5. Agent stops after opening a PR (no CI blocking)
+  6. PR watcher tracks CI checks, review status, and merge state
+  7. Auto-triggers code review agent on CI pass or PR open (if enabled)
+  8. Auto-resumes agent when reviewer requests changes (if enabled)
+  9. Auto-completes on merge, auto-fails on close
 
-**Agent Workflows** — reusable, parameterized agent jobs that run standalone (no git repo required). Define a prompt template with `{{PARAM}}` placeholders, attach triggers (manual, cron schedule, or webhook), and Optio handles execution, log streaming, cost tracking, and auto-retry.
+- **Standalone Task** — no `Where`. The agent runs in an isolated pod with no repo checkout, producing logs and side effects (e.g., queries Slack, posts to a database). Scheduled/webhook-driven runs of this flavor are the common case.
 
-**Connections** — external service integrations injected into agent pods at runtime via MCP (Model Context Protocol). Built-in providers: Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem. Also supports custom MCP servers and HTTP APIs. Connections have fine-grained access control (per-repo, per-agent-type, permission levels).
+**Scheduled (Task Configs)** — a saved Task blueprint that spawns fresh Tasks on a trigger firing. Stored in `task_configs`. Each firing calls `instantiateTask()` which goes through the full Repo Task pipeline. Manageable at `/tasks/scheduled`. Standalone equivalents are stored in `workflows` (see backend-naming note below).
+
+**Triggers** — polymorphic table `workflow_triggers` keyed by `(target_type, target_id)`. `target_type` is `"job"` (Standalone Tasks) or `"task_config"` (Repo Tasks). Trigger types: `manual`, `schedule` (cron), `webhook`, `ticket`. The `workflow-trigger-worker` polls due schedule triggers and dispatches to the correct target service.
+
+**Templates** — reusable prompt templates in `prompt_templates` with a `kind` discriminator (`prompt` / `review` / `job` / `task`). Supports `{{param}}` substitution and `{{#if param}}...{{/if}}` blocks. Rendered lazily on trigger firing so params from the trigger payload substitute into the prompt.
+
+**Connections** — external service integrations injected into agent pods at runtime via MCP (Model Context Protocol). Built-in providers: Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem. Also supports custom MCP servers and HTTP APIs. Fine-grained access control (per-repo, per-agent-type, permission levels).
+
+**Backend-naming note.** For historical reasons the tables are `tasks` (Repo Tasks' one-time runs), `task_configs` (Repo Task blueprints), and `workflows` / `workflow_runs` / `workflow_triggers` (Standalone Tasks and their shared trigger surface). User-facing copy never uses "Workflow" or "Job" — everything is "Task" / "Repo Task" / "Standalone Task" in the UI. The legacy `/api/workflows` path was renamed to `/api/jobs` at the HTTP layer and the `/jobs/*` web routes remain for Standalone detail/runs.
+
+For the long-form explanation of how the two flavors map to the three internal types, the polymorphic HTTP layer, and how the UI presents them, see `docs/tasks.md`.
+
+**Unified `/api/tasks` HTTP layer.** All three kinds (`repo-task`, `repo-blueprint`, `standalone`) are reachable through one polymorphic HTTP resource:
+
+- `GET /api/tasks?type=repo-task|repo-blueprint|standalone|all` — unified list
+- `POST /api/tasks` — body takes `{ type, ... }`; dispatches to taskService, taskConfigService, or workflowService based on type
+- `GET /api/tasks/:id` — resolves the id across all three tables; returns native row tagged with `type` discriminator
+- `GET/POST /api/tasks/:id/runs[/:runId]` — polymorphic runs (spawned `tasks` for blueprints, `workflow_runs` for standalone, 405 for ad-hoc)
+- `GET/POST/PATCH/DELETE /api/tasks/:id/triggers[/:triggerId]` — polymorphic triggers (405 for ad-hoc repo-task)
+- Resolver: `unified-task-service.resolveAnyTaskById()` checks tasks → task_configs → workflows; UUIDs are globally unique so no collision
+
+Legacy `/api/jobs/*` and `/api/task-configs/*` endpoints still work as thin aliases for back-compat.
 
 ## Architecture
 
@@ -94,7 +116,7 @@ When a limit is hit, task is re-queued with 10s delay.
 
 ### Authentication
 
-**Web UI**: Multi-provider OAuth (GitHub, Google, GitLab). Enable by setting `<PROVIDER>_OAUTH_CLIENT_ID` + `<PROVIDER>_OAUTH_CLIENT_SECRET`. Sessions use SHA256-hashed tokens (30-day TTL). Local dev bypass: `OPTIO_AUTH_DISABLED=true`.
+**Web UI**: Multi-provider OAuth (GitHub, Google, GitLab, generic OIDC). Enable by setting `<PROVIDER>_OAUTH_CLIENT_ID` + `<PROVIDER>_OAUTH_CLIENT_SECRET` (or `OIDC_ISSUER_URL` + `OIDC_CLIENT_ID` + `OIDC_CLIENT_SECRET` for generic OIDC). Sessions use SHA256-hashed tokens (30-day TTL). Local dev bypass: `OPTIO_AUTH_DISABLED=true`.
 
 **Claude Code** (three modes, selected in setup wizard):
 
@@ -113,8 +135,12 @@ These are well-documented in code; read the relevant service files for details:
 - **Shared cache directories**: per-repo persistent PVCs for tool caches (npm, pip, cargo, etc.), managed via `/api/repos/:id/shared-directories`
 - **Interactive sessions**: persistent workspaces with terminal + agent chat, at `/sessions`
 - **Workspaces**: multi-tenancy via `workspaceId` column. Roles (admin/member/viewer) in schema but not fully enforced
-- **Agent Workflows** (`workflow-service.ts`, `workflow-worker.ts`): standalone agent jobs with `{{PARAM}}` prompt templates, three trigger types (manual/schedule/webhook), isolated pod execution, real-time log streaming, auto-retry with exponential backoff. Schema: `workflows`, `workflow_triggers`, `workflow_runs`, `workflow_run_logs`, `workflow_pods`
+- **Standalone Tasks** (`workflow-service.ts`, `workflow-worker.ts`): reached from the "Standalone" link on `/tasks` (list at `/jobs`, detail at `/jobs/:id`, runs at `/jobs/:id/runs/:runId`). Agent runs with no repo, `{{PARAM}}` prompt templates, four trigger types (manual/schedule/webhook/ticket), pooled pod execution, real-time log streaming, auto-retry with exponential backoff. Pods are **shared across runs within a workflow**, keyed on `(workflow_id, instance_index)`: each workflow has `workflows.maxPodInstances` pod replicas (default 1, max 20) and `workflows.maxAgentsPerPod` concurrent runs per pod (default 2, max 50) — mirrors repo pod scaling. Runs track their assigned pod via `workflow_runs.pod_id` and remember it for retry affinity via `last_pod_id`. Schema: `workflows`, `workflow_triggers`, `workflow_runs`, `workflow_run_logs`, `workflow_pods`
+- **Repo Task Configs** (`task-config-service.ts`, routes in `task-configs.ts`): reusable Repo Task blueprints that spawn tasks when triggers fire. `instantiateTask(configId, { triggerId, params })` creates a task with rendered prompt + title, transitions it to QUEUED, and enqueues the BullMQ job. UI at `/tasks/scheduled`. Schema: `task_configs`
+- **Triggers** (`workflow-trigger-service.ts`, `workflow-trigger-worker.ts`): polymorphic trigger table (`workflow_triggers`) keyed by `(target_type, target_id)`. `target_type="job"` dispatches to `createWorkflowRun`; `target_type="task_config"` dispatches to `instantiateTask`. Schedule trigger worker polls every 60s (`OPTIO_WORKFLOW_TRIGGER_INTERVAL`).
+- **Templates** (`prompt-template-service.ts`, routes in `prompt-templates.ts`): reusable prompt templates with `kind` discriminator (`prompt` / `review` / `job` / `task`). `renderTemplateString(template, params)` handles `{{param}}` substitution + `{{#if}}` blocks. UI at `/templates`.
 - **Connections** (`connection-service.ts`): external service integrations via MCP. Built-in providers: Notion, GitHub, Slack, Linear, PostgreSQL, Sentry, Filesystem. Also supports custom MCP servers and HTTP APIs. Three-layer model: providers (catalog) → connections (configured instances) → assignments (per-repo/agent-type rules). Injected into agent pods at task runtime via `getConnectionsForTask()` in task-worker
+- **Reconciliation control plane** (`workers/reconcile-worker.ts`, `services/reconcile-{snapshot,executor,queue}.ts`, `packages/shared/src/reconcile/`): K8s-style reconciler for Repo Task runs (`tasks`) and Standalone runs (`workflow_runs`). Pure decision functions consume a frozen `WorldSnapshot` and return a typed `Action`; the executor applies it under CAS so concurrent passes can't trample each other. Producers — `taskService.transitionTask`, `workflow-worker`'s `transitionRun`, `pr-watcher` poll cycle, `repo-cleanup` pod-health detection — wake the reconciler via `enqueueReconcile`. Periodic resync (`OPTIO_RECONCILE_RESYNC_INTERVAL`, 5 min) catches anything missed. The reconciler owns: PR-driven transitions (auto-merge, complete-on-merge, fail-on-close), auto-resume on CI/conflict/review (capped by `OPTIO_MAX_AUTO_RESUMES`), review launch, stall + pod-death detection, control-intent (cancel/retry/resume/restart). Schema: `control_intent`, `reconcile_backoff_until`, `reconcile_attempts` columns on both `tasks` and `workflow_runs`. See `docs/reconciliation.md`
 - **Task dependencies**: `task_dependencies` table for multi-step pipelines
 - **Cost tracking**: `GET /api/analytics/costs` with daily/repo/type breakdowns, UI at `/costs`
 - **Error classification**: `packages/shared/src/error-classifier.ts` pattern-matches errors into categories with remedies

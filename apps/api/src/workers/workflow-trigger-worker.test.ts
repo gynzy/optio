@@ -6,7 +6,6 @@ vi.mock("bullmq", () => {
   return {
     Queue: vi.fn().mockImplementation(() => ({ add: addMock })),
     Worker: vi.fn().mockImplementation((_name: string, processor: any) => {
-      // Expose the processor so tests can call it
       return { processor, on: vi.fn(), close: vi.fn() };
     }),
   };
@@ -19,24 +18,58 @@ vi.mock("../services/redis-config.js", () => ({
 vi.mock("../logger.js", () => ({
   logger: {
     info: vi.fn(),
+    debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },
 }));
 
-const mockGetDueScheduleTriggers = vi.fn();
+const mockGetDueScheduleTriggersAll = vi.fn();
+const mockGetWorkflow = vi.fn();
 const mockCreateWorkflowRun = vi.fn();
 const mockMarkTriggerFired = vi.fn();
+const mockGetTaskConfig = vi.fn();
+const mockInstantiateTask = vi.fn();
 
 vi.mock("../services/workflow-service.js", () => ({
-  getDueScheduleTriggers: (...args: unknown[]) => mockGetDueScheduleTriggers(...args),
+  getDueScheduleTriggersAll: (...args: unknown[]) => mockGetDueScheduleTriggersAll(...args),
+  getWorkflow: (...args: unknown[]) => mockGetWorkflow(...args),
   createWorkflowRun: (...args: unknown[]) => mockCreateWorkflowRun(...args),
   markTriggerFired: (...args: unknown[]) => mockMarkTriggerFired(...args),
+}));
+
+vi.mock("../services/task-config-service.js", () => ({
+  getTaskConfig: (...args: unknown[]) => mockGetTaskConfig(...args),
+  instantiateTask: (...args: unknown[]) => mockInstantiateTask(...args),
 }));
 
 import { Worker } from "bullmq";
 import { startWorkflowTriggerWorker } from "./workflow-trigger-worker.js";
 import { logger } from "../logger.js";
+
+function jobTrigger(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "t-1",
+    targetType: "job",
+    targetId: "w-1",
+    type: "schedule",
+    config: { cronExpression: "0 0 * * *" },
+    paramMapping: null,
+    ...overrides,
+  };
+}
+
+function taskConfigTrigger(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "t-tc-1",
+    targetType: "task_config",
+    targetId: "tc-1",
+    type: "schedule",
+    config: { cronExpression: "0 0 * * *" },
+    paramMapping: null,
+    ...overrides,
+  };
+}
 
 describe("workflow-trigger-worker", () => {
   let processor: () => Promise<void>;
@@ -44,33 +77,22 @@ describe("workflow-trigger-worker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const worker = startWorkflowTriggerWorker();
-    // Extract the processor function from the Worker constructor call
     processor = (Worker as any).mock.calls[0][1];
   });
 
   it("does nothing when no triggers are due", async () => {
-    mockGetDueScheduleTriggers.mockResolvedValue([]);
-
+    mockGetDueScheduleTriggersAll.mockResolvedValue([]);
     await processor();
-
     expect(mockCreateWorkflowRun).not.toHaveBeenCalled();
-    expect(mockMarkTriggerFired).not.toHaveBeenCalled();
+    expect(mockInstantiateTask).not.toHaveBeenCalled();
   });
 
-  it("creates a workflow run and marks trigger fired for due triggers", async () => {
-    mockGetDueScheduleTriggers.mockResolvedValue([
-      {
-        trigger: {
-          id: "t-1",
-          type: "schedule",
-          config: { cronExpression: "0 0 * * *" },
-          paramMapping: { env: "production" },
-        },
-        workflow: { id: "w-1", name: "Deploy" },
-      },
+  it("dispatches job targets to createWorkflowRun and marks fired", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([
+      jobTrigger({ paramMapping: { env: "production" } }),
     ]);
+    mockGetWorkflow.mockResolvedValue({ id: "w-1", name: "Deploy", enabled: true });
     mockCreateWorkflowRun.mockResolvedValue({ id: "run-1" });
-    mockMarkTriggerFired.mockResolvedValue(undefined);
 
     await processor();
 
@@ -79,83 +101,85 @@ describe("workflow-trigger-worker", () => {
       params: { env: "production" },
     });
     expect(mockMarkTriggerFired).toHaveBeenCalledWith("t-1", "0 0 * * *");
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerId: "t-1", workflowId: "w-1", workflowRunId: "run-1" }),
-      "Workflow schedule trigger fired",
-    );
   });
 
-  it("skips triggers missing cronExpression in config", async () => {
-    mockGetDueScheduleTriggers.mockResolvedValue([
-      {
-        trigger: { id: "t-2", type: "schedule", config: {}, paramMapping: null },
-        workflow: { id: "w-2", name: "Bad Trigger" },
-      },
-    ]);
+  it("skips disabled workflow targets but still marks fired", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([jobTrigger()]);
+    mockGetWorkflow.mockResolvedValue({ id: "w-1", name: "Off", enabled: false });
 
     await processor();
 
     expect(mockCreateWorkflowRun).not.toHaveBeenCalled();
+    expect(mockMarkTriggerFired).toHaveBeenCalledWith("t-1", "0 0 * * *");
+  });
+
+  it("dispatches task_config targets to instantiateTask", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([taskConfigTrigger()]);
+    mockGetTaskConfig.mockResolvedValue({ id: "tc-1", name: "CVE patch", enabled: true });
+    mockInstantiateTask.mockResolvedValue({ id: "task-9" });
+
+    await processor();
+
+    expect(mockInstantiateTask).toHaveBeenCalledWith("tc-1", {
+      triggerId: "t-tc-1",
+      params: undefined,
+    });
+    expect(mockMarkTriggerFired).toHaveBeenCalledWith("t-tc-1", "0 0 * * *");
+  });
+
+  it("skips disabled task_config targets but still marks fired", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([taskConfigTrigger()]);
+    mockGetTaskConfig.mockResolvedValue({ id: "tc-1", name: "Off", enabled: false });
+
+    await processor();
+
+    expect(mockInstantiateTask).not.toHaveBeenCalled();
+    expect(mockMarkTriggerFired).toHaveBeenCalledWith("t-tc-1", "0 0 * * *");
+  });
+
+  it("skips triggers missing cronExpression in config", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([jobTrigger({ config: {} })]);
+
+    await processor();
+
+    expect(mockCreateWorkflowRun).not.toHaveBeenCalled();
+    expect(mockMarkTriggerFired).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerId: "t-2" }),
+      expect.objectContaining({ triggerId: "t-1" }),
       expect.stringContaining("missing cronExpression"),
     );
   });
 
-  it("still advances nextFireAt on createWorkflowRun failure", async () => {
-    mockGetDueScheduleTriggers.mockResolvedValue([
-      {
-        trigger: {
-          id: "t-3",
-          type: "schedule",
-          config: { cronExpression: "*/5 * * * *" },
-          paramMapping: null,
-        },
-        workflow: { id: "w-3", name: "Failing" },
-      },
+  it("still advances nextFireAt on dispatch failure", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([
+      jobTrigger({ config: { cronExpression: "*/5 * * * *" } }),
     ]);
+    mockGetWorkflow.mockResolvedValue({ id: "w-1", enabled: true });
     mockCreateWorkflowRun.mockRejectedValue(new Error("DB error"));
-    mockMarkTriggerFired.mockResolvedValue(undefined);
 
     await processor();
 
-    // Should still mark fired to prevent re-fire loop
-    expect(mockMarkTriggerFired).toHaveBeenCalledWith("t-3", "*/5 * * * *");
+    expect(mockMarkTriggerFired).toHaveBeenCalledWith("t-1", "*/5 * * * *");
     expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerId: "t-3" }),
-      "Failed to fire workflow schedule trigger",
+      expect.objectContaining({ triggerId: "t-1" }),
+      "Failed to fire schedule trigger",
     );
   });
 
-  it("processes multiple due triggers", async () => {
-    mockGetDueScheduleTriggers.mockResolvedValue([
-      {
-        trigger: {
-          id: "t-a",
-          type: "schedule",
-          config: { cronExpression: "0 0 * * *" },
-          paramMapping: null,
-        },
-        workflow: { id: "w-a", name: "A" },
-      },
-      {
-        trigger: {
-          id: "t-b",
-          type: "schedule",
-          config: { cronExpression: "0 12 * * *" },
-          paramMapping: null,
-        },
-        workflow: { id: "w-b", name: "B" },
-      },
+  it("processes a mix of job and task_config triggers in one tick", async () => {
+    mockGetDueScheduleTriggersAll.mockResolvedValue([
+      jobTrigger({ id: "t-a", targetId: "w-a" }),
+      taskConfigTrigger({ id: "t-b", targetId: "tc-b" }),
     ]);
-    mockCreateWorkflowRun
-      .mockResolvedValueOnce({ id: "run-a" })
-      .mockResolvedValueOnce({ id: "run-b" });
-    mockMarkTriggerFired.mockResolvedValue(undefined);
+    mockGetWorkflow.mockResolvedValue({ id: "w-a", name: "A", enabled: true });
+    mockGetTaskConfig.mockResolvedValue({ id: "tc-b", name: "B", enabled: true });
+    mockCreateWorkflowRun.mockResolvedValue({ id: "run-a" });
+    mockInstantiateTask.mockResolvedValue({ id: "task-b" });
 
     await processor();
 
-    expect(mockCreateWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(mockCreateWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(mockInstantiateTask).toHaveBeenCalledTimes(1);
     expect(mockMarkTriggerFired).toHaveBeenCalledTimes(2);
   });
 });
