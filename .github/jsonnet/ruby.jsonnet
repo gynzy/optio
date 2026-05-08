@@ -1,3 +1,4 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local database = import 'databases.jsonnet';
 local docker = import 'docker.jsonnet';
@@ -26,6 +27,7 @@ local servicesImport = import 'services.jsonnet';
    * @param {boolean} migrateOptions.enabled - Whether to run migrations
    * @param {string} migrateOptions.RAILS_ENV - Rails environment
    * @param {string} rubyImageName - Ruby base image for the job (required)
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {workflows} - Complete GitHub Actions pipeline for Ruby PR deployment
    */
   rubyDeployPRPipeline(
@@ -38,6 +40,7 @@ local servicesImport = import 'services.jsonnet';
     mysqlCloneOptions={},
     migrateOptions={},
     rubyImageName=null,
+    runsOn=null,
   )::
     assert rubyImageName != null;
     local mysqlCloneOptionsWithDefaults = {
@@ -64,6 +67,7 @@ local servicesImport = import 'services.jsonnet';
       [
         base.ghJob(
           'deploy-pr',
+          runsOn=runsOn,
           image=rubyImageName,
           steps=[
                   misc.checkout(ref='${{ github.event.pull_request.head.sha }}'),
@@ -129,6 +133,7 @@ local servicesImport = import 'services.jsonnet';
    * @param {object} [extra_env={}] - Additional environment variables
    * @param {object} [services] - Database services configuration
    * @param {string} rubyImageName - Ruby base image for the job (required)
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for API documentation deployment
    */
   deployApiDocs(
@@ -138,10 +143,12 @@ local servicesImport = import 'services.jsonnet';
     extra_env={},
     services={ db: servicesImport.mysql8service(database='ci', password='ci', root_password='1234test', username='ci', version='8.4') },
     rubyImageName=null,
+    runsOn=null,
   )::
     assert rubyImageName != null;
     base.ghJob(
       'apidocs',
+      runsOn=runsOn,
       image=rubyImageName,
       ifClause="${{ github.event.deployment.environment == 'production' }}",
       steps=[
@@ -165,13 +172,13 @@ local servicesImport = import 'services.jsonnet';
         ),
         base.action(
           'setup auth',
-          'google-github-actions/auth@v2',
+          actions.gcp_auth_action,
           with={
             credentials_json: misc.secret('GCE_JSON'),
           },
           id='auth',
         ),
-        base.action('setup-gcloud', 'google-github-actions/setup-gcloud@v2'),
+        base.action('setup-gcloud', actions.gcp_setup_gcloud_action),
         base.step('deploy-api-docs', 'gsutil -m cp -r doc/api/** gs://apidocs.gynzy.com/' + serviceName + '/'),
       ],
       services=(if enableDatabase then services else null),
@@ -240,6 +247,7 @@ local servicesImport = import 'services.jsonnet';
    * @param {object} [migrateOptions={}] - Rails migration options
    * @param {bool} wait [true] - let helm wait for pods to come online otherwise fail the job
    * @param {timeout}  [10m] - how long to wait until the pods come online
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for test environment deployment
    */
   rubyDeployTestJob(
@@ -252,6 +260,7 @@ local servicesImport = import 'services.jsonnet';
     migrateOptions={},
     wait=true,
     timeout='10m',
+    runsOn=null,
   )::
     assert image != null;
     local migrateOptionsWithDefaults = {
@@ -266,6 +275,7 @@ local servicesImport = import 'services.jsonnet';
 
     base.ghJob(
       'deploy-test',
+      runsOn=runsOn,
       ifClause="${{ github.event.deployment.environment == 'test' }}",
       image=image,
       useCredentials=useCredentials,
@@ -291,6 +301,7 @@ local servicesImport = import 'services.jsonnet';
    * @param {object} [migrateOptions={}] - Rails migration options
    * @param {bool} wait [true] - let helm wait for pods to come online otherwise fail the job
    * @param {timeout}  [10m] - how long to wait until the pods come online
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for production deployment with failure notifications
    */
   rubyDeployProdJob(
@@ -303,6 +314,7 @@ local servicesImport = import 'services.jsonnet';
     migrateOptions={},
     wait=true,
     timeout='10m',
+    runsOn=null,
   )::
     assert image != null;
     local migrateOptionsWithDefaults = {
@@ -317,6 +329,7 @@ local servicesImport = import 'services.jsonnet';
 
     base.ghJob(
       'deploy-prod',
+      runsOn=runsOn,
       ifClause="${{ github.event.deployment.environment == 'production' }}",
       image=image,
       useCredentials=useCredentials,

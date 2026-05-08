@@ -1,6 +1,6 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local cache = import 'cache.jsonnet';
-local images = import 'images.jsonnet';
 local misc = import 'misc.jsonnet';
 
 {
@@ -127,14 +127,16 @@ local misc = import 'misc.jsonnet';
    * @param {string} [image=null] - Docker image to use for the job
    * @param {boolean} [useCredentials=null] - Whether to use Docker registry credentials
    * @param {boolean} [ignoreEngines=false] - Whether to ignore engine version checks
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {workflows} - Complete GitHub Actions pipeline configuration
    */
-  updateYarnCachePipeline(cacheName, appsDir='packages', image=null, useCredentials=null, ignoreEngines=false)::
+  updateYarnCachePipeline(cacheName, appsDir='packages', image=null, useCredentials=null, ignoreEngines=false, runsOn=null)::
     base.pipeline(
       'update-yarn-cache',
       [
         base.ghJob(
           'update-yarn-cache',
+          runsOn=runsOn,
           image=image,
           useCredentials=useCredentials,
           ifClause="${{ github.event.deployment.environment == 'production' || github.event.deployment.environment == 'prod' }}",
@@ -144,13 +146,13 @@ local misc = import 'misc.jsonnet';
             self.yarn(ignoreEngines=ignoreEngines),
             base.action(
               'setup auth',
-              'google-github-actions/auth@v2',
+              actions.gcp_auth_action,
               with={
                 credentials_json: misc.secret('SERVICE_JSON'),
               },
               id='auth',
             ),
-            base.action('setup-gcloud', 'google-github-actions/setup-gcloud@v2'),
+            base.action('setup-gcloud', actions.gcp_setup_gcloud_action),
             cache.uploadCache(
               cacheName=cacheName,
               tarCommand='ls "' + appsDir + '/*/node_modules" -1 -d 2>/dev/null | xargs tar -c .yarncache node_modules',
@@ -259,7 +261,7 @@ local misc = import 'misc.jsonnet';
       [self.checkoutAndYarn(ref=gitCloneRef, fullClone=false)] +
       (if onChangedFiles != false then misc.testForChangedFiles({ package: onChangedFiles }, headRef=changedFilesHeadRef, baseRef=changedFilesBaseRef) else []) +
       (if checkVersionBump then [
-         base.action('check-version-bump', uses='del-systems/check-if-version-bumped@v1', with={
+         base.action('check-version-bump', uses='del-systems/check-if-version-bumped@d5d13ffd75dc8aa9c2e1dca10d9bb27be10307b2', with={  // check-if-version-bumped@d5d13 == v2
            token: '${{ github.token }}',
          }, ifClause=ifClause),
        ] else []) +

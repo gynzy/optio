@@ -132,6 +132,7 @@ local services = import 'services.jsonnet';
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job for production deployment
    */
   helmDeployProdJob(
@@ -145,9 +146,11 @@ local services = import 'services.jsonnet';
     fetchDependencies=false,
     wait=false,
     timeout=null,
+    runsOn=null,
   )::
     base.ghJob(
       'deploy-prod',
+      runsOn=runsOn,
       ifClause="${{ github.event.deployment.environment == '" + environment + "' }}",
       image=image,
       useCredentials=useCredentials,
@@ -213,6 +216,7 @@ local services = import 'services.jsonnet';
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job for test deployment
    */
   helmDeployTestJob(
@@ -225,9 +229,11 @@ local services = import 'services.jsonnet';
     fetchDependencies=false,
     wait=false,
     timeout=null,
+    runsOn=null,
   )::
     base.ghJob(
       'deploy-test',
+      runsOn=runsOn,
       ifClause="${{ github.event.deployment.environment == 'test' }}",
       image=image,
       useCredentials=useCredentials,
@@ -296,6 +302,7 @@ local services = import 'services.jsonnet';
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job for PR deployment
    */
   helmDeployPRJob(
@@ -308,9 +315,11 @@ local services = import 'services.jsonnet';
     fetchDependencies=false,
     wait=false,
     timeout=null,
+    runsOn=null,
   )::
     base.ghJob(
       'deploy-pr',
+      runsOn=runsOn,
       image=image,
       useCredentials=useCredentials,
       steps=[
@@ -369,6 +378,7 @@ local services = import 'services.jsonnet';
    * @param {boolean} [fetchDependencies=fetchDependencies] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job for PR cleanup
    */
   helmDeletePRJob(
@@ -380,9 +390,11 @@ local services = import 'services.jsonnet';
     fetchDependencies=fetchDependencies,
     wait=false,
     timeout=null,
+    runsOn=null,
   )::
     base.ghJob(
       'helm-delete-pr',
+      runsOn=runsOn,
       image=images.default_job_image,
       useCredentials=false,
       steps=[
@@ -483,6 +495,7 @@ local services = import 'services.jsonnet';
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job for canary deployment
    */
   helmDeployCanaryJob(
@@ -495,9 +508,11 @@ local services = import 'services.jsonnet';
     fetchDependencies=false,
     wait=false,
     timeout=null,
+    runsOn=null,
   )::
     base.ghJob(
       'deploy-canary',
+      runsOn=runsOn,
       image=image,
       useCredentials=useCredentials,
       ifClause="${{ github.event.deployment.environment == 'canary' }}",
@@ -566,6 +581,7 @@ local services = import 'services.jsonnet';
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job to kill canary deployment
    */
   helmKillCanaryJob(
@@ -576,9 +592,11 @@ local services = import 'services.jsonnet';
     fetchDependencies=false,
     wait=false,
     timeout=null,
+    runsOn=null,
   )::
     base.ghJob(
       'kill-canary',
+      runsOn=runsOn,
       ifClause="${{ github.event.deployment.environment == 'kill-canary' || github.event.deployment.environment == 'production' }}",
       image=images.default_job_image,
       useCredentials=false,

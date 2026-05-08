@@ -1,3 +1,4 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local images = import 'images.jsonnet';
 local misc = import 'misc.jsonnet';
@@ -10,15 +11,15 @@ local yarn = import 'yarn.jsonnet';
 local pulumiSetupSteps =
   base.action(
     'auth',
-    uses='google-github-actions/auth@v2',
+    uses=actions.gcp_auth_action,
     id='auth',
     with={
       credentials_json: misc.secret('PULUMI_SERVICE_ACCOUNT'),
     }
   ) +
-  base.action('setup-gcloud', uses='google-github-actions/setup-gcloud@v2') +
-  base.action('pulumi-cli-setup', 'pulumi/actions@v5') +
-  base.action('jsonnet-setup', 'kobtea/setup-jsonnet-action@v1') +
+  base.action('setup-gcloud', uses=actions.gcp_setup_gcloud_action) +
+  base.action('pulumi-cli-setup', actions.pulumi_action) +
+  base.action('jsonnet-setup', 'kobtea/setup-jsonnet-action@78f57bb20bd6cf4914c27dd44610a7d923455ecf') +  // v2
   misc.install1Password() +
   misc.getLockStep(lockName='lock-pulumi', lockTimeout='1200');
 
@@ -64,7 +65,7 @@ local pulumiDefaultEnvironment(stack) = {
   )::
     base.action(
       name=stepName,
-      uses='pulumi/actions@v5',
+      uses=actions.pulumi_action,
       with={
         command: 'preview',
         'stack-name': stack,
@@ -94,7 +95,7 @@ local pulumiDefaultEnvironment(stack) = {
   )::
     base.action(
       name=stepName,
-      uses='pulumi/actions@v5',
+      uses=actions.pulumi_action,
       with={
         command: 'up',
         'stack-name': stack,
@@ -127,7 +128,7 @@ local pulumiDefaultEnvironment(stack) = {
 
     base.action(
       name=stepName,
-      uses='pulumi/actions@v5',
+      uses=actions.pulumi_action,
       with={
         command: 'destroy',
         remove: true,
@@ -151,6 +152,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {object} [environmentVariables={}] - Additional environment variables
    * @param {array} [additionalSetupSteps=[]] - Extra setup steps before Pulumi preview
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - Complete GitHub Actions job for Pulumi preview
    */
   pulumiPreviewJob(
@@ -164,9 +166,11 @@ local pulumiDefaultEnvironment(stack) = {
     environmentVariables={},
     additionalSetupSteps=[],
     ignoreEngines=false,
+    runsOn=null,
   )::
     base.ghJob(
       'pulumi-preview-' + stack,
+      runsOn=runsOn,
       image=image,
       useCredentials=false,
       steps=[
@@ -267,6 +271,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
    * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
    * @param {array} [pnpmInstallArgs=[]] - Additional arguments for pnpm install
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job that previews both test and production stacks
    */
   pulumiPreviewTestAndProdJob(
@@ -283,9 +288,11 @@ local pulumiDefaultEnvironment(stack) = {
     ignoreEngines=false,
     packageManager='yarn',
     pnpmInstallArgs=[],
+    runsOn=null,
   )::
     base.ghJob(
       'pulumi-preview',
+      runsOn=runsOn,
       image=image,
       useCredentials=false,
       steps=[
@@ -318,6 +325,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
    * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
    * @param {array} [pnpmInstallArgs=[]] - Additional arguments for pnpm install
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for Pulumi deployment with failure notifications
    */
   pulumiDeployJob(
@@ -336,9 +344,11 @@ local pulumiDefaultEnvironment(stack) = {
     ignoreEngines=false,
     packageManager='yarn',
     pnpmInstallArgs=[],
+    runsOn=null,
   )::
     base.ghJob(
       name=jobName,
+      runsOn=runsOn,
       ifClause=ifClause,
       image=image,
       useCredentials=false,
@@ -369,6 +379,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {array} [additionalSetupSteps=[]] - Extra setup steps
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
    * @param {string} [packageManager='yarn'] - Package manager to use
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for test environment deployment
    */
   pulumiDeployTestJob(
@@ -384,9 +395,11 @@ local pulumiDefaultEnvironment(stack) = {
     additionalSetupSteps=[],
     ignoreEngines=false,
     packageManager='yarn',
+    runsOn=null,
   )::
     self.pulumiDeployJob(
       stack,
+      runsOn=runsOn,
       pulumiDir=pulumiDir,
       yarnDir=yarnDir,
       yarnNpmSource=yarnNpmSource,
@@ -415,6 +428,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {array} [additionalSetupSteps=[]] - Extra setup steps
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
    * @param {string} [packageManager='yarn'] - Package manager to use
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for production deployment
    */
   pulumiDeployProdJob(
@@ -430,9 +444,11 @@ local pulumiDefaultEnvironment(stack) = {
     additionalSetupSteps=[],
     ignoreEngines=false,
     packageManager='yarn',
+    runsOn=null,
   )::
     self.pulumiDeployJob(
       stack,
+      runsOn=runsOn,
       pulumiDir=pulumiDir,
       yarnDir=yarnDir,
       yarnNpmSource=yarnNpmSource,
@@ -466,6 +482,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
    * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
    * @param {array} [pnpmInstallArgs=[]] - Additional arguments for pnpm install
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job for Pulumi infrastructure destruction
    */
   pulumiDestroyJob(
@@ -484,9 +501,11 @@ local pulumiDefaultEnvironment(stack) = {
     ignoreEngines=false,
     packageManager='yarn',
     pnpmInstallArgs=[],
+    runsOn=null,
   )::
     base.ghJob(
       name=jobName,
+      runsOn=runsOn,
       ifClause=ifClause,
       image=image,
       useCredentials=false,
@@ -520,6 +539,7 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {object} [environmentVariables={}] - Additional environment variables
    * @param {array} [additionalSetupSteps=[]] - Extra setup steps for all jobs
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the jobs
    * @returns {workflows} - Complete set of Pulumi preview and deployment pipelines
    */
   pulumiDefaultPipeline(
@@ -535,6 +555,7 @@ local pulumiDefaultEnvironment(stack) = {
     environmentVariables={},
     additionalSetupSteps=[],
     ignoreEngines=false,
+    runsOn=null,
   )::
     base.pipeline(
       'pulumi-preview',
@@ -551,6 +572,7 @@ local pulumiDefaultEnvironment(stack) = {
           environmentVariables=environmentVariables,
           additionalSetupSteps=additionalSetupSteps,
           ignoreEngines=ignoreEngines,
+          runsOn=runsOn,
         ),
       ],
     ) +
@@ -567,7 +589,8 @@ local pulumiDefaultEnvironment(stack) = {
           environmentVariables=environmentVariables,
           additionalSetupSteps=additionalSetupSteps,
           ifClause=if deployTestWithProd then "${{ github.event.deployment.environment == 'test' || github.event.deployment.environment == 'prod' || github.event.deployment.environment == 'production' }}" else "${{ github.event.deployment.environment == 'test' }}",
-          ignoreEngines=ignoreEngines
+          ignoreEngines=ignoreEngines,
+          runsOn=runsOn,
         ),
         self.pulumiDeployProdJob(
           pulumiDir=pulumiDir,
@@ -579,7 +602,8 @@ local pulumiDefaultEnvironment(stack) = {
           stack=productionStack,
           environmentVariables=environmentVariables,
           additionalSetupSteps=additionalSetupSteps,
-          ignoreEngines=ignoreEngines
+          ignoreEngines=ignoreEngines,
+          runsOn=runsOn,
         ),
       ],
       event='deployment',

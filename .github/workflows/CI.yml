@@ -48,14 +48,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -123,14 +123,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -199,14 +199,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -275,14 +275,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -351,14 +351,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -427,14 +427,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -503,14 +503,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -579,14 +579,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -653,14 +653,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -726,14 +726,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -799,13 +799,13 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "submodules": "recursive"
     - "name": "git safe directory"
@@ -865,14 +865,14 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
         "submodules": "recursive"
@@ -938,13 +938,13 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "submodules": "recursive"
     - "name": "git safe directory"
@@ -1004,13 +1004,13 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "submodules": "recursive"
     - "name": "git safe directory"
@@ -1070,13 +1070,13 @@
         echo "sshBinaryExists=false" >> $GITHUB_OUTPUT;
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
     - "if": "${{  ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
-      "uses": "actions/checkout@v4"
+      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
       "with":
         "submodules": "recursive"
     - "name": "git safe directory"

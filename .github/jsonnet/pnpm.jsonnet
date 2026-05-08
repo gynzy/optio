@@ -1,3 +1,4 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local cache = import 'cache.jsonnet';
 local misc = import 'misc.jsonnet';
@@ -19,7 +20,7 @@ local yarn = import 'yarn.jsonnet';
   install(args=[], with={}, version='10', prod=false, storeDir=null, ifClause=null, workingDirectory=null)::
     base.action(
       'Install pnpm tool',
-      'pnpm/action-setup@v4',
+      'pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320',  // v5
       with=
       { version: version } +
       with,
@@ -123,14 +124,16 @@ local yarn = import 'yarn.jsonnet';
    * @param {boolean} [useCredentials=null] - Whether to use Docker registry credentials
    * @param {boolean} [setupPnpm=true] - Whether to set up and install pnpm itself before installing all packages
    * @param {string} [source=null] - Registry source ('gynzy' or 'github')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {workflows} - Complete GitHub Actions pipeline configuration
    */
-  updatePnpmCachePipeline(cacheName, appsDir='packages', image=null, useCredentials=null, setupPnpm=true, source=null)::
+  updatePnpmCachePipeline(cacheName, appsDir='packages', image=null, useCredentials=null, setupPnpm=true, source=null, runsOn=null)::
     base.pipeline(
       'update-pnpm-cache',
       [
         base.ghJob(
           'update-pnpm-cache',
+          runsOn=runsOn,
           image=image,
           useCredentials=useCredentials,
           ifClause="${{ github.event.deployment.environment == 'production' || github.event.deployment.environment == 'prod' }}",
@@ -142,13 +145,13 @@ local yarn = import 'yarn.jsonnet';
             ),
             base.action(
               'setup auth',
-              'google-github-actions/auth@v2',
+              actions.gcp_auth_action,
               with={
                 credentials_json: misc.secret('SERVICE_JSON'),
               },
               id='auth',
             ),
-            base.action('setup-gcloud', 'google-github-actions/setup-gcloud@v2'),
+            base.action('setup-gcloud', actions.gcp_setup_gcloud_action),
             cache.uploadCache(
               cacheName=cacheName,
               tarCommand='tar -c .pnpm-store',
@@ -167,14 +170,16 @@ local yarn = import 'yarn.jsonnet';
    * @param {boolean} [setupPnpm=true] - Whether to set up and install pnpm itself
    * @param {array} [pnpmInstallArgs=[]] - Additional arguments for pnpm install
    * @param {string} [auditLevel='moderate'] - Minimum severity level to fail the job ('low', 'moderate', 'high', 'critical')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {workflows} - Complete GitHub Actions pipeline configuration
    */
-  pnpmAuditPipeline(cacheName=null, image=null, setupPnpm=true, pnpmInstallArgs=[], auditLevel='moderate')::
+  pnpmAuditPipeline(cacheName=null, image=null, setupPnpm=true, pnpmInstallArgs=[], auditLevel='moderate', runsOn=null)::
     base.pipeline(
       'pnpm-audit',
       [
         base.ghJob(
           'pnpm-audit',
+          runsOn=runsOn,
           image=image,
           steps=[
             self.checkoutAndPnpm(
