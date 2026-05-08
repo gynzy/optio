@@ -6,7 +6,7 @@
  * Images are primarily hosted on Google Cloud registries (GCR and Artifact Registry).
  */
 {
-  jsonnet_bin_image: 'europe-docker.pkg.dev/unicorn-985/private-images/docker-images_jsonnet:v1',
+  jsonnet_bin_image: 'europe-docker.pkg.dev/unicorn-985/private-images/docker-images_jsonnet:v2',
   helm_action_image: 'docker://europe-docker.pkg.dev/unicorn-985/public-images/helm-action:v4',
   mysql_action_image: 'docker://europe-docker.pkg.dev/unicorn-985/public-images/docker-images_mysql-cloner-action:v2',
   docker_action_image: 'docker://europe-docker.pkg.dev/unicorn-985/public-images/push-to-gcr-github-action:v1',

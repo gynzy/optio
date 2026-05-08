@@ -14,6 +14,7 @@ local pnpm = import 'pnpm.jsonnet';
    * @param {string} [image='mirror.gcr.io/node:20.17'] - Docker image to use for the job
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job definition for New Relic deployment notification
    */
   postReleaseToNewRelicJob(
@@ -23,9 +24,11 @@ local pnpm = import 'pnpm.jsonnet';
     image='mirror.gcr.io/node:20.17',
     useCredentials=false,
     packageManager='yarn',
+    runsOn=null,
   )::
     base.ghJob(
       'post-newrelic-release',
+      runsOn=runsOn,
       image=image,
       useCredentials=useCredentials,
       ifClause="${{ github.event.deployment.environment == 'production' }}",

@@ -122,7 +122,7 @@ local notifications = import 'notifications.jsonnet';
                     function(deploymentTarget)
                       base.action(
                         'publish-deploy-' + deploymentTarget + '-event',
-                        'chrnorm/deployment-action@v2',
+                        'chrnorm/deployment-action@500aa6a23c81ffa1acf71072aee3cfa2cc2e556a',  // v2
                         ifClause=ifClause,
                         with={
                           token: misc.secret('VIRKO_GITHUB_TOKEN'),
@@ -173,7 +173,7 @@ local notifications = import 'notifications.jsonnet';
   updateDeploymentStatus(status='${{ job.status }}')::
     base.action(
       'Update deployment status',
-      'chrnorm/deployment-status@v2',
+      'chrnorm/deployment-status@6df8d036fd2fee9eb82936733953da1f8382b41e',  // v2
       with={
         state: status,
         ['deployment-id']: '${{ github.event.deployment.id }}',

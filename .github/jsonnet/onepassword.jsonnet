@@ -1,3 +1,4 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local misc = import 'misc.jsonnet';
 
@@ -32,7 +33,7 @@ local misc = import 'misc.jsonnet';
     local prefixedSecrets = std.mapWithKey(function(key, value) 'op://Pulumi Prod/' + value, secrets);
     base.action(
       stepName,
-      '1password/load-secrets-action@v2.0.0',
+      actions.onepassword_load_secrets_action,
       id=stepName,
       with={
         'export-env': false,
@@ -72,7 +73,7 @@ local misc = import 'misc.jsonnet';
     local prefixedSecrets = std.mapWithKey(function(key, value) 'op://Pulumi Test/' + value, secrets);
     base.action(
       stepName,
-      '1password/load-secrets-action@v2.0.0',
+      actions.onepassword_load_secrets_action,
       id=stepName,
       with={
         'export-env': false,

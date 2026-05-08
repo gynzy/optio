@@ -1,3 +1,4 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 
 {
@@ -12,7 +13,7 @@ local base = import 'base.jsonnet';
   notifiyDeployFailure(channel='#dev-deployments', name='notify-failure', environment='production')::
     base.action(
       name,
-      'act10ns/slack@v2',
+      actions.slack_action,
       with={
         status: '${{ job.status }}',
         channel: channel,
@@ -34,7 +35,7 @@ local base = import 'base.jsonnet';
   sendSlackMessage(channel='#dev-deployments', stepName='sendSlackMessage', message=null, ifClause=null)::
     base.action(
       stepName,
-      'act10ns/slack@v2',
+      actions.slack_action,
       with={
         status: 'starting',
         channel: channel,
@@ -59,7 +60,7 @@ local base = import 'base.jsonnet';
   newrelicCreateDeploymentMarker(entityGuid, stepName='newrelic-deployment', ifClause=null)::
     base.action(
       stepName,
-      'newrelic/deployment-marker-action@v2.5.0',
+      'newrelic/deployment-marker-action@60142df2a3f5c23d3294486f474299b8f490cd90',  // v2.5.0
       with={
         apiKey: $.secret('NEWRELIC_API_KEY'),
         guid: entityGuid,

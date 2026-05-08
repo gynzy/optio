@@ -2,7 +2,7 @@ local misc = import 'misc.jsonnet';
 
 /**
  * Kubernetes Cluster Configuration
- *
+ * 
  * This module defines configuration for different Kubernetes clusters used for deployments.
  * Each cluster configuration includes project information, authentication secrets, and
  * node selector settings for job scheduling.
