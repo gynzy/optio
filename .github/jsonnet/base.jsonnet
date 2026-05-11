@@ -41,6 +41,7 @@ local misc = import 'misc.jsonnet';
    * @param {object} [concurrency=null] - Job-level concurrency settings
    * @param {boolean} [continueOnError=null] - Whether to continue workflow if job fails
    * @param {object} [env=null] - Environment variables for all steps in the job
+   * @param {object} [strategy=null] - GitHub Actions matrix strategy (e.g., {matrix: {shard: [1,2,3]}, 'fail-fast': false})
    * @returns {jobs} - GitHub Actions job definition
    */
   ghJob(
@@ -58,6 +59,7 @@ local misc = import 'misc.jsonnet';
     concurrency=null,
     continueOnError=null,
     env=null,
+    strategy=null,
   )::
     {
       [name]: {
@@ -82,7 +84,8 @@ local misc = import 'misc.jsonnet';
               (if permissions == null then {} else { permissions: permissions }) +
               (if concurrency == null then {} else { concurrency: concurrency }) +
               (if continueOnError == null then {} else { 'continue-on-error': continueOnError }) +
-              (if env == null then {} else { env: env }),
+              (if env == null then {} else { env: env }) +
+              (if strategy == null then {} else { strategy: strategy }),
     },
 
   /**
@@ -159,7 +162,7 @@ local misc = import 'misc.jsonnet';
    * @docs https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idsteps
    *
    * @param {string} name - Display name for the step in the GitHub UI
-   * @param {string} uses - The action to use (e.g., 'actions/checkout@v4', './path/to/action')
+   * @param {string} uses - The action to use (e.g., 'actions/checkout@v6', './path/to/action')
    * @param {object} [env=null] - Environment variables for this step
    * @param {object} [with=null] - Input parameters to pass to the action
    * @param {string} [id=null] - Unique identifier for this step (used to reference outputs)

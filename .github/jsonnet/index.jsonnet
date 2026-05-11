@@ -1,4 +1,5 @@
 (import 'base.jsonnet') +
+{ actions: import 'actions.jsonnet' } +
 { clusters: import 'clusters.jsonnet' } +
 (import 'databases.jsonnet') +
 (import 'docker.jsonnet') +

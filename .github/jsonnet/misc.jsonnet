@@ -1,3 +1,4 @@
+local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local images = import 'images.jsonnet';
 
@@ -72,13 +73,13 @@ local images = import 'images.jsonnet';
       sshSteps +
       base.action(
         'Check out repository code via ssh',
-        'actions/checkout@v4',
+        actions.checkout_action,
         with=with + (if preferSshClone then { 'ssh-key': '${{ secrets.VIRKO_GITHUB_SSH_KEY }}' } else {}),
         ifClause='${{ ' + (if ifClause == null then '' else '( ' + localIfClause + ' ) && ') + " ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}",
       ) +
       base.action(
         'Check out repository code via https',
-        'actions/checkout@v4',
+        actions.checkout_action,
         with=with,
         ifClause='${{ ' + (if ifClause == null then '' else '( ' + localIfClause + ' ) && ') + " ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}",
       ) +
@@ -102,7 +103,7 @@ local images = import 'images.jsonnet';
       (if includeSubmodules then { submodules: 'recursive' } else {});
     base.action(
       'Check out repository code',
-      'actions/checkout@v4',
+      actions.checkout_action,
       with=with,
       ifClause=ifClause
     ) +
@@ -187,8 +188,9 @@ local images = import 'images.jsonnet';
                   echo "Possible reasons:";
                   echo " - You updated jsonnet files, but did not regenerate the workflows.";
                   echo "   To regenerate jsonnet run: 'rm .github/workflows/*; jsonnet -m .github/workflows/ -S .github.jsonnet'";
-                  echo " - You used the wrong jsonnet binary. In this case, the newlines at the end of the files differ.";
-                  echo "   To fix, install the go binary. On mac, run 'brew uninstall jsonnet && brew install go-jsonnet'";
+                  echo " - You used the wrong jsonnet binary (version). In this case, the newlines at the end of the files differ.";
+                  echo " - You must use go-jsonnet version 0.22 or higher. Earlier versions do not generate the yml with trailing newline."
+                  echo "   To fix, install the go binary (^0.22). On mac, run 'brew uninstall jsonnet && brew install go-jsonnet'";
                   exit 1;
                 |||
               ),
@@ -205,6 +207,7 @@ local images = import 'images.jsonnet';
    * @param {string} [bodyUpdateAction='suffix'] - How to update the body ('suffix', 'prefix', 'replace')
    * @param {string} [titleUpdateAction='prefix'] - How to update the title ('suffix', 'prefix', 'replace')
    * @param {object} [otherOptions={}] - Additional options to pass to the action
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {workflows} - GitHub Actions pipeline for automatic PR description updates
    */
   updatePRDescriptionPipeline(
@@ -215,6 +218,7 @@ local images = import 'images.jsonnet';
     bodyUpdateAction='suffix',
     titleUpdateAction='prefix',
     otherOptions={},
+    runsOn=null,
   )::
     base.pipeline(
       'update-pr-description',
@@ -224,6 +228,7 @@ local images = import 'images.jsonnet';
       jobs=[
         base.ghJob(
           'update-pr-description',
+          runsOn=runsOn,
           steps=[
             base.action(
               'update-pr-description',
@@ -417,7 +422,7 @@ local images = import 'images.jsonnet';
           image=null,
           runsOn='ubuntu-latest',
           steps=[
-            base.action('checkout', 'actions/checkout@v4'),
+            base.action('checkout', actions.checkout_action),
             base.action(
               'Run delete-old-branches-action',
               'beatlabs/delete-old-branches-action@4eeeb8740ff8b3cb310296ddd6b43c3387734588',
@@ -472,7 +477,7 @@ local images = import 'images.jsonnet';
       base.step('git safe directory', 'git config --global --add safe.directory $PWD'),
       base.action(
         'check-for-changes',
-        uses='dorny/paths-filter@v2',
+        uses='dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d',  // v4
         id='changes',
         with={
                filters: |||
@@ -492,9 +497,10 @@ local images = import 'images.jsonnet';
    *
    * @param {string} name - The name of the GitHub job
    * @param {array} jobs - Array of job objects to wait for
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {jobs} - GitHub Actions job that waits for the given jobs to finish
    */
-  awaitJob(name, jobs)::
+  awaitJob(name, jobs, runsOn=null)::
     local dependingJobs = std.flatMap(
       function(job)
         local jobNameArray = std.objectFields(job);
@@ -504,6 +510,7 @@ local images = import 'images.jsonnet';
     [
       base.ghJob(
         'await-' + name,
+        runsOn=runsOn,
         ifClause='${{ always() }}',
         needs=dependingJobs,
         useCredentials=false,
@@ -567,18 +574,20 @@ local images = import 'images.jsonnet';
    * Useful for automatically approving renovate PRs or other trusted automation.
    *
    * @param {array} [users=['gynzy-virko']] - Array of usernames to auto-approve PRs for
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @returns {workflows} - GitHub Actions pipeline that auto-approves PRs from specified users
    */
-  autoApprovePRs(users=['gynzy-virko'])::
+  autoApprovePRs(users=['gynzy-virko'], runsOn=null)::
     base.pipeline(
       'auto-approve-prs',
       [
         base.ghJob(
           'auto-approve',
+          runsOn=runsOn,
           steps=[
             base.action(
               'auto-approve-prs',
-              'hmarr/auto-approve-action@v4',
+              'hmarr/auto-approve-action@8f929096a962e83ccdfa8afcf855f39f12d4dac7',  // v4
             ),
           ],
           useCredentials=false,
@@ -699,7 +708,7 @@ local images = import 'images.jsonnet';
           steps=[
             base.action(
               'Close stale PRs',
-              'actions/stale@v10',
+              'actions/stale@b5d41d4e1d5dceea10e7104786b73624c18a190f',  // v10
               with={
                 'days-before-stale': daysBeforeStale,
                 'days-before-close': daysBeforeClose,

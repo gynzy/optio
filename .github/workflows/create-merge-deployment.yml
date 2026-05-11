@@ -30,7 +30,7 @@
         fi
     - "if": "${{ github.event.pull_request.base.ref == github.event.pull_request.base.repo.default_branch && steps.assert-merge-sha-is-latest-commit.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
       "name": "publish-deploy-production-event"
-      "uses": "chrnorm/deployment-action@v2"
+      "uses": "chrnorm/deployment-action@500aa6a23c81ffa1acf71072aee3cfa2cc2e556a"
       "with":
         "auto-merge": "false"
         "description": "Auto deploy production on PR merge. pr: ${{ github.event.number }} ref: ${{ github.event.pull_request.head.sha }}"
@@ -40,7 +40,7 @@
         "token": "${{ secrets.VIRKO_GITHUB_TOKEN }}"
     - "if": "${{ github.event.pull_request.base.ref == github.event.pull_request.base.repo.default_branch && steps.assert-merge-sha-is-latest-commit.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
       "name": "sendSlackMessage"
-      "uses": "act10ns/slack@v2"
+      "uses": "act10ns/slack@d96404edccc6d6467fc7f8134a420c851b1e9054"
       "with":
         "channel": "#dev-deployments"
         "message": "Deploy to production of <https://github.com/${{ github.repository }}/pull/${{ github.event.number }}|*PR ${{ github.event.number }}*> started!\nTitle: ${{ github.event.pull_request.title }}\nBranch: ${{ github.head_ref }}"
