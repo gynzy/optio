@@ -10,20 +10,17 @@ local yarn = import 'yarn.jsonnet';
    *
    * @param {array} [args=[]] - Additional command line arguments for pnpm install
    * @param {object} [with={}] - Additional configuration options
-   * @param {string} [version='10'] - PNPM version to use
    * @param {boolean} [prod=false] - Whether to install only production dependencies
    * @param {string} [storeDir=null] - Directory for pnpm store
    * @param {string} [ifClause=null] - Conditional expression to determine if step should run
    * @param {string} [workingDirectory=null] - Directory to run pnpm in
    * @returns {steps} - Array containing a single step object
    */
-  install(args=[], with={}, version='10', prod=false, storeDir=null, ifClause=null, workingDirectory=null)::
+  install(args=[], with={}, prod=false, storeDir=null, ifClause=null, workingDirectory=null)::
     base.action(
       'Install pnpm tool',
       'pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320',  // v5
-      with=
-      { version: version } +
-      with,
+      with=with,
       ifClause=ifClause,
     ) +
     self.installPackages(
