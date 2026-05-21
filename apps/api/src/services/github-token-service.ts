@@ -16,12 +16,24 @@ const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000;
 export type GitHubTokenContext =
   | { taskId: string }
   | { userId: string; workspaceId?: string | null }
-  | { server: true };
+  | { server: true; workspaceId?: string | null };
 
 export async function getGitHubToken(context: GitHubTokenContext): Promise<string> {
-  if ("server" in context) return fallbackToAppOrPat();
+  if ("server" in context) return getServerToken(context.workspaceId);
   if ("taskId" in context) return getTokenForTask(context.taskId);
   return getTokenForUser(context.userId, context.workspaceId);
+}
+
+async function getServerToken(workspaceId?: string | null): Promise<string> {
+  if (isGitHubAppConfigured()) {
+    try {
+      return await getInstallationToken();
+    } catch (err) {
+      logger.warn({ err }, "Installation token failed, falling back to PAT");
+      return getPatFallback(workspaceId);
+    }
+  }
+  return getPatFallback(workspaceId);
 }
 
 async function getTokenForTask(taskId: string): Promise<string> {
@@ -32,7 +44,7 @@ async function getTokenForTask(taskId: string): Promise<string> {
 
   if (!task?.createdBy) {
     // No user associated — use server/installation token (e.g., system-created tasks)
-    return fallbackToAppOrPat();
+    return getServerToken(task?.workspaceId);
   }
   return getTokenForUser(task.createdBy, task.workspaceId);
 }
@@ -48,8 +60,8 @@ async function getTokenForUser(userId: string, workspaceId?: string | null): Pro
     }
     return refreshUserToken(userId, workspaceId);
   } catch (err) {
-    logger.warn({ userId, err }, "No stored user token, falling back to App/PAT");
-    return fallbackToAppOrPat(workspaceId);
+    logger.warn({ userId, err }, "No stored user token, falling back to server token");
+    return getServerToken(workspaceId);
   }
 }
 
@@ -72,7 +84,7 @@ async function doRefreshUserToken(userId: string, workspaceId?: string | null): 
 
   if (!clientId || !clientSecret) {
     await deleteUserGitHubTokens(userId);
-    return fallbackToAppOrPat(workspaceId);
+    return getServerToken(workspaceId);
   }
 
   try {
@@ -116,27 +128,16 @@ async function doRefreshUserToken(userId: string, workspaceId?: string | null): 
   } catch (err) {
     // Don't delete tokens on transient errors (network, 5xx) — only the
     // definitive revocation cases above delete them before re-throwing.
-    logger.warn({ userId, err }, "Token refresh failed, falling back to App/PAT");
-    return fallbackToAppOrPat(workspaceId);
+    logger.warn({ userId, err }, "Token refresh failed, falling back to server token");
+    return getServerToken(workspaceId);
   }
 }
 
 /**
- * Fallback chain when no user OAuth token is available:
- * GitHub App installation token → GITHUB_TOKEN PAT → throw.
- *
- * Used by both user-scoped lookups (user signed in via a non-GitHub provider,
- * or OAuth missing/unrefreshable) and server-scoped lookups (system-created
- * tasks, PR watcher, reconciler).
+ * Last-resort fallback: try to retrieve a manually-configured GITHUB_TOKEN PAT.
+ * Returns the token if found, throws a descriptive error if not.
  */
-async function fallbackToAppOrPat(workspaceId?: string | null): Promise<string> {
-  if (isGitHubAppConfigured()) {
-    try {
-      return await getInstallationToken();
-    } catch (err) {
-      logger.warn({ err }, "Installation token failed, falling back to PAT");
-    }
-  }
+async function getPatFallback(workspaceId?: string | null): Promise<string> {
   try {
     return await retrieveSecretWithFallback("GITHUB_TOKEN", "global", workspaceId);
   } catch {
