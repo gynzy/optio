@@ -13,7 +13,7 @@ export interface GitTokenContext {
 
 /**
  * Resolve a git platform token for the given platform and context.
- * GitHub: delegates to the existing github-token-service (App → user OAuth → PAT).
+ * GitHub: delegates to the existing github-token-service (user OAuth → App → PAT).
  * GitLab: checks GITLAB_TOKEN secret (workspace-scoped → global).
  */
 export async function getGitToken(
