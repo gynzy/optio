@@ -96,7 +96,9 @@ describe("GeminiAdapter", () => {
       expect(settingsFile).toBeDefined();
       const settings = JSON.parse(settingsFile!.content);
       expect(settings.security.auth.selectedType).toBe("gemini-api-key");
-      expect(settings.general.defaultApprovalMode).toBe("yolo");
+      // "yolo" is not a valid settings.json enum; it's applied via the CLI --approval-mode flag.
+      // Settings file uses "auto_edit" as the nearest valid equivalent.
+      expect(settings.general.defaultApprovalMode).toBe("auto_edit");
       expect(settings.telemetry.enabled).toBe(false);
     });
 
