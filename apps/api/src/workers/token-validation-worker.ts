@@ -75,18 +75,6 @@ export async function validateClaudeToken(
  * read them without re-probing the Anthropic API.
  */
 export function startTokenValidationWorker() {
-  const intervalMs = parseInt(process.env.OPTIO_TOKEN_VALIDATION_INTERVAL ?? "300000", 10); // 5 min
-
-  tokenValidationQueue.add(
-    "validate-token",
-    {},
-    {
-      repeat: {
-        every: intervalMs,
-      },
-    },
-  );
-
   const worker = new Worker(
     "token-validation",
     async () => {

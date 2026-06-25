@@ -193,7 +193,11 @@ async function main() {
     cleanRepeatJobs("reconcile-resync"),
   ]);
 
-  // Start BullMQ workers (each re-registers its repeat job)
+  // Register all repeatable jobs from the single source of truth
+  const { ensureRepeatJobs } = await import("./services/repeatable-jobs.js");
+  await ensureRepeatJobs();
+
+  // Start BullMQ workers
   const worker = startTaskWorker();
   logger.info("Task worker started");
 
@@ -223,6 +227,12 @@ async function main() {
   const reconcileResyncWorker = startReconcileResyncWorker();
   logger.info("Reconcile workers started");
 
+  // Re-register repeatable jobs after a Redis reconnect (e.g. Redis pod restart)
+  const { startRepeatJobMonitor, stopRepeatJobMonitor } =
+    await import("./services/repeat-job-monitor.js");
+  startRepeatJobMonitor();
+  logger.info("Repeat-job monitor started");
+
   // Check if metrics-server is available
   checkMetricsServer().catch(() => {});
 
@@ -235,6 +245,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down...");
+    await stopRepeatJobMonitor();
     await worker.close();
     await ticketSyncWorker.close();
     await repoCleanupWorker.close();
