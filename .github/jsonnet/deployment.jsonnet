@@ -160,10 +160,11 @@ local notifications = import 'notifications.jsonnet';
    * Generate a GitHub ifClause for the provided deployment targets.
    *
    * @param {array} targets - Array of deployment target environment names
+   * @param {boolean} [virkoOnly=true] - If true, also require the deployment event to be created by 'gynzy-virko', preventing manually created deployment events from triggering the job
    * @returns {string} - GitHub Actions conditional expression that matches any of the provided targets
    */
-  deploymentTargets(targets)::
-    '${{ ' + std.join(' || ', std.map(function(target) "github.event.deployment.environment == '" + target + "'", targets)) + ' }}',
+  deploymentTargets(targets, virkoOnly=true)::
+    '${{ (' + std.join(' || ', std.map(function(target) "github.event.deployment.environment == '" + target + "'", targets)) + ')' + (if virkoOnly then " && github.event.deployment.creator.login == 'gynzy-virko'" else '') + ' }}',
 
   /**
    * Creates a step to update deployment status (success/failure) based on the result from the current job

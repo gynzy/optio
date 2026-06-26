@@ -1,6 +1,7 @@
 local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local database = import 'databases.jsonnet';
+local deployment = import 'deployment.jsonnet';
 local docker = import 'docker.jsonnet';
 local helm = import 'helm.jsonnet';
 local misc = import 'misc.jsonnet';
@@ -150,7 +151,7 @@ local servicesImport = import 'services.jsonnet';
       'apidocs',
       runsOn=runsOn,
       image=rubyImageName,
-      ifClause="${{ github.event.deployment.environment == 'production' }}",
+      ifClause=deployment.deploymentTargets(['production']),
       steps=[
         misc.checkout(),
         base.step(
@@ -276,7 +277,7 @@ local servicesImport = import 'services.jsonnet';
     base.ghJob(
       'deploy-test',
       runsOn=runsOn,
-      ifClause="${{ github.event.deployment.environment == 'test' }}",
+      ifClause=deployment.deploymentTargets(['test']),
       image=image,
       useCredentials=useCredentials,
       steps=
@@ -330,7 +331,7 @@ local servicesImport = import 'services.jsonnet';
     base.ghJob(
       'deploy-prod',
       runsOn=runsOn,
-      ifClause="${{ github.event.deployment.environment == 'production' }}",
+      ifClause=deployment.deploymentTargets(['production']),
       image=image,
       useCredentials=useCredentials,
       steps=[misc.checkout()] +

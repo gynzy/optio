@@ -1,6 +1,7 @@
 local base = import 'base.jsonnet';
 local clusters = import 'clusters.jsonnet';
 local databases = import 'databases.jsonnet';
+local deployment = import 'deployment.jsonnet';
 local images = import 'images.jsonnet';
 local misc = import 'misc.jsonnet';
 local services = import 'services.jsonnet';
@@ -151,7 +152,7 @@ local services = import 'services.jsonnet';
     base.ghJob(
       'deploy-prod',
       runsOn=runsOn,
-      ifClause="${{ github.event.deployment.environment == '" + environment + "' }}",
+      ifClause=deployment.deploymentTargets([environment]),
       image=image,
       useCredentials=useCredentials,
       steps=[
@@ -234,7 +235,7 @@ local services = import 'services.jsonnet';
     base.ghJob(
       'deploy-test',
       runsOn=runsOn,
-      ifClause="${{ github.event.deployment.environment == 'test' }}",
+      ifClause=deployment.deploymentTargets(['test']),
       image=image,
       useCredentials=useCredentials,
       steps=[
@@ -515,7 +516,7 @@ local services = import 'services.jsonnet';
       runsOn=runsOn,
       image=image,
       useCredentials=useCredentials,
-      ifClause="${{ github.event.deployment.environment == 'canary' }}",
+      ifClause=deployment.deploymentTargets(['canary']),
       steps=[
         misc.checkout(),
         self.helmDeployCanary(
@@ -597,7 +598,7 @@ local services = import 'services.jsonnet';
     base.ghJob(
       'kill-canary',
       runsOn=runsOn,
-      ifClause="${{ github.event.deployment.environment == 'kill-canary' || github.event.deployment.environment == 'production' }}",
+      ifClause=deployment.deploymentTargets(['kill-canary', 'production']),
       image=images.default_job_image,
       useCredentials=false,
       steps=[

@@ -1,6 +1,7 @@
 local actions = import 'actions.jsonnet';
 local base = import 'base.jsonnet';
 local cache = import 'cache.jsonnet';
+local deployment = import 'deployment.jsonnet';
 local misc = import 'misc.jsonnet';
 
 {
@@ -62,9 +63,10 @@ local misc = import 'misc.jsonnet';
    *
    * @param {string} [ifClause=null] - Conditional expression to determine if step should run
    * @param {string} [workingDirectory=null] - Directory to create .npmrc file in
+   * @param {string} [tokenSecret='VIRKO_GITHUB_PKG_READONLY'] - Name of the secret holding the registry auth token. Defaults to a read-only token for installing packages; publish jobs pass a writable token (GITHUB_TOKEN).
    * @returns {steps} - Array containing a single step object
    */
-  setGithubNpmToken(ifClause=null, workingDirectory=null)::
+  setGithubNpmToken(ifClause=null, workingDirectory=null, tokenSecret='VIRKO_GITHUB_PKG_READONLY')::
     base.step(
       'set github npm_token',
       run=
@@ -76,7 +78,7 @@ local misc = import 'misc.jsonnet';
         EOF
       |||,
       env={
-        NODE_AUTH_TOKEN: misc.secret('GITHUB_TOKEN'),
+        NODE_AUTH_TOKEN: misc.secret(tokenSecret),
       },
       ifClause=ifClause,
       workingDirectory=workingDirectory,
@@ -91,12 +93,15 @@ local misc = import 'misc.jsonnet';
    * @param {string} [ref=null] - Git ref to checkout (branch, tag, or commit)
    * @param {boolean} [prod=false] - Whether to install only production dependencies
    * @param {string} [workingDirectory=null] - Directory to run operations in
-   * @param {string} [source='gynzy'] - Registry source ('gynzy' or 'github')
+   * @param {string} [source='github'] - Registry source ('gynzy' or 'github')
    * @param {boolean} [ignoreEngines=false] - Whether to ignore engine version checks
+   * @param {boolean} [blobless=null] - Whether to perform a blobless clone (--filter=blob:none); null uses checkout default
+   * @param {number} [retryAttempts=null] - Number of additional checkout attempts on failure; null uses checkout default
+   * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @returns {steps} - Array of step objects for the complete workflow
    */
-  checkoutAndYarn(cacheName=null, ifClause=null, fullClone=false, ref=null, prod=false, workingDirectory=null, source='gynzy', ignoreEngines=false)::
-    misc.checkout(ifClause=ifClause, fullClone=fullClone, ref=ref) +
+  checkoutAndYarn(cacheName=null, ifClause=null, fullClone=false, ref=null, prod=false, workingDirectory=null, source='github', ignoreEngines=false, blobless=null, retryAttempts=null, cloneTimeout=null)::
+    misc.checkout(ifClause=ifClause, fullClone=fullClone, ref=ref, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout) +
     (if source == 'gynzy' then self.setGynzyNpmToken(ifClause=ifClause, workingDirectory=workingDirectory) else []) +
     (if source == 'github' then self.setGithubNpmToken(ifClause=ifClause, workingDirectory=workingDirectory) else []) +
     (if cacheName == null then [] else self.fetchYarnCache(cacheName, ifClause=ifClause, workingDirectory=workingDirectory)) +
@@ -139,7 +144,7 @@ local misc = import 'misc.jsonnet';
           runsOn=runsOn,
           image=image,
           useCredentials=useCredentials,
-          ifClause="${{ github.event.deployment.environment == 'production' || github.event.deployment.environment == 'prod' }}",
+          ifClause=deployment.deploymentTargets(['production']),
           steps=[
             misc.checkout() +
             self.setGynzyNpmToken() +
@@ -168,9 +173,15 @@ local misc = import 'misc.jsonnet';
    *
    * @param {boolean} [isPr=true] - Whether this is a PR build (affects versioning)
    * @param {string} [ifClause=null] - Conditional expression to determine if step should run
+   * @param {string} [publishBranch=null] - The branch that triggers the publish-prod job; publishes the package <VERSION> specified in package.json and sets latest tag. When null, defaults to `main`/`master`
    * @returns {steps} - Array containing a single step object
    */
-  yarnPublish(isPr=true, ifClause=null)::
+  yarnPublish(isPr=true, ifClause=null, publishBranch=null)::
+    local branchCheck =
+      if publishBranch == null then
+        '( "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "master" )'
+      else
+        '"${GITHUB_REF_NAME}" == "' + publishBranch + '"';
     base.step(
       'publish',
       |||
@@ -191,7 +202,7 @@ local misc = import 'misc.jsonnet';
           echo "Setting tag/version for release/tag build.";
           PUBLISHVERSION=$VERSION;
           TAG="latest";
-        elif [[ "${GITHUB_REF_TYPE}" == "branch" && ( "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "master" ) ]] || [[ "${GITHUB_EVENT_NAME}" == "deployment" ]]; then
+        elif [[ "${GITHUB_REF_TYPE}" == "branch" && %s ]] || [[ "${GITHUB_EVENT_NAME}" == "deployment" ]]; then
           echo "Setting tag/version for release/tag build.";
           PUBLISHVERSION=$VERSION;
           TAG="latest";
@@ -203,7 +214,7 @@ local misc = import 'misc.jsonnet';
 
         mv package.json.bak package.json;
         ';
-      |||,
+      ||| % branchCheck,
       env={} + (if isPr then { PR_NUMBER: '${{ github.event.number }}' } else {}),
       ifClause=ifClause,
     ),
@@ -214,12 +225,13 @@ local misc = import 'misc.jsonnet';
    * @param {boolean} isPr - Whether this is a PR build (affects versioning)
    * @param {array} repositories - List of repository types ('gynzy' or 'github')
    * @param {string} [ifClause=null] - Conditional expression to determine if steps should run
+   * @param {string} [publishBranch=null] - The branch that triggers the publish-prod job; publishes the package <VERSION> specified in package.json and sets latest tag. When null, defaults to `main`/`master`
    * @returns {steps} - Array of step objects for publishing to all repositories
    */
-  yarnPublishToRepositories(isPr, repositories, ifClause=null)::
+  yarnPublishToRepositories(isPr, repositories, ifClause=null, publishBranch=null)::
     (std.flatMap(function(repository)
-                   if repository == 'gynzy' then [self.setGynzyNpmToken(ifClause=ifClause), self.yarnPublish(isPr=isPr, ifClause=ifClause)]
-                   else if repository == 'github' then [self.setGithubNpmToken(ifClause=ifClause), self.yarnPublish(isPr=isPr, ifClause=ifClause)]
+                   if repository == 'gynzy' then [self.setGynzyNpmToken(ifClause=ifClause), self.yarnPublish(isPr=isPr, ifClause=ifClause, publishBranch=publishBranch)]
+                   else if repository == 'github' then [self.setGithubNpmToken(ifClause=ifClause, tokenSecret='GITHUB_TOKEN'), self.yarnPublish(isPr=isPr, ifClause=ifClause, publishBranch=publishBranch)]
                    else error 'Unknown repository type given.',
                  repositories)),
 
@@ -232,7 +244,7 @@ local misc = import 'misc.jsonnet';
    * @param {string} [gitCloneRef='${{ github.event.pull_request.head.sha }}'] - Git reference to checkout
    * @param {array} [buildSteps=[base.step('build', 'yarn build')]] - Build steps to run before publishing
    * @param {boolean} [checkVersionBump=true] - Whether to check if package version was bumped
-   * @param {array} [repositories=['gynzy']] - List of repositories to publish to
+   * @param {array} [repositories=['github']] - List of repositories to publish to
    * @param {boolean|string} [onChangedFiles=false] - Whether to only run on changed files (or glob pattern)
    * @param {string} [changedFilesHeadRef=null] - Head reference for changed files comparison
    * @param {string} [changedFilesBaseRef=null] - Base reference for changed files comparison
@@ -245,7 +257,7 @@ local misc = import 'misc.jsonnet';
     gitCloneRef='${{ github.event.pull_request.head.sha }}',
     buildSteps=[base.step('build', 'yarn build')],
     checkVersionBump=true,
-    repositories=['gynzy'],
+    repositories=['github'],
     onChangedFiles=false,
     changedFilesHeadRef=null,
     changedFilesBaseRef=null,
@@ -277,12 +289,13 @@ local misc = import 'misc.jsonnet';
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {string} [gitCloneRef='${{ github.sha }}'] - Git reference to checkout
    * @param {array} [buildSteps=[base.step('build', 'yarn build')]] - Build steps to run before publishing
-   * @param {array} [repositories=['gynzy']] - List of repositories to publish to
+   * @param {array} [repositories=['github']] - List of repositories to publish to
    * @param {boolean|string} [onChangedFiles=false] - Whether to only run on changed files (or glob pattern)
    * @param {string} [changedFilesHeadRef=null] - Head reference for changed files comparison
    * @param {string} [changedFilesBaseRef=null] - Base reference for changed files comparison
    * @param {string} [ifClause=null] - Conditional expression to determine if job should run
    * @param {string} [runsOn=null] - Runner type to use
+   * @param {string} [publishBranch=null] - The branch that triggers the publish-prod job; publishes the package <VERSION> specified in package.json and sets latest tag. When null, defaults to `main`/`master`
    * @returns {jobs} - GitHub Actions job definition
    */
   yarnPublishJob(
@@ -290,12 +303,13 @@ local misc = import 'misc.jsonnet';
     useCredentials=false,
     gitCloneRef='${{ github.sha }}',
     buildSteps=[base.step('build', 'yarn build')],
-    repositories=['gynzy'],
+    repositories=['github'],
     onChangedFiles=false,
     changedFilesHeadRef=null,
     changedFilesBaseRef=null,
     ifClause=null,
     runsOn=null,
+    publishBranch=null,
   )::
     local stepIfClause = (if onChangedFiles != false then "steps.changes.outputs.package == 'true'" else null);
     base.ghJob(
@@ -307,7 +321,7 @@ local misc = import 'misc.jsonnet';
       [self.checkoutAndYarn(ref=gitCloneRef, fullClone=false)] +
       (if onChangedFiles != false then misc.testForChangedFiles({ package: onChangedFiles }, headRef=changedFilesHeadRef, baseRef=changedFilesBaseRef) else []) +
       (if onChangedFiles != false then std.map(function(step) std.map(function(s) s { 'if': stepIfClause }, step), buildSteps) else buildSteps) +
-      self.yarnPublishToRepositories(isPr=false, repositories=repositories, ifClause=stepIfClause),
+      self.yarnPublishToRepositories(isPr=false, repositories=repositories, ifClause=stepIfClause, publishBranch=publishBranch),
       permissions={ packages: 'write', contents: 'read', 'pull-requests': 'read' },
       ifClause=ifClause,
     ),
