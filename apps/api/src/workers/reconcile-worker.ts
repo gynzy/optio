@@ -97,16 +97,6 @@ export const resyncQueue = new Queue("reconcile-resync", { connection: connectio
  * and enqueue a reconcile key for each. Catches drift from lost events.
  */
 export function startReconcileResyncWorker() {
-  const intervalMs = parseIntEnv("OPTIO_RECONCILE_RESYNC_INTERVAL", 5 * 60 * 1000);
-
-  resyncQueue.add(
-    "resync",
-    {},
-    {
-      repeat: { every: intervalMs },
-    },
-  );
-
   const worker = new Worker(
     "reconcile-resync",
     instrumentWorkerProcessor("reconcile-resync", async () => {
