@@ -1,5 +1,4 @@
 import { Queue, Worker } from "bullmq";
-import { parseIntEnv } from "@optio/shared";
 import { logger } from "../logger.js";
 
 import { getBullMQConnectionOptions } from "../services/redis-config.js";
@@ -9,17 +8,6 @@ const connectionOpts = getBullMQConnectionOptions();
 export const ticketSyncQueue = new Queue("ticket-sync", { connection: connectionOpts });
 
 export function startTicketSyncWorker(syncFn: () => Promise<unknown>) {
-  // Add repeatable job for periodic sync
-  ticketSyncQueue.add(
-    "sync",
-    {},
-    {
-      repeat: {
-        every: parseIntEnv("OPTIO_TICKET_SYNC_INTERVAL", 60000), // default: 60s
-      },
-    },
-  );
-
   const worker = new Worker(
     "ticket-sync",
     async () => {

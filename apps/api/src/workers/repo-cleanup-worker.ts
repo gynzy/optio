@@ -54,27 +54,6 @@ async function recordHealthEvent(
 }
 
 export function startRepoCleanupWorker() {
-  repoCleanupQueue.add(
-    "health-check",
-    {},
-    {
-      repeat: {
-        every: parseIntEnv("OPTIO_HEALTH_CHECK_INTERVAL", 60000),
-      },
-    },
-  );
-
-  // Dedicated stall-check cadence (30s) — more responsive than the 60s health-check
-  repoCleanupQueue.add(
-    "stall-check",
-    {},
-    {
-      repeat: {
-        every: parseIntEnv("OPTIO_STALL_CHECK_INTERVAL", 30000),
-      },
-    },
-  );
-
   const worker = new Worker(
     "repo-cleanup",
     instrumentWorkerProcessor("repo-cleanup", async () => {

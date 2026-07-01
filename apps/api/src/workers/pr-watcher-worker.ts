@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { tasks, sessionPrs, interactiveSessions, reviewDrafts } from "../db/schema.js";
 import type { GitPlatform, RepoIdentifier } from "@optio/shared";
-import { parsePrUrl, parseIntEnv } from "@optio/shared";
+import { parsePrUrl } from "@optio/shared";
 import { getGitPlatformForRepo } from "../services/git-token-service.js";
 import type { GitTokenContext } from "../services/git-token-service.js";
 import { updateSessionPr } from "../services/interactive-session-service.js";
@@ -51,16 +51,6 @@ export function determineReviewStatus(reviews: { state: string; body?: string }[
 export const prWatcherQueue = new Queue("pr-watcher", { connection: connectionOpts });
 
 export function startPrWatcherWorker() {
-  prWatcherQueue.add(
-    "check-prs",
-    {},
-    {
-      repeat: {
-        every: parseIntEnv("OPTIO_PR_WATCH_INTERVAL", 30000),
-      },
-    },
-  );
-
   const worker = new Worker(
     "pr-watcher",
     instrumentWorkerProcessor("pr-watcher", async () => {
