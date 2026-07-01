@@ -20,6 +20,7 @@
   default_mongodb_image: 'europe-docker.pkg.dev/unicorn-985/private-images/docker-images_mongo8-replicated:v1',
   mongo_job_image: 'europe-docker.pkg.dev/unicorn-985/public-images/docker-images_mongo-cloner-job:v1',
   default_python_image: 'mirror.gcr.io/python:3.12.1',
+  cloud_sdk_image: 'europe-docker.pkg.dev/unicorn-985/private-images/docker-images_gcloud:v2',
   default_pulumi_node_image: 'mirror.gcr.io/node:22',
   job_poster_image: 'europe-docker.pkg.dev/unicorn-985/public-images/docker-images_job-poster:v2',
 }

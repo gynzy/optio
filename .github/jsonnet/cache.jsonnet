@@ -1,12 +1,14 @@
 local base = import 'base.jsonnet';
+local images = import 'images.jsonnet';
+local misc = import 'misc.jsonnet';
 
 {
   /**
    * Fetch a cache from the cache server.
-   * 
+   *
    * This is a generic function that can be used to fetch any cache. It is advised to wrap this function
    * in a more specific function that fetches a specific cache, setting the cacheName and folders parameters.
-   * 
+   *
    * To be paired with the uploadCache function.
    *
    * @param {string} cacheName - The name of the cache to fetch. The name of the repository is usually a good option.
@@ -82,10 +84,10 @@ local base = import 'base.jsonnet';
 
   /**
    * Uploads a cache to the cache server.
-   * 
+   *
    * This is a generic function that can be used to upload any cache. It is advised to wrap this function
    * in a more specific function that uploads a specific cache, setting the cacheName and folders parameters.
-   * 
+   *
    * To be paired with the fetchCache function.
    *
    * @param {string} cacheName - The name of the cache to upload. The name of the repository is usually a good option.
@@ -140,5 +142,86 @@ local base = import 'base.jsonnet';
       'gsutil rm "gs://files-gynzy-com-test/ci-cache/' + cacheName + '-' + version + '.tar.zst"\n' +
       'echo "Cache removed"\n',
       ifClause=ifClause,
+    ),
+
+/**
+   * Daily (weekday) backup of the full repository (working tree + .git) to GCS as a zstd tar archive,
+   * then refreshes a 7-day signed HTTPS URL into the GIT_HTTPS_ARCHIVE_MIRROR repo secret.
+   *
+   * @param {string} [cron='0 1 * * 1-5'] - Schedule (UTC). Default 01:00 on weekdays.
+   * @param {string} [bucketPath='gs://gynzy-internal-files/git-mirror'] - Destination prefix.
+   * @returns {workflows} - GitHub Actions pipeline that mirrors the repository to GCS.
+   */
+  updateGitCacheCron(
+    cron='0 1 * * 1-5',
+  )::
+    local secret = self.secret;
+    local destUrl = 'gs://gynzy-internal-files/git-mirror/${GITHUB_REPOSITORY}.tar.zst';
+    base.pipeline(
+      'git-mirror-backup',
+      [
+        base.ghJob(
+          'git-mirror-backup',
+          image=images.cloud_sdk_image,
+          useCredentials=true,
+          timeoutMinutes=60,
+          steps=[
+            // blobless=false: a backup must contain ALL git objects, not lazily-fetched blobs.
+            misc.checkout(fullClone=true, blobless=false, cloneTimeout=30, skipSeed=true),
+            base.step(
+              'authenticate gcloud',
+              |||
+                set -euo pipefail
+                # Write the key OUTSIDE the workspace so it never lands in the archive.
+                printf '%s' "$SERVICE_JSON" > "$RUNNER_TEMP/gce.json"
+                gcloud auth activate-service-account --key-file="$RUNNER_TEMP/gce.json"
+              |||,
+              shell='bash',
+              env={ SERVICE_JSON: misc.secret('SERVICE_JSON') },
+            ),
+            base.step(
+              'create and upload archive',
+              |||
+                set -euo pipefail
+                # checkStat=minimal makes git compare only mtime+size (which tar preserves),
+                # not ctime/inode. Consumers that seed from this archive then see a clean tree
+                # and only write the real diff during checkout instead of rewriting every file.
+                git -C "$GITHUB_WORKSPACE" config --local core.checkStat minimal
+
+                DEST="%s"
+
+                # Upload to a temp object first, then atomically move into place so a partial
+                # upload can never sit at the final destination.
+                tar -C "$GITHUB_WORKSPACE" -c . | zstdmt -10 | gcloud storage cp - "${DEST}.tmp"
+                gcloud storage mv "${DEST}.tmp" "$DEST"
+              ||| % destUrl,
+              shell='bash',
+            ),
+            base.step(
+              'refresh signed-url secret',
+              |||
+                set -euo pipefail
+                DEST="%s"
+                URL="$(gcloud storage sign-url "$DEST" \
+                  --private-key-file="$RUNNER_TEMP/gce.json" --http-verb=GET --duration=7d \
+                  --format='value(signed_url)')"
+                echo "::add-mask::$URL"
+                gh secret set "GIT_HTTPS_ARCHIVE_MIRROR" --repo "$GITHUB_REPOSITORY" --body "$URL"
+              ||| % destUrl,
+              shell='bash',
+              env={
+                GH_TOKEN: misc.secret('VIRKO_GITHUB_TOKEN'),
+              },
+            ),
+            base.step(
+              'remove credentials',
+              'rm -f "$RUNNER_TEMP/gce.json"',
+              ifClause='${{ always() }}',
+            ),
+          ],
+        ),
+      ],
+      event={ schedule: [{ cron: cron }], workflow_dispatch: {} },
+      permissions={ contents: 'read' },
     ),
 }

@@ -168,9 +168,10 @@ local misc = import 'misc.jsonnet';
    * @param {string} [id=null] - Unique identifier for this step (used to reference outputs)
    * @param {string} [ifClause=null] - Conditional expression to determine if step should run
    * @param {boolean} [continueOnError=null] - Whether to continue job if this step fails
+   * @param {number} [timeoutMinutes=null] - Maximum minutes to run this step before failing
    * @returns {steps} - Array containing a single step object
    */
-  action(name, uses, env=null, with=null, id=null, ifClause=null, continueOnError=null)::
+  action(name, uses, env=null, with=null, id=null, ifClause=null, continueOnError=null, timeoutMinutes=null)::
     [
       {
         name: name,
@@ -179,6 +180,7 @@ local misc = import 'misc.jsonnet';
       + (if with != null && with != {} then { with: with } else {})
       + (if id != null then { id: id } else {})
       + (if ifClause != null then { 'if': ifClause } else {})
-      + (if continueOnError == null then {} else { 'continue-on-error': continueOnError }),
+      + (if continueOnError == null then {} else { 'continue-on-error': continueOnError })
+      + (if timeoutMinutes == null then {} else { 'timeout-minutes': timeoutMinutes })
     ],
 }

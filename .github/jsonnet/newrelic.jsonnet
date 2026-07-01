@@ -1,4 +1,5 @@
 local base = import 'base.jsonnet';
+local deployment = import 'deployment.jsonnet';
 local images = import 'images.jsonnet';
 local misc = import 'misc.jsonnet';
 local yarn = import 'yarn.jsonnet';
@@ -10,7 +11,7 @@ local pnpm = import 'pnpm.jsonnet';
    *
    * @param {array} apps - Array of application objects containing deployment information
    * @param {string} [cacheName=null] - Name of the cache to use for yarn/pnpm dependencies
-   * @param {string} [source='gynzy'] - Registry source ('gynzy' or 'github') for npm packages
+   * @param {string} [source='github'] - Registry source ('gynzy' or 'github') for npm packages
    * @param {string} [image='mirror.gcr.io/node:20.17'] - Docker image to use for the job
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
@@ -20,7 +21,7 @@ local pnpm = import 'pnpm.jsonnet';
   postReleaseToNewRelicJob(
     apps,
     cacheName=null,
-    source='gynzy',
+    source='github',
     image='mirror.gcr.io/node:20.17',
     useCredentials=false,
     packageManager='yarn',
@@ -31,7 +32,7 @@ local pnpm = import 'pnpm.jsonnet';
       runsOn=runsOn,
       image=image,
       useCredentials=useCredentials,
-      ifClause="${{ github.event.deployment.environment == 'production' }}",
+      ifClause=deployment.deploymentTargets(['production']),
       steps=
         (
           if packageManager == 'yarn' then 
