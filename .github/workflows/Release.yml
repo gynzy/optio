@@ -3,7 +3,7 @@
   "deploy":
     "container":
       "image": "mirror.gcr.io/node:22"
-    "if": "${{ (github.event.deployment.environment == 'production') && github.event.deployment.creator.login == 'gynzy-virko' }}"
+    "if": "${{ github.event_name == 'deployment' && (github.event.deployment.environment == 'production') && github.event.deployment.creator.login == 'gynzy-virko' }}"
     "runs-on":
     - "ubuntu-latest"
     "steps":
