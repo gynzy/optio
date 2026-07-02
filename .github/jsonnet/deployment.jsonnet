@@ -164,7 +164,7 @@ local notifications = import 'notifications.jsonnet';
    * @returns {string} - GitHub Actions conditional expression that matches any of the provided targets
    */
   deploymentTargets(targets, virkoOnly=true)::
-    '${{ (' + std.join(' || ', std.map(function(target) "github.event.deployment.environment == '" + target + "'", targets)) + ')' + (if virkoOnly then " && github.event.deployment.creator.login == 'gynzy-virko'" else '') + ' }}',
+    '${{ github.event_name == \'deployment\' && (' + std.join(' || ', std.map(function(target) "github.event.deployment.environment == '" + target + "'", targets)) + ')' + (if virkoOnly then " && github.event.deployment.creator.login == 'gynzy-virko'" else '') + ' }}',
 
   /**
    * Creates a step to update deployment status (success/failure) based on the result from the current job
