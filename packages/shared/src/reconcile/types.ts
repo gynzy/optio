@@ -28,7 +28,7 @@ export interface RepoRunSpec {
   agentType: string;
   prompt: string;
   title: string;
-  taskType: "coding" | "review";
+  taskType: "coding" | "review" | "pr_review";
   maxRetries: number;
   priority: number;
   ignoreOffPeak: boolean;

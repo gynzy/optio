@@ -804,6 +804,15 @@ describe("reconcileRepo — PR_OPENED", () => {
       if (action.kind === "transition") expect(action.to).toBe(TaskState.COMPLETED);
     });
 
+    it("pr_review tasks are exempt (their PR is the one being reviewed, created earlier)", () => {
+      const s = snapshot({ createdAt: taskCreatedAt, taskType: "pr_review" }, openedStatus(), {
+        pr: makePr({ merged: true, state: "merged", createdAt: "2026-04-24T16:45:53Z" }),
+      });
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("transition");
+      if (action.kind === "transition") expect(action.to).toBe(TaskState.COMPLETED);
+    });
+
     it("missing pr.createdAt skips the guard", () => {
       const s = snapshot({ createdAt: taskCreatedAt }, openedStatus(), {
         pr: makePr({ merged: true, state: "merged", createdAt: null }),

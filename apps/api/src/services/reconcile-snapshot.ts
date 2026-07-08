@@ -180,7 +180,7 @@ function loadRepoRun(row: typeof tasks.$inferSelect, ref: RunRef): Run {
     agentType: row.agentType,
     prompt: row.prompt,
     title: row.title,
-    taskType: (row.taskType as "coding" | "review") ?? "coding",
+    taskType: (row.taskType as "coding" | "review" | "pr_review") ?? "coding",
     maxRetries: row.maxRetries,
     priority: row.priority,
     ignoreOffPeak: row.ignoreOffPeak,

@@ -72,6 +72,9 @@ export type PrUrlValidation = "valid" | "invalid" | "unknown";
  * this task's PR by comparing the PR's head branch to the deterministic task
  * branch. "unknown" means the API could not be consulted — callers should
  * accept the candidate in that case rather than block PR detection.
+ *
+ * Assumes `prUrl` has already been confirmed to point at `repoUrl`; only the
+ * PR number is taken from it, its owner/repo/host are not re-checked here.
  */
 export async function validateTaskPrUrl(
   repoUrl: string,

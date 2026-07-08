@@ -345,9 +345,10 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
 
   // Sanity check: a PR created before the task existed cannot be this task's
   // PR — it was misassociated (e.g. a URL scraped from the prompt). Acting on
-  // it would complete/fail the task off someone else's PR. Review subtasks are
-  // exempt: they legitimately point at the parent task's older PR.
-  if (spec.taskType !== "review" && pr.createdAt) {
+  // it would complete/fail the task off someone else's PR. Only coding tasks
+  // are guarded: review subtasks and standalone pr_review tasks legitimately
+  // point at an older PR (the parent's PR, or the PR being reviewed).
+  if (spec.taskType === "coding" && pr.createdAt) {
     const prCreated = Date.parse(pr.createdAt);
     if (!Number.isNaN(prCreated) && prCreated < spec.createdAt.getTime()) {
       if (status.state === TaskState.FAILED) {
