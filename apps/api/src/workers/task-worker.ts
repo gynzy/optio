@@ -21,7 +21,11 @@ import { parseCopilotEvent } from "../services/copilot-event-parser.js";
 import { parseOpenCodeEvent } from "../services/opencode-event-parser.js";
 import { parseGeminiEvent } from "../services/gemini-event-parser.js";
 import { parseOpenClawEvent } from "../services/openclaw-event-parser.js";
-import { checkExistingPr, type ExistingPr } from "../services/pr-detection-service.js";
+import {
+  checkExistingPr,
+  validateTaskPrUrl,
+  type ExistingPr,
+} from "../services/pr-detection-service.js";
 import { db } from "../db/client.js";
 import { tasks } from "../db/schema.js";
 import { eq, sql } from "drizzle-orm";
@@ -1090,7 +1094,21 @@ export function startTaskWorker() {
             fallbackPrUrl = undefined;
           }
         }
-        const detectedPrUrl = capturedPrUrl || taskAfterExec?.prUrl || fallbackPrUrl;
+        let detectedPrUrl = capturedPrUrl || taskAfterExec?.prUrl || fallbackPrUrl;
+
+        // A log-scraped URL can be a red herring (e.g. an example URL inside the
+        // prompt). Confirm the PR's head branch is this task's branch; on mismatch
+        // discard it so the branch-based API fallback below finds the real PR.
+        if (detectedPrUrl && !isReviewTask) {
+          const validation = await validateTaskPrUrl(task.repoUrl, taskId, detectedPrUrl);
+          if (validation === "invalid") {
+            log.warn(
+              { prUrl: detectedPrUrl },
+              "Detected PR URL is not for this task's branch — discarding",
+            );
+            detectedPrUrl = undefined;
+          }
+        }
 
         if (!sessionId && !isReviewTask) {
           // Agent never started — no session ID means no agent output was produced.
