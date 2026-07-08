@@ -337,10 +337,33 @@ function decideFailed(snapshot: WorldSnapshot): RepoAction {
 /** Map PR status into an action. Mirrors determinePrAction in pr-watcher-worker. */
 function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean): RepoAction {
   if (snapshot.run.kind !== "repo") return { kind: "noop", reason: "wrong_kind" };
-  const { status } = snapshot.run;
+  const { spec, status } = snapshot.run;
   const pr = snapshot.pr;
   if (!pr) {
     return { kind: "noop", reason: "pr_info_not_yet_available" };
+  }
+
+  // Sanity check: a PR created before the task existed cannot be this task's
+  // PR — it was misassociated (e.g. a URL scraped from the prompt). Acting on
+  // it would complete/fail the task off someone else's PR. Review subtasks are
+  // exempt: they legitimately point at the parent task's older PR.
+  if (spec.taskType !== "review" && pr.createdAt) {
+    const prCreated = Date.parse(pr.createdAt);
+    if (!Number.isNaN(prCreated) && prCreated < spec.createdAt.getTime()) {
+      if (status.state === TaskState.FAILED) {
+        return { kind: "noop", reason: "pr_predates_task" };
+      }
+      return {
+        kind: "transition",
+        to: TaskState.NEEDS_ATTENTION,
+        statusPatch: {
+          errorMessage:
+            "Associated PR was created before this task — likely misdetected from logs. Verify the PR link.",
+        },
+        trigger: "pr_association_invalid",
+        reason: "pr_predates_task",
+      };
+    }
   }
 
   // PR merged → complete.

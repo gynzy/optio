@@ -40,6 +40,7 @@ function repoSnapshot(
       blocksParent: false,
       workspaceId: "ws-1",
       workflowRunId: null,
+      createdAt: new Date("2026-01-01T00:00:00Z"),
       ...spec,
     },
     status: {
@@ -169,6 +170,7 @@ function makePr(overrides: Partial<PrStatus> = {}): PrStatus {
     checksStatus: "none",
     reviewStatus: "none",
     latestReviewComments: null,
+    createdAt: null,
     ...overrides,
   };
 }

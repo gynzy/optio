@@ -36,6 +36,7 @@ export interface RepoRunSpec {
   blocksParent: boolean;
   workspaceId: string | null;
   workflowRunId: string | null;
+  createdAt: Date;
 }
 
 export interface RepoRunStatus {
@@ -114,6 +115,7 @@ export interface PrStatus {
   checksStatus: "none" | "pending" | "passing" | "failing";
   reviewStatus: "none" | "pending" | "approved" | "changes_requested";
   latestReviewComments: string | null;
+  createdAt: string | null;
 }
 
 export interface DependencyObservation {

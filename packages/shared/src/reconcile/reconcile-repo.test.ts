@@ -29,6 +29,7 @@ function makeSpec(overrides: Partial<RepoRunSpec> = {}): RepoRunSpec {
     blocksParent: false,
     workspaceId: "ws-1",
     workflowRunId: null,
+    createdAt: new Date("2026-01-01T00:00:00Z"),
     ...overrides,
   };
 }
@@ -70,6 +71,7 @@ function makePr(overrides: Partial<PrStatus> = {}): PrStatus {
     checksStatus: "none",
     reviewStatus: "none",
     latestReviewComments: null,
+    createdAt: null,
     ...overrides,
   };
 }
@@ -758,6 +760,72 @@ describe("reconcileRepo — PR_OPENED", () => {
   it("PR not yet available → noop (pr-watcher still populating)", () => {
     const s = snapshot({}, openedStatus({ prChecksStatus: null }), { pr: null });
     expect(reconcileRepo(s).reason).toBe("pr_info_not_yet_available");
+  });
+
+  describe("PR predating the task", () => {
+    const taskCreatedAt = new Date("2026-07-08T06:35:00Z");
+
+    it("merged PR created before the task → NEEDS_ATTENTION, not COMPLETED", () => {
+      const s = snapshot({ createdAt: taskCreatedAt }, openedStatus(), {
+        pr: makePr({ merged: true, state: "merged", createdAt: "2026-04-24T16:45:53Z" }),
+      });
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("transition");
+      if (action.kind === "transition") {
+        expect(action.to).toBe(TaskState.NEEDS_ATTENTION);
+        expect(action.reason).toBe("pr_predates_task");
+      }
+    });
+
+    it("closed PR created before the task → NEEDS_ATTENTION, not FAILED", () => {
+      const s = snapshot({ createdAt: taskCreatedAt }, openedStatus(), {
+        pr: makePr({ state: "closed", createdAt: "2026-04-24T16:45:53Z" }),
+      });
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("transition");
+      if (action.kind === "transition") expect(action.to).toBe(TaskState.NEEDS_ATTENTION);
+    });
+
+    it("PR created after the task is unaffected", () => {
+      const s = snapshot({ createdAt: taskCreatedAt }, openedStatus(), {
+        pr: makePr({ merged: true, state: "merged", createdAt: "2026-07-08T06:42:16Z" }),
+      });
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("transition");
+      if (action.kind === "transition") expect(action.to).toBe(TaskState.COMPLETED);
+    });
+
+    it("review tasks are exempt (their PR is the parent's, created earlier)", () => {
+      const s = snapshot({ createdAt: taskCreatedAt, taskType: "review" }, openedStatus(), {
+        pr: makePr({ merged: true, state: "merged", createdAt: "2026-04-24T16:45:53Z" }),
+      });
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("transition");
+      if (action.kind === "transition") expect(action.to).toBe(TaskState.COMPLETED);
+    });
+
+    it("missing pr.createdAt skips the guard", () => {
+      const s = snapshot({ createdAt: taskCreatedAt }, openedStatus(), {
+        pr: makePr({ merged: true, state: "merged", createdAt: null }),
+      });
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("transition");
+      if (action.kind === "transition") expect(action.to).toBe(TaskState.COMPLETED);
+    });
+
+    it("FAILED task with a predating PR noops (failed → needs_attention is invalid)", () => {
+      const s = snapshot(
+        { createdAt: taskCreatedAt },
+        {
+          state: TaskState.FAILED,
+          prUrl: "https://github.com/acme/repo/pull/1",
+          prNumber: 1,
+        },
+        { pr: makePr({ merged: true, state: "merged", createdAt: "2026-04-24T16:45:53Z" }) },
+      );
+      const action = reconcileRepo(s);
+      expect(action.kind).toBe("noop");
+    });
   });
 });
 
