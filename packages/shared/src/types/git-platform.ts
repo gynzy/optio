@@ -17,6 +17,7 @@ export interface PullRequest {
   mergeable: boolean | null;
   draft: boolean;
   headSha: string;
+  headBranch: string;
   baseBranch: string;
   url: string;
   author: string;

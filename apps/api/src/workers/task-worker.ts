@@ -21,7 +21,11 @@ import { parseCopilotEvent } from "../services/copilot-event-parser.js";
 import { parseOpenCodeEvent } from "../services/opencode-event-parser.js";
 import { parseGeminiEvent } from "../services/gemini-event-parser.js";
 import { parseOpenClawEvent } from "../services/openclaw-event-parser.js";
-import { checkExistingPr, type ExistingPr } from "../services/pr-detection-service.js";
+import {
+  checkExistingPr,
+  validateTaskPrUrl,
+  type ExistingPr,
+} from "../services/pr-detection-service.js";
 import { db } from "../db/client.js";
 import { tasks } from "../db/schema.js";
 import { eq, sql } from "drizzle-orm";
@@ -1006,6 +1010,84 @@ export function startTaskWorker() {
           return;
         }
 
+        // A stream that ended without an exit status from the kubelet was
+        // severed (e.g. konnectivity churn on an autoscaling cluster), NOT an
+        // agent exit — the agent may still be running in the pod. Interpreting
+        // the partial log would misreport the task (agent_no_output,
+        // completed_without_pr, or a wrong PR association). Kill any orphaned
+        // agent processes and retry instead.
+        const execExit = execSession.exitStatus?.();
+        let streamSevered = execExit ? !execExit.received : false;
+        if (execExit && !streamSevered) {
+          // Transport teardown (e.g. konnectivity churn) can deliver a status
+          // frame that falsely reads as a clean exit while the agent is still
+          // running in the pod (observed in prod). The pod is ground truth:
+          // if the task's processes are alive after the "exit", the stream
+          // was severed. On a real exit the processes are gone.
+          streamSevered = await repoPool.isTaskAgentRunning(pod.id, taskId).catch(() => false);
+          if (streamSevered) {
+            log.warn(
+              { exitCode: execExit.exitCode },
+              "Exit status received but agent processes still running — treating stream as severed",
+            );
+          }
+        }
+        if (execExit && streamSevered) {
+          const retryCount = taskAfterExec.retryCount ?? 0;
+          const maxRetries = taskAfterExec.maxRetries ?? 0;
+          const severedDetail = execExit.received
+            ? `transport reported exit ${execExit.exitCode} but the agent is still running`
+            : (execExit.message ?? "no exit status received");
+          const severedMsg = `Connection to the agent pod was severed mid-run (${severedDetail})`;
+          log.warn(
+            { retryCount, maxRetries, statusMessage: execExit.message },
+            "Exec stream severed — agent did not exit",
+          );
+          // The agent may still be running in the pod — kill it so a retry
+          // doesn't share the worktree with a zombie agent. The kill also
+          // removes the worktree.
+          await repoPool.killOrphanedAgentInPod(pod.id, taskId).catch(() => {});
+          await repoPool.updateWorktreeState(taskId, "removed");
+          await taskService.updateTaskResult(taskId, undefined, severedMsg);
+          await taskService.transitionTask(
+            taskId,
+            TaskState.FAILED,
+            "exec_stream_severed",
+            severedMsg,
+          );
+          if (retryCount < maxRetries) {
+            // Increment while still FAILED so the retry pickup sees it, then
+            // requeue. The QUEUED transition wakes the reconciler, which
+            // enqueues the BullMQ job (decideQueued → requeueForAgent).
+            // tryTransitionTask absorbs the race where the reconciler moved
+            // the task off FAILED in between (e.g. a captured PR merged).
+            await taskService.incrementTaskRetryCount(taskId);
+            const requeued = await taskService.tryTransitionTask(
+              taskId,
+              TaskState.QUEUED,
+              "exec_stream_severed_retry",
+              `${severedMsg} — retrying (${retryCount + 1}/${maxRetries})`,
+            );
+            if (!requeued) {
+              log.info("Severed-stream retry skipped — task advanced past FAILED concurrently");
+            }
+          } else {
+            // Terminal failure — notify parent subtasks and dependents just
+            // like the normal failure path below.
+            if (taskAfterExec.parentTaskId) {
+              const { onSubtaskComplete } = await import("../services/subtask-service.js");
+              await onSubtaskComplete(taskId).catch((err) =>
+                log.warn({ err }, "Failed to check parent subtask status"),
+              );
+            }
+            const depSvc = await import("../services/dependency-service.js");
+            await depSvc
+              .cascadeFailure(taskId)
+              .catch((err) => log.warn({ err }, "Failed to cascade failure to dependents"));
+          }
+          return;
+        }
+
         // Detect exit code from logs (agent-type-specific patterns)
         const inferredExitCode = inferExitCode(task.agentType, allLogs);
         const result = adapter.parseResult(inferredExitCode, allLogs);
@@ -1090,7 +1172,21 @@ export function startTaskWorker() {
             fallbackPrUrl = undefined;
           }
         }
-        const detectedPrUrl = capturedPrUrl || taskAfterExec?.prUrl || fallbackPrUrl;
+        let detectedPrUrl = capturedPrUrl || taskAfterExec?.prUrl || fallbackPrUrl;
+
+        // A log-scraped URL can be a red herring (e.g. an example URL inside the
+        // prompt). Confirm the PR's head branch is this task's branch; on mismatch
+        // discard it so the branch-based API fallback below finds the real PR.
+        if (detectedPrUrl && !isReviewTask) {
+          const validation = await validateTaskPrUrl(task.repoUrl, taskId, detectedPrUrl);
+          if (validation === "invalid") {
+            log.warn(
+              { prUrl: detectedPrUrl },
+              "Detected PR URL is not for this task's branch — discarding",
+            );
+            detectedPrUrl = undefined;
+          }
+        }
 
         if (!sessionId && !isReviewTask) {
           // Agent never started — no session ID means no agent output was produced.

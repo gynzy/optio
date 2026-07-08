@@ -180,7 +180,7 @@ function loadRepoRun(row: typeof tasks.$inferSelect, ref: RunRef): Run {
     agentType: row.agentType,
     prompt: row.prompt,
     title: row.title,
-    taskType: (row.taskType as "coding" | "review") ?? "coding",
+    taskType: (row.taskType as "coding" | "review" | "pr_review") ?? "coding",
     maxRetries: row.maxRetries,
     priority: row.priority,
     ignoreOffPeak: row.ignoreOffPeak,
@@ -188,6 +188,7 @@ function loadRepoRun(row: typeof tasks.$inferSelect, ref: RunRef): Run {
     blocksParent: row.blocksParent,
     workspaceId: row.workspaceId ?? null,
     workflowRunId: row.workflowRunId ?? null,
+    createdAt: row.createdAt,
   };
   const status: RepoRunStatus = {
     state: row.state as TaskState,
@@ -305,6 +306,7 @@ async function loadPrStatus(run: Run, userId: string | null): Promise<PrStatus |
     checksStatus,
     reviewStatus: reviewResult.status as PrStatus["reviewStatus"],
     latestReviewComments: reviewResult.comments || null,
+    createdAt: prData.createdAt || null,
   };
 }
 

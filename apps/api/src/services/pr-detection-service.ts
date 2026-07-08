@@ -1,4 +1,4 @@
-import { TASK_BRANCH_PREFIX, parseRepoUrl } from "@optio/shared";
+import { TASK_BRANCH_PREFIX, parseRepoUrl, parsePrUrl } from "@optio/shared";
 import { getGitPlatformForRepo } from "./git-token-service.js";
 import { logger } from "../logger.js";
 
@@ -62,5 +62,43 @@ export async function checkExistingPr(
   } catch (err) {
     logger.debug({ err }, "Failed to check for existing PR");
     return null;
+  }
+}
+
+export type PrUrlValidation = "valid" | "invalid" | "unknown";
+
+/**
+ * Check that a candidate PR URL (scraped from agent logs) actually points at
+ * this task's PR by comparing the PR's head branch to the deterministic task
+ * branch. "unknown" means the API could not be consulted — callers should
+ * accept the candidate in that case rather than block PR detection.
+ *
+ * Assumes `prUrl` has already been confirmed to point at `repoUrl`; only the
+ * PR number is taken from it, its owner/repo/host are not re-checked here.
+ */
+export async function validateTaskPrUrl(
+  repoUrl: string,
+  taskId: string,
+  prUrl: string,
+): Promise<PrUrlValidation> {
+  const parsed = parsePrUrl(prUrl);
+  if (!parsed) return "invalid";
+
+  let platform;
+  let ri;
+  try {
+    const result = await getGitPlatformForRepo(repoUrl, { server: true });
+    platform = result.platform;
+    ri = result.ri;
+  } catch {
+    return "unknown";
+  }
+
+  try {
+    const pr = await platform.getPullRequest(ri, parsed.prNumber);
+    return pr.headBranch === `${TASK_BRANCH_PREFIX}${taskId}` ? "valid" : "invalid";
+  } catch (err) {
+    logger.debug({ err, prUrl }, "Could not fetch candidate PR for validation");
+    return "unknown";
   }
 }

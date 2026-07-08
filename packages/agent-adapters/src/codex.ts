@@ -97,7 +97,7 @@ export class CodexAdapter implements AgentAdapter {
 
   parseResult(exitCode: number, logs: string): AgentResult {
     // Extract PR URL from anywhere in the logs
-    const prMatch = logs.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
+    const prMatches = logs.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/g);
 
     // Parse NDJSON lines to extract structured data
     const { costUsd, errorMessage, hasError, summary } = this.parseLogs(logs);
@@ -106,7 +106,7 @@ export class CodexAdapter implements AgentAdapter {
 
     return {
       success,
-      prUrl: prMatch?.[0],
+      prUrl: prMatches?.[prMatches.length - 1],
       costUsd,
       summary:
         summary ??

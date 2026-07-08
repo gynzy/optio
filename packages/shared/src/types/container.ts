@@ -77,10 +77,31 @@ export interface ContainerStatus {
   reason?: string;
 }
 
+export interface ExecExitStatus {
+  /**
+   * Whether the runtime delivered a genuine process exit status (a Success
+   * status or a Failure carrying an exit code). Transport-level failures
+   * (e.g. "error dialing backend" from a broken konnectivity tunnel) do NOT
+   * count — the process may still be running.
+   */
+  received: boolean;
+  /** Exit code when a process exit status was received. */
+  exitCode: number | null;
+  /** Failure detail when the stream ended without a process exit status. */
+  message?: string;
+}
+
 export interface ExecSession {
   stdin: NodeJS.WritableStream;
   stdout: NodeJS.ReadableStream;
   stderr: NodeJS.ReadableStream;
   resize(cols: number, rows: number): void;
   close(): void;
+  /**
+   * Kubernetes only. The kubelet sends a status over the exec channel when
+   * the process actually exits; a stream that ended with `received: false`
+   * means the connection was severed (e.g. konnectivity churn), NOT that the
+   * process exited — it may still be running in the pod.
+   */
+  exitStatus?: () => ExecExitStatus;
 }

@@ -100,8 +100,10 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   parseResult(exitCode: number, logs: string): AgentResult {
-    const prMatch = logs.match(
-      /https:\/\/(?![\w.-]+\/api\/)[^\s"]+\/(?:pull\/\d+|-\/merge_requests\/\d+)/,
+    // PR-creation output comes at the end of the log; prompts and examples come
+    // first, so the last match is the PR the agent created
+    const prMatches = logs.match(
+      /https:\/\/(?![\w.-]+\/api\/)[^\s"]+\/(?:pull\/\d+|-\/merge_requests\/\d+)/g,
     );
     const { costUsd, errorMessage, hasError, summary, inputTokens, outputTokens, model } =
       this.parseLogs(logs);
@@ -110,7 +112,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     return {
       success,
-      prUrl: prMatch?.[0],
+      prUrl: prMatches?.[prMatches.length - 1],
       costUsd,
       inputTokens,
       outputTokens,

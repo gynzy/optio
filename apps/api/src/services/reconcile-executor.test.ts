@@ -113,6 +113,7 @@ function repoSnapshot(overrides: Partial<WorldSnapshot> = {}): WorldSnapshot {
       blocksParent: false,
       workspaceId: "ws-1",
       workflowRunId: null,
+      createdAt: new Date("2026-01-01T00:00:00Z"),
     },
     status: {
       state: TaskState.QUEUED,

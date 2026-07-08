@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseOwnerRepo, checkExistingPr } from "./pr-detection-service.js";
+import { parseOwnerRepo, checkExistingPr, validateTaskPrUrl } from "./pr-detection-service.js";
 
 // Mock git-token-service
 const mockPlatform = {
   type: "github",
   listOpenPullRequests: vi.fn(),
+  getPullRequest: vi.fn(),
 };
 const mockGetGitPlatformForRepo = vi.fn();
 
@@ -87,6 +88,7 @@ describe("checkExistingPr", () => {
         mergeable: true,
         draft: false,
         headSha: "abc",
+        headBranch: "optio/task-123",
         baseBranch: "main",
         author: "",
         assignees: [],
@@ -168,5 +170,71 @@ describe("checkExistingPr", () => {
     expect(mockGetGitPlatformForRepo).toHaveBeenCalledWith("https://github.com/owner/repo", {
       server: true,
     });
+  });
+});
+
+describe("validateTaskPrUrl", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetGitPlatformForRepo.mockResolvedValue({
+      platform: mockPlatform,
+      ri: {
+        platform: "github",
+        host: "github.com",
+        owner: "owner",
+        repo: "repo",
+        apiBaseUrl: "https://api.github.com",
+      },
+    });
+  });
+
+  it("returns valid when the PR head branch is the task branch", async () => {
+    mockPlatform.getPullRequest.mockResolvedValue({ headBranch: "optio/task-abc" });
+    const result = await validateTaskPrUrl(
+      "https://github.com/owner/repo",
+      "abc",
+      "https://github.com/owner/repo/pull/506",
+    );
+    expect(result).toBe("valid");
+    expect(mockPlatform.getPullRequest).toHaveBeenCalledWith(expect.anything(), 506);
+  });
+
+  it("returns invalid when the PR head branch is a different branch", async () => {
+    mockPlatform.getPullRequest.mockResolvedValue({ headBranch: "renovate/aiosqlite-0.x" });
+    const result = await validateTaskPrUrl(
+      "https://github.com/owner/repo",
+      "abc",
+      "https://github.com/owner/repo/pull/453",
+    );
+    expect(result).toBe("invalid");
+  });
+
+  it("returns invalid when the URL is not a parseable PR URL", async () => {
+    const result = await validateTaskPrUrl(
+      "https://github.com/owner/repo",
+      "abc",
+      "https://github.com/owner/repo/pulls",
+    );
+    expect(result).toBe("invalid");
+  });
+
+  it("returns unknown when no git token is available", async () => {
+    mockGetGitPlatformForRepo.mockRejectedValue(new Error("no token"));
+    const result = await validateTaskPrUrl(
+      "https://github.com/owner/repo",
+      "abc",
+      "https://github.com/owner/repo/pull/506",
+    );
+    expect(result).toBe("unknown");
+  });
+
+  it("returns unknown when the PR fetch fails", async () => {
+    mockPlatform.getPullRequest.mockRejectedValue(new Error("GitHub API error 500"));
+    const result = await validateTaskPrUrl(
+      "https://github.com/owner/repo",
+      "abc",
+      "https://github.com/owner/repo/pull/506",
+    );
+    expect(result).toBe("unknown");
   });
 });

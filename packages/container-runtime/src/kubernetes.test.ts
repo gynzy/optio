@@ -679,12 +679,101 @@ describe("KubernetesContainerRuntime", () => {
         expect.any(Object), // stderr PassThrough
         expect.any(Object), // stdin PassThrough
         true, // tty
+        expect.any(Function), // statusCallback
       );
       expect(session.stdin).toBeDefined();
       expect(session.stdout).toBeDefined();
       expect(session.stderr).toBeDefined();
       expect(session.resize).toBeInstanceOf(Function);
       expect(session.close).toBeInstanceOf(Function);
+    });
+
+    it("exitStatus() reports not-received until the kubelet sends a status", async () => {
+      const mockWs = { send: vi.fn(), close: vi.fn() };
+      mockExecInstance.exec.mockResolvedValue(mockWs);
+
+      const session = await runtime.exec(handle, ["bash"]);
+
+      expect(session.exitStatus?.()).toEqual({ received: false, exitCode: null });
+    });
+
+    it("exitStatus() reports exit code 0 on Success status", async () => {
+      const mockWs = { send: vi.fn(), close: vi.fn() };
+      mockExecInstance.exec.mockResolvedValue(mockWs);
+
+      const session = await runtime.exec(handle, ["bash"]);
+      const statusCallback = mockExecInstance.exec.mock.calls[0][8];
+      statusCallback({ status: "Success" });
+
+      expect(session.exitStatus?.()).toEqual({ received: true, exitCode: 0 });
+    });
+
+    it("exitStatus() parses the exit code from a NonZeroExitCode failure status", async () => {
+      const mockWs = { send: vi.fn(), close: vi.fn() };
+      mockExecInstance.exec.mockResolvedValue(mockWs);
+
+      const session = await runtime.exec(handle, ["bash"]);
+      const statusCallback = mockExecInstance.exec.mock.calls[0][8];
+      statusCallback({
+        status: "Failure",
+        reason: "NonZeroExitCode",
+        details: { causes: [{ reason: "ExitCode", message: "42" }] },
+      });
+
+      expect(session.exitStatus?.()).toEqual({ received: true, exitCode: 42 });
+    });
+
+    it("exitStatus() treats a failure without an exit code as NOT a process exit", async () => {
+      // e.g. the apiserver's "error dialing backend" when a konnectivity
+      // tunnel breaks — the process may still be running in the pod.
+      const mockWs = { send: vi.fn(), close: vi.fn() };
+      mockExecInstance.exec.mockResolvedValue(mockWs);
+
+      const session = await runtime.exec(handle, ["bash"]);
+      const statusCallback = mockExecInstance.exec.mock.calls[0][8];
+      statusCallback({ status: "Failure", message: "error dialing backend: EOF" });
+
+      expect(session.exitStatus?.()).toEqual({
+        received: false,
+        exitCode: null,
+        message: "error dialing backend: EOF",
+      });
+    });
+
+    it("ends stdout/stderr when the websocket closes without a status", async () => {
+      const mockWs: Record<string, unknown> = { send: vi.fn(), close: vi.fn() };
+      mockExecInstance.exec.mockResolvedValue(mockWs);
+
+      const session = await runtime.exec(handle, ["bash"]);
+      const stdoutEnded = new Promise<void>((resolve) => session.stdout.on("end", resolve));
+      const stderrEnded = new Promise<void>((resolve) => session.stderr.on("end", resolve));
+      (session.stdout as NodeJS.ReadableStream).resume();
+      (session.stderr as NodeJS.ReadableStream).resume();
+
+      expect(mockWs.onclose).toBeInstanceOf(Function);
+      (mockWs.onclose as () => void)();
+
+      await stdoutEnded;
+      await stderrEnded;
+      expect(session.exitStatus?.()).toEqual({
+        received: false,
+        exitCode: null,
+        message: undefined,
+      });
+    });
+
+    it("ends stdout/stderr on a websocket error", async () => {
+      const mockWs: Record<string, unknown> = { send: vi.fn(), close: vi.fn() };
+      mockExecInstance.exec.mockResolvedValue(mockWs);
+
+      const session = await runtime.exec(handle, ["bash"]);
+      const stdoutEnded = new Promise<void>((resolve) => session.stdout.on("end", resolve));
+      (session.stdout as NodeJS.ReadableStream).resume();
+
+      expect(mockWs.onerror).toBeInstanceOf(Function);
+      (mockWs.onerror as () => void)();
+
+      await stdoutEnded;
     });
 
     it("resize sends buffer on channel 4 with JSON {Width, Height}", async () => {

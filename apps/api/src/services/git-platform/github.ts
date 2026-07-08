@@ -260,6 +260,7 @@ function mapPr(data: any): PullRequest {
     mergeable: data.mergeable ?? null,
     draft: data.draft ?? false,
     headSha: data.head?.sha ?? "",
+    headBranch: data.head?.ref ?? "",
     baseBranch: data.base?.ref ?? "",
     url: data.html_url ?? "",
     author: data.user?.login ?? "",

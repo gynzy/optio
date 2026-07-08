@@ -50,7 +50,7 @@ describe("GitHubPlatform", () => {
         merged: false,
         mergeable: true,
         draft: false,
-        head: { sha: "abc123" },
+        head: { sha: "abc123", ref: "optio/task-abc" },
         base: { ref: "main" },
         html_url: "https://github.com/acme/widgets/pull/42",
         user: { login: "alice" },
@@ -74,6 +74,7 @@ describe("GitHubPlatform", () => {
       expect(pr.number).toBe(42);
       expect(pr.title).toBe("Fix bug");
       expect(pr.headSha).toBe("abc123");
+      expect(pr.headBranch).toBe("optio/task-abc");
       expect(pr.merged).toBe(false);
       expect(pr.labels).toEqual(["bug"]);
     });

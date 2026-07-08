@@ -307,5 +307,15 @@ describe("ClaudeCodeAdapter", () => {
       const result = adapter.parseResult(3, "failed");
       expect(result.summary).toBe("Agent exited with code 3");
     });
+
+    it("takes the last PR URL when multiple appear in logs", () => {
+      const logs = [
+        "Example in prompt: https://github.com/org/repo/pull/453",
+        "working...",
+        "Created PR: https://github.com/org/repo/pull/506",
+      ].join("\n");
+      const result = adapter.parseResult(0, logs);
+      expect(result.prUrl).toBe("https://github.com/org/repo/pull/506");
+    });
   });
 });

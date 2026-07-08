@@ -51,6 +51,7 @@ describe("GitLabPlatform", () => {
         draft: false,
         sha: "def456",
         diff_refs: { head_sha: "def456" },
+        source_branch: "optio/task-abc",
         target_branch: "main",
         web_url: "https://gitlab.com/acme/widgets/-/merge_requests/7",
         author: { username: "alice" },
@@ -78,6 +79,7 @@ describe("GitLabPlatform", () => {
       expect(pr.merged).toBe(false);
       expect(pr.mergeable).toBe(true);
       expect(pr.headSha).toBe("def456");
+      expect(pr.headBranch).toBe("optio/task-abc");
     });
 
     it("maps merged MR state correctly", async () => {

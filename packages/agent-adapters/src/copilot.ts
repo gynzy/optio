@@ -65,7 +65,7 @@ export class CopilotAdapter implements AgentAdapter {
   }
 
   parseResult(exitCode: number, logs: string): AgentResult {
-    const prMatch = logs.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
+    const prMatches = logs.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/g);
     const { costUsd, errorMessage, hasError, summary, inputTokens, outputTokens, model } =
       this.parseLogs(logs);
 
@@ -73,7 +73,7 @@ export class CopilotAdapter implements AgentAdapter {
 
     return {
       success,
-      prUrl: prMatch?.[0],
+      prUrl: prMatches?.[prMatches.length - 1],
       costUsd,
       inputTokens,
       outputTokens,

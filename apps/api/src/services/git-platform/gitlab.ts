@@ -396,6 +396,7 @@ function mapMr(data: any, ri: RepoIdentifier): PullRequest {
           : null,
     draft: data.draft ?? data.work_in_progress ?? false,
     headSha: data.sha ?? data.diff_refs?.head_sha ?? "",
+    headBranch: data.source_branch ?? "",
     baseBranch: data.target_branch ?? "",
     url: data.web_url ?? `https://${ri.host}/${ri.owner}/${ri.repo}/-/merge_requests/${data.iid}`,
     author: data.author?.username ?? "",
