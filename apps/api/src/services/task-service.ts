@@ -429,6 +429,13 @@ export async function updateTaskPr(id: string, prUrl: string) {
     .where(eq(tasks.id, id));
 }
 
+export async function incrementTaskRetryCount(id: string) {
+  await db
+    .update(tasks)
+    .set({ retryCount: sql`${tasks.retryCount} + 1`, updatedAt: new Date() })
+    .where(eq(tasks.id, id));
+}
+
 export async function updateTaskSession(id: string, sessionId: string) {
   await db.update(tasks).set({ sessionId, updatedAt: new Date() }).where(eq(tasks.id, id));
 }

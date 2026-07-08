@@ -456,6 +456,41 @@ export async function execRunInPod(
 }
 
 /**
+ * Kill any agent processes belonging to a workflow run that outlived its
+ * exec stream (e.g. the connection was severed mid-run). Workflow pods are
+ * shared across runs, so a zombie agent would oversubscribe the pod and can
+ * produce duplicate external side effects when the run is retried.
+ */
+export async function killOrphanedRunInPod(pod: WorkflowPod, runId: string): Promise<boolean> {
+  const rt = getRuntime();
+  const handle: ContainerHandle = { id: pod.podId ?? pod.podName!, name: pod.podName! };
+
+  const killScript = [
+    `pids=$(grep -rl "OPTIO_WORKFLOW_RUN_ID=${runId}" /proc/*/environ 2>/dev/null | cut -d/ -f3 | sort -u || true)`,
+    `if [ -n "$pids" ]; then`,
+    `  kill -TERM $pids 2>/dev/null || true`,
+    `  sleep 2`,
+    `  kill -9 $pids 2>/dev/null || true`,
+    `  echo "killed"`,
+    `else`,
+    `  echo "none"`,
+    `fi`,
+  ].join("\n");
+
+  const killSession = await rt.exec(handle, ["bash", "-c", killScript], { tty: false });
+  let output = "";
+  for await (const chunk of killSession.stdout as AsyncIterable<Buffer>) {
+    output += chunk.toString();
+  }
+  killSession.close();
+  const killed = output.includes("killed");
+  if (killed) {
+    logger.info({ podName: pod.podName, runId }, "Killed orphaned workflow agent processes");
+  }
+  return killed;
+}
+
+/**
  * Decrement the active run count for a workflow pod. Clamped at zero so a
  * double-release (e.g. zombie cleanup + worker finally) can't drive it negative.
  */

@@ -17,6 +17,7 @@ import {
   V1SecurityContext,
   V1Capabilities,
   V1EmptyDirVolumeSource,
+  V1Status,
 } from "@kubernetes/client-node";
 import { Readable, Writable, PassThrough } from "node:stream";
 import type { ContainerSpec, ContainerHandle, ContainerStatus, ExecSession } from "@optio/shared";
@@ -379,6 +380,15 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
     const stderr = new PassThrough();
     const stdinStream = new PassThrough();
 
+    // The kubelet sends a V1Status over the exec channel when the process
+    // exits: "Success" or a Failure with an ExitCode cause. Any other Failure
+    // (e.g. the apiserver's "error dialing backend" when a konnectivity
+    // tunnel breaks) is a transport error, not a process exit — the process
+    // may still be running in the pod.
+    let statusReceived = false;
+    let statusExitCode: number | null = null;
+    let statusMessage: string | undefined;
+
     const ws = await k8sExec.exec(
       this.namespace,
       handle.name,
@@ -388,7 +398,28 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
       stderr,
       stdinStream,
       tty,
+      (status: V1Status) => {
+        const exitCode = parseExitCodeFromStatus(status);
+        if (exitCode !== null) {
+          statusReceived = true;
+          statusExitCode = exitCode;
+        } else {
+          statusMessage = status.message ?? status.reason ?? "unknown failure";
+        }
+      },
     );
+
+    // The client library only ends the stdio streams when a status frame
+    // arrives. If the websocket dies without one (severed connection),
+    // consumers iterating stdout would hang forever — end the streams on
+    // close/error so they observe EOF. On a normal exit the status frame is
+    // processed before the close event, so `statusReceived` is already set.
+    const endStreams = () => {
+      stdout.end();
+      stderr.end();
+    };
+    ws.onclose = endStreams;
+    ws.onerror = endStreams;
 
     const stdin = new Writable({
       write(chunk, _encoding, callback) {
@@ -429,6 +460,9 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
         }
         stdout.end();
         stderr.end();
+      },
+      exitStatus() {
+        return { received: statusReceived, exitCode: statusExitCode, message: statusMessage };
       },
     };
   }
@@ -689,4 +723,14 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+function parseExitCodeFromStatus(status: V1Status): number | null {
+  if (status.status === "Success") return 0;
+  const cause = status.details?.causes?.find((c) => c.reason === "ExitCode");
+  if (cause?.message != null) {
+    const code = parseInt(cause.message, 10);
+    return Number.isNaN(code) ? null : code;
+  }
+  return null;
 }

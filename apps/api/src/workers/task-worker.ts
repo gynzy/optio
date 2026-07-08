@@ -1010,6 +1010,66 @@ export function startTaskWorker() {
           return;
         }
 
+        // A stream that ended without an exit status from the kubelet was
+        // severed (e.g. konnectivity churn on an autoscaling cluster), NOT an
+        // agent exit — the agent may still be running in the pod. Interpreting
+        // the partial log would misreport the task (agent_no_output,
+        // completed_without_pr, or a wrong PR association). Kill any orphaned
+        // agent processes and retry instead.
+        const execExit = execSession.exitStatus?.();
+        if (execExit && !execExit.received) {
+          const retryCount = taskAfterExec.retryCount ?? 0;
+          const maxRetries = taskAfterExec.maxRetries ?? 0;
+          const severedMsg = `Connection to the agent pod was severed mid-run (${execExit.message ?? "no exit status received"})`;
+          log.warn(
+            { retryCount, maxRetries, statusMessage: execExit.message },
+            "Exec stream severed — agent did not exit",
+          );
+          // The agent may still be running in the pod — kill it so a retry
+          // doesn't share the worktree with a zombie agent. The kill also
+          // removes the worktree.
+          await repoPool.killOrphanedAgentInPod(pod.id, taskId).catch(() => {});
+          await repoPool.updateWorktreeState(taskId, "removed");
+          await taskService.updateTaskResult(taskId, undefined, severedMsg);
+          await taskService.transitionTask(
+            taskId,
+            TaskState.FAILED,
+            "exec_stream_severed",
+            severedMsg,
+          );
+          if (retryCount < maxRetries) {
+            // Increment while still FAILED so the retry pickup sees it, then
+            // requeue. The QUEUED transition wakes the reconciler, which
+            // enqueues the BullMQ job (decideQueued → requeueForAgent).
+            // tryTransitionTask absorbs the race where the reconciler moved
+            // the task off FAILED in between (e.g. a captured PR merged).
+            await taskService.incrementTaskRetryCount(taskId);
+            const requeued = await taskService.tryTransitionTask(
+              taskId,
+              TaskState.QUEUED,
+              "exec_stream_severed_retry",
+              `${severedMsg} — retrying (${retryCount + 1}/${maxRetries})`,
+            );
+            if (!requeued) {
+              log.info("Severed-stream retry skipped — task advanced past FAILED concurrently");
+            }
+          } else {
+            // Terminal failure — notify parent subtasks and dependents just
+            // like the normal failure path below.
+            if (taskAfterExec.parentTaskId) {
+              const { onSubtaskComplete } = await import("../services/subtask-service.js");
+              await onSubtaskComplete(taskId).catch((err) =>
+                log.warn({ err }, "Failed to check parent subtask status"),
+              );
+            }
+            const depSvc = await import("../services/dependency-service.js");
+            await depSvc
+              .cascadeFailure(taskId)
+              .catch((err) => log.warn({ err }, "Failed to cascade failure to dependents"));
+          }
+          return;
+        }
+
         // Detect exit code from logs (agent-type-specific patterns)
         const inferredExitCode = inferExitCode(task.agentType, allLogs);
         const result = adapter.parseResult(inferredExitCode, allLogs);
