@@ -87,6 +87,7 @@ describe("checkExistingPr", () => {
         mergeable: true,
         draft: false,
         headSha: "abc",
+        headBranch: "optio/task-123",
         baseBranch: "main",
         author: "",
         assignees: [],
