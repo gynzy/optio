@@ -558,7 +558,22 @@ export function startWorkflowWorker() {
         // with a clear reason instead of interpreting the partial log — the
         // reconciler's auto-retry picks it up from FAILED.
         const execExit = execSession.exitStatus?.();
-        if (execExit && !execExit.received) {
+        let streamSevered = execExit ? !execExit.received : false;
+        if (execExit && !streamSevered) {
+          // Transport teardown can deliver a status frame that falsely reads
+          // as a clean exit while the agent is still running — the pod is
+          // ground truth (see task-worker for the same check).
+          streamSevered = await workflowPool
+            .isRunAgentRunning(pod, workflowRunId)
+            .catch(() => false);
+          if (streamSevered) {
+            log.warn(
+              { exitCode: execExit.exitCode },
+              "Exit status received but agent processes still running — treating stream as severed",
+            );
+          }
+        }
+        if (execExit && streamSevered) {
           log.warn({ statusMessage: execExit.message }, "Exec stream severed — agent did not exit");
           // Kill the possibly still-running agent: workflow pods are shared
           // across runs, and the reconciler auto-retries this run — a zombie
@@ -570,7 +585,11 @@ export function startWorkflowWorker() {
             WorkflowRunState.RUNNING,
             WorkflowRunState.FAILED,
             {
-              errorMessage: `Connection to the agent pod was severed mid-run (${execExit.message ?? "no exit status received"})`,
+              errorMessage: `Connection to the agent pod was severed mid-run (${
+                execExit.received
+                  ? `transport reported exit ${execExit.exitCode} but the agent is still running`
+                  : (execExit.message ?? "no exit status received")
+              })`,
               finishedAt: new Date(),
             },
           );

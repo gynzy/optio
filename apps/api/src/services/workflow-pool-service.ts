@@ -456,6 +456,25 @@ export async function execRunInPod(
 }
 
 /**
+ * Check whether any process belonging to a workflow run is still running in
+ * its pod. Used after an exec stream ends: the transport can tear down with
+ * a status frame that falsely reads as a clean exit while the agent lives on.
+ */
+export async function isRunAgentRunning(pod: WorkflowPod, runId: string): Promise<boolean> {
+  const rt = getRuntime();
+  const handle: ContainerHandle = { id: pod.podId ?? pod.podName!, name: pod.podName! };
+
+  const checkScript = `grep -rl "OPTIO_WORKFLOW_RUN_ID=${runId}" /proc/*/environ 2>/dev/null | head -1`;
+  const session = await rt.exec(handle, ["bash", "-c", checkScript], { tty: false });
+  let output = "";
+  for await (const chunk of session.stdout as AsyncIterable<Buffer>) {
+    output += chunk.toString();
+  }
+  session.close();
+  return output.trim().length > 0;
+}
+
+/**
  * Kill any agent processes belonging to a workflow run that outlived its
  * exec stream (e.g. the connection was severed mid-run). Workflow pods are
  * shared across runs, so a zombie agent would oversubscribe the pod and can

@@ -1017,10 +1017,28 @@ export function startTaskWorker() {
         // completed_without_pr, or a wrong PR association). Kill any orphaned
         // agent processes and retry instead.
         const execExit = execSession.exitStatus?.();
-        if (execExit && !execExit.received) {
+        let streamSevered = execExit ? !execExit.received : false;
+        if (execExit && !streamSevered) {
+          // Transport teardown (e.g. konnectivity churn) can deliver a status
+          // frame that falsely reads as a clean exit while the agent is still
+          // running in the pod (observed in prod). The pod is ground truth:
+          // if the task's processes are alive after the "exit", the stream
+          // was severed. On a real exit the processes are gone.
+          streamSevered = await repoPool.isTaskAgentRunning(pod.id, taskId).catch(() => false);
+          if (streamSevered) {
+            log.warn(
+              { exitCode: execExit.exitCode },
+              "Exit status received but agent processes still running — treating stream as severed",
+            );
+          }
+        }
+        if (execExit && streamSevered) {
           const retryCount = taskAfterExec.retryCount ?? 0;
           const maxRetries = taskAfterExec.maxRetries ?? 0;
-          const severedMsg = `Connection to the agent pod was severed mid-run (${execExit.message ?? "no exit status received"})`;
+          const severedDetail = execExit.received
+            ? `transport reported exit ${execExit.exitCode} but the agent is still running`
+            : (execExit.message ?? "no exit status received");
+          const severedMsg = `Connection to the agent pod was severed mid-run (${severedDetail})`;
           log.warn(
             { retryCount, maxRetries, statusMessage: execExit.message },
             "Exec stream severed — agent did not exit",

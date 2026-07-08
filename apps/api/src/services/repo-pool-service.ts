@@ -1386,6 +1386,27 @@ export async function deleteEnvoyConfigMap(podName: string): Promise<void> {
  *
  * Returns true if processes were found and killed, false otherwise.
  */
+/**
+ * Check whether any process belonging to a task is still running in its pod.
+ * Used after an exec stream ends: the transport can tear down with a status
+ * frame that falsely reads as a clean exit while the agent lives on.
+ */
+export async function isTaskAgentRunning(podId: string, taskId: string): Promise<boolean> {
+  const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, podId));
+  if (!pod?.podName) return false;
+  const rt = getRuntime();
+  const handle: ContainerHandle = { id: pod.podId ?? pod.podName, name: pod.podName };
+
+  const checkScript = `grep -rl "OPTIO_TASK_ID=${taskId}" /proc/*/environ 2>/dev/null | head -1`;
+  const session = await rt.exec(handle, ["bash", "-c", checkScript], { tty: false });
+  let output = "";
+  for await (const chunk of session.stdout as AsyncIterable<Buffer>) {
+    output += chunk.toString();
+  }
+  session.close();
+  return output.trim().length > 0;
+}
+
 export async function killOrphanedAgentInPod(podId: string, taskId: string): Promise<boolean> {
   const [pod] = await db.select().from(repoPods).where(eq(repoPods.id, podId));
   if (!pod || !pod.podName || pod.state !== "ready") return false;
