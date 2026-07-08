@@ -124,8 +124,10 @@ export class GeminiAdapter implements AgentAdapter {
 
   parseResult(exitCode: number, logs: string): AgentResult {
     // Extract PR URL from anywhere in the logs (GitHub PR + GitLab MR)
-    const prMatch = logs.match(
-      /https:\/\/(?![\w.-]+\/api\/)[^\s"]+\/(?:pull\/\d+|-\/merge_requests\/\d+)/,
+    // PR-creation output comes at the end of the log; prompts and examples come
+    // first, so the last match is the PR the agent created
+    const prMatches = logs.match(
+      /https:\/\/(?![\w.-]+\/api\/)[^\s"]+\/(?:pull\/\d+|-\/merge_requests\/\d+)/g,
     );
 
     // Parse NDJSON lines to extract structured data
@@ -136,7 +138,7 @@ export class GeminiAdapter implements AgentAdapter {
 
     return {
       success,
-      prUrl: prMatch?.[0],
+      prUrl: prMatches?.[prMatches.length - 1],
       costUsd,
       summary:
         summary ??

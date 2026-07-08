@@ -342,5 +342,15 @@ describe("GeminiAdapter", () => {
       expect(result.inputTokens).toBe(6050);
       expect(result.outputTokens).toBe(200);
     });
+
+    it("takes the last PR URL when multiple appear in logs", () => {
+      const logs = [
+        "Example in prompt: https://github.com/org/repo/pull/453",
+        "working...",
+        "Created PR: https://github.com/org/repo/pull/506",
+      ].join("\n");
+      const result = adapter.parseResult(0, logs);
+      expect(result.prUrl).toBe("https://github.com/org/repo/pull/506");
+    });
   });
 });
