@@ -97,6 +97,12 @@ ingress:
     enabled: true
     staticIpName: optio
     cloudArmorPolicy: optio
+    # Google IAP: gate the whole site behind Google sign-in at the load
+    # balancer. Requires auth.google.clientId/clientSecret. Blocks external
+    # webhook callers. See ingress.gke.iap comments in values.yaml for the
+    # one-time GCP setup (OAuth redirect URI + IAM grant).
+    iap:
+      enabled: false
     managedCertificate:
       enabled: true
       domains:
