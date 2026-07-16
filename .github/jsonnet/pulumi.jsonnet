@@ -156,6 +156,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {array} [additionalSetupSteps=[]] - Extra setup steps before Pulumi preview
    * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
    * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
+   * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
+   * @param {array} [pnpmInstallArgs=[]] - Additional arguments for pnpm install
    * @param {boolean} [blobless=null] - Whether to perform a blobless clone (--filter=blob:none); null uses checkout default
    * @param {number} [retryAttempts=null] - Number of additional checkout attempts on failure; null uses checkout default
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
@@ -175,6 +177,11 @@ local pulumiDefaultEnvironment(stack) = {
     ignoreEngines=false,
     runsOn=null,
     pulumiVersion=defaultPulumiVersion,
+    packageManager='yarn',
+    pnpmInstallArgs=[],
+    blobless=null,
+    retryAttempts=null,
+    cloneTimeout=null,
   )::
     base.ghJob(
       'pulumi-preview-' + stack,
@@ -182,7 +189,10 @@ local pulumiDefaultEnvironment(stack) = {
       image=image,
       useCredentials=false,
       steps=[
-        yarn.checkoutAndYarn(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, ignoreEngines=ignoreEngines),
+        (
+          if packageManager == 'yarn' then yarn.checkoutAndYarn(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, ignoreEngines=ignoreEngines, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
+          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
+        ),
         pulumiSetupSteps(pulumiVersion),
         additionalSetupSteps,
         self.pulumiPreview(stack, pulumiDir=pulumiDir, environmentVariables=environmentVariables),
@@ -201,6 +211,13 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {string} [image=images.default_pulumi_node_image] - Container image
    * @param {object} [environmentVariables={}] - Additional environment variables
    * @param {array} [additionalSetupSteps=[]] - Extra setup steps
+   * @param {string} [packageManager='yarn'] - Package manager to use ('yarn' or 'pnpm')
+   * @param {array} [pnpmInstallArgs=[]] - Additional arguments for pnpm install
+   * @param {boolean} [ignoreEngines=false] - Whether to ignore Node.js engine requirements
+   * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
+   * @param {boolean} [blobless=null] - Whether to perform a blobless clone (--filter=blob:none); null uses checkout default
+   * @param {number} [retryAttempts=null] - Number of additional checkout attempts on failure; null uses checkout default
+   * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {jobs} - GitHub Actions job for test environment Pulumi preview
    */
@@ -215,6 +232,13 @@ local pulumiDefaultEnvironment(stack) = {
     environmentVariables={},
     additionalSetupSteps=[],
     pulumiVersion=defaultPulumiVersion,
+    packageManager='yarn',
+    pnpmInstallArgs=[],
+    ignoreEngines=false,
+    runsOn=null,
+    blobless=null,
+    retryAttempts=null,
+    cloneTimeout=null,
   )::
     self.pulumiPreviewJob(
       stack,
@@ -227,6 +251,13 @@ local pulumiDefaultEnvironment(stack) = {
       environmentVariables=environmentVariables,
       additionalSetupSteps=additionalSetupSteps,
       pulumiVersion=pulumiVersion,
+      packageManager=packageManager,
+      pnpmInstallArgs=pnpmInstallArgs,
+      ignoreEngines=ignoreEngines,
+      runsOn=runsOn,
+      blobless=blobless,
+      retryAttempts=retryAttempts,
+      cloneTimeout=cloneTimeout,
     ),
 
   /**

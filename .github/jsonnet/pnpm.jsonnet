@@ -20,7 +20,7 @@ local yarn = import 'yarn.jsonnet';
   install(args=[], with={}, prod=false, storeDir=null, ifClause=null, workingDirectory=null)::
     base.action(
       'Install pnpm tool',
-      'pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320',  // v5
+      'pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271',  // v6.0.9
       with=with + if workingDirectory != null then {
         package_json_file: workingDirectory + '/package.json'
       } else {},

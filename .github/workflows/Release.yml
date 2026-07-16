@@ -73,7 +73,7 @@
       "if": "${{ ( steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true' ) }}"
       "name": "Check out repository code via ssh"
       "timeout-minutes": 10
-      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+      "uses": "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
       "with":
         "ssh-key": "${{ secrets.VIRKO_GITHUB_SSH_KEY }}"
         "submodules": "recursive"
@@ -81,7 +81,7 @@
       "if": "${{ ( steps.check-binaries.outputs.sshBinaryExists == 'false' || steps.check-binaries.outputs.gitBinaryExists == 'false' ) }}"
       "name": "Check out repository code via https"
       "timeout-minutes": 10
-      "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+      "uses": "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
       "with":
         "submodules": "recursive"
     - "name": "git safe directory"
