@@ -48,7 +48,6 @@ local misc = import 'misc.jsonnet';
         cat <<EOF > .npmrc
         @gynzy:registry=https://npm.gynzy.net/
         "//npm.gynzy.net/:_authToken"="${NPM_TOKEN}"
-        public-hoist-pattern[]=@pulumi/pulumi
         EOF
       |||,
       env={
@@ -74,7 +73,6 @@ local misc = import 'misc.jsonnet';
         cat <<EOF > .npmrc
         @gynzy:registry=https://npm.pkg.github.com
         //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
-        public-hoist-pattern[]=@pulumi/pulumi
         EOF
       |||,
       env={
