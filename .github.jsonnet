@@ -179,6 +179,7 @@ local release = base.pipeline(
                 enabled: true,
                 staticIpName: 'optio',
                 cloudArmorPolicy: 'optio',
+                iap: { enabled: true },
                 managedCertificate: {
                   enabled: true,
                   domains: ['optio.gynzy.dev'],
@@ -195,6 +196,7 @@ local release = base.pipeline(
             },
             publicUrl: 'https://optio.gynzy.dev',
             auth: {
+              disabled: true,
               google: {
                 clientId: misc.secret('GOOGLE_OAUTH_CLIENT_ID'),
                 clientSecret: misc.secret('GOOGLE_OAUTH_CLIENT_SECRET'),

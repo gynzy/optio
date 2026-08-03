@@ -400,6 +400,18 @@ ingress:
     enabled: false
     staticIpName: ""
     cloudArmorPolicy: ""
+    # Google Identity-Aware Proxy. When enabled, every request through the
+    # GKE ingress must carry a Google identity before reaching optio pods.
+    # Reuses the OAuth client from auth.google.clientId/clientSecret.
+    # NOTE: blocks external webhook callers (/api/webhooks, /api/hooks, Slack).
+    # One-time GCP setup:
+    #   1. Add redirect URI to the OAuth client:
+    #      https://iap.googleapis.com/v1/oauth/clientIds/<CLIENT_ID>:handleRedirect
+    #   2. Grant access:
+    #      gcloud iap web add-iam-policy-binding \
+    #        --member=domain:<your-domain> --role=roles/iap.httpsResourceAccessor
+    iap:
+      enabled: false
     managedCertificate:
       enabled: false
       domains: []
