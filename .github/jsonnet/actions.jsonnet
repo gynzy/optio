@@ -7,7 +7,7 @@
  * human-readable version that the SHA corresponds to at the time of pinning.
  */
 {
-  checkout_action: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd',  // v6
+  checkout_action: 'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0',  // v7
   gcp_auth_action: 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093',  // v3
   gcp_setup_gcloud_action: 'google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db',  // v3
   pulumi_action: 'pulumi/actions@cd99a7f8865434dd3532b586a26f9ebea596894f',  // v5
