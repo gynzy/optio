@@ -1,5 +1,5 @@
 import { Queue, Worker } from "bullmq";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { tasks, sessionPrs, interactiveSessions, reviewDrafts } from "../db/schema.js";
 import type { GitPlatform, RepoIdentifier } from "@optio/shared";
@@ -91,7 +91,12 @@ export function startPrWatcherWorker() {
         .select({ id: tasks.id, prUrl: tasks.prUrl, prNumber: tasks.prNumber })
         .from(tasks)
         .where(
-          sql`${tasks.state} IN ('pr_opened', 'failed') AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL) AND ${tasks.lastActivityAt} >= ${activityCutoff}`,
+          and(
+            sql`${tasks.state} IN ('pr_opened', 'failed') AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+            // Compared via drizzle's operator, not interpolated into the raw
+            // template: postgres.js cannot encode a bare Date parameter.
+            gte(tasks.lastActivityAt, activityCutoff),
+          ),
         );
 
       for (const task of openPrTasks) {
@@ -121,7 +126,10 @@ export function startPrWatcherWorker() {
         .select({ id: tasks.id, lastActivityAt: tasks.lastActivityAt })
         .from(tasks)
         .where(
-          sql`${tasks.state} = 'pr_opened' AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL) AND (${tasks.lastActivityAt} IS NULL OR ${tasks.lastActivityAt} < ${activityCutoff})`,
+          and(
+            sql`${tasks.state} = 'pr_opened' AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+            or(isNull(tasks.lastActivityAt), lt(tasks.lastActivityAt, activityCutoff)),
+          ),
         );
 
       for (const task of agedOut) {
