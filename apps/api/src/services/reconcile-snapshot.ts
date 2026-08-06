@@ -31,6 +31,7 @@ import type {
   StandaloneRunStatus,
 } from "@optio/shared";
 import { getGitPlatformForRepo } from "./git-token-service.js";
+import { isPrWatchStale } from "./pr-watch-policy.js";
 import { determineCheckStatus, determineReviewStatus } from "../workers/pr-watcher-worker.js";
 import { checkBlockingSubtasks } from "./subtask-service.js";
 import { logger } from "../logger.js";
@@ -87,9 +88,9 @@ async function buildRepoSnapshot(ref: RunRef): Promise<WorldSnapshot | null> {
       readErrors.push({ source: "capacity", message: String(err) });
       return null;
     }),
-    row.taskType === "review"
+    !needsPrStatus(row.taskType, row.state)
       ? Promise.resolve(null)
-      : loadPrStatus(run, row.createdBy ?? null).catch((err) => {
+      : loadPrStatus(run, row.createdBy ?? null, row.lastActivityAt ?? null).catch((err) => {
           readErrors.push({ source: "pr", message: String(err) });
           return null;
         }),
@@ -274,12 +275,74 @@ async function loadPerRepoCapacity(repoUrl: string, workspaceId: string | null) 
   return { running: Number(count), max };
 }
 
-async function loadPrStatus(run: Run, userId: string | null): Promise<PrStatus | null> {
+/**
+ * Whether the decision function will actually look at `snapshot.pr`.
+ *
+ * Only PR_OPENED and FAILED consult it (reconcile-repo.ts). Every other state
+ * ignores it — notably NEEDS_ATTENTION, which always noops awaiting user intent
+ * yet is swept into every resync. Fetching PR status for those states spent
+ * three GitHub calls to build a field nothing reads.
+ */
+function needsPrStatus(taskType: string | null, state: string): boolean {
+  if (taskType === "review") return false;
+  return state === TaskState.PR_OPENED || state === TaskState.FAILED;
+}
+
+/**
+ * Short-lived cache of PR reads, keyed on PR URL.
+ *
+ * Every reconcile pass rebuilds the snapshot from scratch, and a single run can
+ * be reconciled several times in quick succession (a watcher tick, the resync
+ * sweep, and any stale-CAS retry all enqueue independently). Re-reading GitHub
+ * within a few seconds cannot observe anything new, so those passes shared one
+ * result instead of paying three API calls each.
+ */
+const PR_STATUS_TTL_MS = parseIntEnv("OPTIO_PR_STATUS_CACHE_MS", 30_000);
+const prStatusCache = new Map<string, { at: number; value: PrStatus | null }>();
+
+function readPrCache(prUrl: string): { value: PrStatus | null } | null {
+  const hit = prStatusCache.get(prUrl);
+  if (!hit) return null;
+  if (Date.now() - hit.at >= PR_STATUS_TTL_MS) {
+    prStatusCache.delete(prUrl);
+    return null;
+  }
+  return { value: hit.value };
+}
+
+function writePrCache(prUrl: string, value: PrStatus | null): PrStatus | null {
+  const now = Date.now();
+  prStatusCache.set(prUrl, { at: now, value });
+  if (prStatusCache.size > 500) {
+    for (const [k, v] of prStatusCache) {
+      if (now - v.at >= PR_STATUS_TTL_MS) prStatusCache.delete(k);
+    }
+  }
+  return value;
+}
+
+/** Invalidate a cached PR read so the next reconcile pass sees fresh truth. */
+export function invalidatePrStatus(prUrl: string): void {
+  prStatusCache.delete(prUrl);
+}
+
+async function loadPrStatus(
+  run: Run,
+  userId: string | null,
+  lastActivityAt: Date | null,
+): Promise<PrStatus | null> {
   if (run.kind !== "repo") return null;
   const { status, spec } = run;
   if (!status.prUrl) return null;
   const parsed = parsePrUrl(status.prUrl);
   if (!parsed) return null;
+
+  // Abandoned tasks stop costing GitHub calls entirely. The trade-off is
+  // explicit: their PRs no longer auto-complete on merge or fail on close.
+  if (isPrWatchStale(lastActivityAt)) return null;
+
+  const cached = readPrCache(status.prUrl);
+  if (cached) return cached.value;
 
   const platformResult = await getGitPlatformForRepo(spec.repoUrl, {
     userId: userId ?? undefined,
@@ -287,8 +350,29 @@ async function loadPrStatus(run: Run, userId: string | null): Promise<PrStatus |
   if (!platformResult) return null;
   const { platform, ri } = platformResult;
 
-  const prData = await platform.getPullRequest(ri, parsed.prNumber).catch(() => null);
-  if (!prData) return null;
+  let prData;
+  try {
+    prData = await platform.getPullRequest(ri, parsed.prNumber);
+  } catch (err) {
+    // A 404 means the PR is gone for good — deleted, or never existed because
+    // the URL was misdetected. Report it as such so the run drops out of the
+    // watch set instead of being retried forever.
+    if ((err as { status?: number }).status === 404) {
+      return writePrCache(status.prUrl, {
+        url: status.prUrl,
+        number: parsed.prNumber,
+        state: "closed",
+        merged: false,
+        mergeable: null,
+        checksStatus: "none",
+        reviewStatus: "none",
+        latestReviewComments: null,
+        createdAt: null,
+        gone: true,
+      });
+    }
+    return null;
+  }
 
   const [checkRuns, reviews] = await Promise.all([
     platform.getCIChecks(ri, prData.headSha).catch(() => []),
@@ -297,7 +381,20 @@ async function loadPrStatus(run: Run, userId: string | null): Promise<PrStatus |
   const checksStatus = determineCheckStatus(checkRuns);
   const reviewResult = determineReviewStatus(reviews);
 
-  return {
+  // When changes were requested, pull the most recent inline comments so the
+  // resumed agent has the reviewer's actual remarks, not just the summary.
+  let latestReviewComments = reviewResult.comments;
+  if (reviewResult.status === "changes_requested") {
+    const inline = await platform.getInlineComments(ri, parsed.prNumber).catch(() => []);
+    const recent = inline.slice(-5);
+    if (recent.length > 0) {
+      latestReviewComments +=
+        "\n\nInline comments:\n" +
+        recent.map((c) => `${c.path}:${c.line ?? ""} — ${c.body}`).join("\n");
+    }
+  }
+
+  return writePrCache(status.prUrl, {
     url: status.prUrl,
     number: parsed.prNumber,
     state: (prData.merged ? "merged" : prData.state) as PrStatus["state"],
@@ -305,9 +402,9 @@ async function loadPrStatus(run: Run, userId: string | null): Promise<PrStatus |
     mergeable: prData.mergeable ?? null,
     checksStatus,
     reviewStatus: reviewResult.status as PrStatus["reviewStatus"],
-    latestReviewComments: reviewResult.comments || null,
+    latestReviewComments: latestReviewComments || null,
     createdAt: prData.createdAt || null,
-  };
+  });
 }
 
 async function loadPodStatusForWorkflowRun(runId: string): Promise<PodStatus | null> {

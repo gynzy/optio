@@ -1,13 +1,15 @@
 import { Queue, Worker } from "bullmq";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { tasks, sessionPrs, interactiveSessions, reviewDrafts } from "../db/schema.js";
 import type { GitPlatform, RepoIdentifier } from "@optio/shared";
-import { parsePrUrl } from "@optio/shared";
+import { parsePrUrl, TaskState } from "@optio/shared";
 import { getGitPlatformForRepo } from "../services/git-token-service.js";
 import type { GitTokenContext } from "../services/git-token-service.js";
 import { updateSessionPr } from "../services/interactive-session-service.js";
 import { enqueueReconcile } from "../services/reconcile-queue.js";
+import { PR_WATCH_MAX_AGE_MS } from "../services/pr-watch-policy.js";
+import { transitionTask } from "../services/task-service.js";
 import { logger } from "../logger.js";
 import { recordAuthEvent } from "../services/auth-failure-detector.js";
 import { recordPrWatchCycleDuration } from "../telemetry/metrics.js";
@@ -77,75 +79,71 @@ export function startPrWatcherWorker() {
       // Find all tasks with open PRs. Watch pr_opened tasks + failed tasks
       // that have a PR (CI may recover, auto-merge may become possible).
       // Only watch coding tasks, NOT review subtasks (avoid recursive reviews).
+      // Tasks with no recent activity are dropped — see pr-watch-policy.ts.
       //
-      // The watcher's only job is to refresh the PR fields on the row and
-      // wake the reconciler — every transition / side-effect (auto-merge,
-      // review launch, resume, completion) is decided in reconcile-repo.ts
-      // and applied by reconcile-executor.ts.
+      // The watcher does not talk to GitHub at all: it only wakes the
+      // reconciler, which reads PR truth once (reconcile-snapshot.ts) and
+      // decides every transition / side-effect (auto-merge, review launch,
+      // resume, completion). Fetching here as well meant two independent reads
+      // of the same PR per cycle.
+      const activityCutoff = new Date(Date.now() - PR_WATCH_MAX_AGE_MS);
       const openPrTasks = await db
-        .select()
+        .select({ id: tasks.id, prUrl: tasks.prUrl, prNumber: tasks.prNumber })
         .from(tasks)
         .where(
-          sql`${tasks.state} IN ('pr_opened', 'failed') AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+          and(
+            sql`${tasks.state} IN ('pr_opened', 'failed') AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+            // Compared via drizzle's operator, not interpolated into the raw
+            // template: postgres.js cannot encode a bare Date parameter.
+            gte(tasks.lastActivityAt, activityCutoff),
+          ),
         );
 
       for (const task of openPrTasks) {
         if (!task.prUrl) continue;
+        const parsed = parsePrUrl(task.prUrl);
+        if (!parsed) continue;
 
-        try {
-          const parsed = parsePrUrl(task.prUrl);
-          if (!parsed) continue;
-          const { prNumber } = parsed;
-
-          const platformResult = await getCachedPlatform(task.repoUrl, {
-            userId: task.createdBy ?? undefined,
-          });
-          if (!platformResult) continue;
-          const { platform, ri } = platformResult;
-
-          const prData = await platform.getPullRequest(ri, prNumber).catch(() => null);
-          if (!prData) continue;
-
-          const reviewsData = await platform.getReviews(ri, prNumber).catch(() => []);
-          const reviewResult = determineReviewStatus(reviewsData);
-          const reviewStatus = reviewResult.status;
-          let reviewComments = reviewResult.comments;
-
-          // If changes requested, also fetch inline comments for context.
-          if (reviewStatus === "changes_requested") {
-            try {
-              const inlineComments = await platform.getInlineComments(ri, prNumber);
-              const recent = inlineComments.slice(-5);
-              if (recent.length > 0) {
-                reviewComments +=
-                  "\n\nInline comments:\n" +
-                  recent.map((c) => `${c.path}:${c.line ?? ""} — ${c.body}`).join("\n");
-              }
-            } catch {}
-          }
-
-          // Only update non-edge-triggering fields. The reconciler handles
-          // prChecksStatus, prReviewStatus, prState updates after detecting
-          // edge transitions — updating them here would defeat edge detection.
-          const updates: Record<string, unknown> = {
-            prNumber,
-            updatedAt: new Date(),
-          };
-          if (reviewComments) {
-            updates.prReviewComments = reviewComments;
-          }
-          await db.update(tasks).set(updates).where(eq(tasks.id, task.id));
-
-          await enqueueReconcile(
-            { kind: "repo", id: task.id },
-            { reason: `pr_watch:${prData.merged ? "merged" : prData.state}` },
-          );
-        } catch (err: any) {
-          logger.warn({ err, taskId: task.id }, "Failed to check PR status");
-          if (err?.status === 401 || err?.message?.includes("Bad credentials")) {
-            recordAuthEvent("github", err.message ?? "GitHub 401", "pr-watcher").catch(() => {});
-          }
+        // Backfill prNumber for rows that predate it being recorded. Pure DB
+        // write — deliberately does not touch updatedAt, which the reconciler
+        // uses as its CAS version.
+        if (task.prNumber !== parsed.prNumber) {
+          await db
+            .update(tasks)
+            .set({ prNumber: parsed.prNumber })
+            .where(eq(tasks.id, task.id))
+            .catch((err) => logger.warn({ err, taskId: task.id }, "prNumber backfill failed"));
         }
+
+        await enqueueReconcile({ kind: "repo", id: task.id }, { reason: "pr_watch" });
+      }
+
+      // --- Aged-out tasks ---
+      // A task whose PR we have stopped watching should not sit in pr_opened
+      // forever looking live. Surface it once so someone closes the PR or
+      // retries the task; needs_attention is not polled by this worker.
+      const agedOut = await db
+        .select({ id: tasks.id, lastActivityAt: tasks.lastActivityAt })
+        .from(tasks)
+        .where(
+          and(
+            sql`${tasks.state} = 'pr_opened' AND ${tasks.prUrl} IS NOT NULL AND (${tasks.prState} IS NULL OR ${tasks.prState} = 'open') AND (${tasks.taskType} = 'coding' OR ${tasks.taskType} IS NULL)`,
+            or(isNull(tasks.lastActivityAt), lt(tasks.lastActivityAt, activityCutoff)),
+          ),
+        );
+
+      for (const task of agedOut) {
+        const days = task.lastActivityAt
+          ? Math.floor((Date.now() - task.lastActivityAt.getTime()) / 86_400_000)
+          : null;
+        await transitionTask(
+          task.id,
+          TaskState.NEEDS_ATTENTION,
+          "pr-watcher",
+          days === null
+            ? "No recorded activity — stopped watching PR"
+            : `No activity for ${days} days — stopped watching PR`,
+        ).catch((err) => logger.warn({ err, taskId: task.id }, "Failed to age out task"));
       }
 
       // --- Session PR watching ---
@@ -198,6 +196,11 @@ export function startPrWatcherWorker() {
               });
             } catch (err) {
               logger.warn({ err, sessionPrId: spr.id }, "Failed to check session PR status");
+              const status = (err as { status?: number }).status;
+              const message = err instanceof Error ? err.message : String(err);
+              if (status === 401 || message.includes("Bad credentials")) {
+                recordAuthEvent("github", message, "pr-watcher").catch(() => {});
+              }
             }
           }
         }

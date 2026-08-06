@@ -10,6 +10,7 @@ import type {
   RepoMetadata,
   RepoContent,
 } from "@optio/shared";
+import { httpError } from "./http-error.js";
 
 export class GitLabPlatform implements GitPlatform {
   readonly type = "gitlab" as const;
@@ -40,7 +41,7 @@ export class GitLabPlatform implements GitPlatform {
     const res = await fetch(url, init);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`GitLab API error ${res.status}: ${body}`);
+      throw httpError(`GitLab API error ${res.status}: ${body}`, res.status);
     }
     return (await res.json()) as T;
   }
@@ -324,7 +325,7 @@ export class GitLabPlatform implements GitPlatform {
     // Ignore 409 (label already exists)
     if (!res.ok && res.status !== 409) {
       const body = await res.text().catch(() => "");
-      throw new Error(`GitLab API error ${res.status}: ${body}`);
+      throw httpError(`GitLab API error ${res.status}: ${body}`, res.status);
     }
   }
 

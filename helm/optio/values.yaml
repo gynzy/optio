@@ -33,6 +33,8 @@ api:
   env:
     LOG_LEVEL: info
     OPTIO_PR_WATCH_INTERVAL: "120000"
+    # Stop spending GitHub API calls on tasks idle for longer than this.
+    OPTIO_PR_WATCH_MAX_AGE_DAYS: "5"
   # Pod anti-affinity spreads API replicas across nodes.
   # "soft" = preferredDuringSchedulingIgnoredDuringExecution (default)
   # "hard" = requiredDuringSchedulingIgnoredDuringExecution

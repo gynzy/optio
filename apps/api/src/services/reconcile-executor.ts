@@ -13,12 +13,15 @@ import { logger } from "../logger.js";
  * `applied` — the action ran to completion, state was mutated (if any).
  * `stale`   — the CAS guard found a newer updated_at; caller should re-enqueue.
  * `skipped` — action was a noop / clearControlIntent that produced no mutation.
+ * `invalid` — the decision can never be applied (e.g. an illegal state edge).
+ *             Retrying is pointless; the caller must not re-enqueue.
  * `error`   — something threw; caller should record + re-enqueue with backoff.
  */
 export type ExecuteOutcome =
   | { status: "applied"; reason: string }
   | { status: "stale"; reason: string }
   | { status: "skipped"; reason: string }
+  | { status: "invalid"; reason: string }
   | { status: "error"; reason: string; error: unknown };
 
 /**
@@ -27,10 +30,15 @@ export type ExecuteOutcome =
  */
 async function patchPrStatusFields(taskId: string, snapshot: WorldSnapshot): Promise<void> {
   if (snapshot.run.kind !== "repo" || !snapshot.pr) return;
+  const { pr } = snapshot;
+  // Preserve the "conflicts" sentinel the merge-conflict edge writes — the
+  // guard in reconcileRepo compares against it, so clobbering it here would
+  // make that edge re-fire on every pass.
+  const conflicted = pr.mergeable === false && pr.state === "open";
   await db
     .update(tasks)
     .set({
-      prChecksStatus: snapshot.pr.checksStatus,
+      prChecksStatus: conflicted ? "conflicts" : snapshot.pr.checksStatus,
       prReviewStatus: snapshot.pr.reviewStatus,
       prState: snapshot.pr.state,
     })
@@ -167,10 +175,16 @@ async function applyRepoTransition(
 
     return { status: "applied", reason: `transition:${action.to}` };
   } catch (err) {
-    // StateRaceError means another worker won; treat as stale.
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("StateRace") || msg.includes("Invalid state transition")) {
+    // StateRaceError means another worker won — re-reading truth can succeed.
+    if (msg.includes("StateRace")) {
       return { status: "stale", reason: msg };
+    }
+    // An illegal edge is a decision bug, not a race: no amount of re-reading
+    // makes it applicable. Retrying it spins the reconciler and burns the
+    // GitHub rate limit rebuilding the snapshot on every pass.
+    if (msg.includes("Invalid state transition")) {
+      return { status: "invalid", reason: msg };
     }
     return { status: "error", reason: msg, error: err };
   }
@@ -363,8 +377,10 @@ async function applyResumeAgent(
   const status = snapshot.run.status;
   const prLabel = inferPrLabel(status.prUrl);
   const { prompt, trigger, jobSuffix, freshSession } = buildResumeContext(action.resumeReason, {
+    // Prefer what this pass just observed — it includes the recent inline
+    // comments — and fall back to the last value persisted on the row.
     prLabel,
-    reviewComments: status.prReviewComments ?? "",
+    reviewComments: snapshot.pr?.latestReviewComments ?? status.prReviewComments ?? "",
   });
 
   // Two-step transition matches the existing pr-watcher behavior so the UI
