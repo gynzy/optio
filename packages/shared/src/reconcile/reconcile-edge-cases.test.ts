@@ -809,7 +809,7 @@ describe("review subtask — blocking gate", () => {
 // ─── FAILED with open PR ───
 
 describe("FAILED — PR still watched", () => {
-  it("failed + PR open, autoResume cannot resume failed (edge: skip)", () => {
+  it("failed + conflicted PR only refreshes status (needs_attention is illegal from failed)", () => {
     const s = repoSnapshot(
       {},
       {
@@ -837,11 +837,10 @@ describe("FAILED — PR still watched", () => {
         },
       },
     );
-    // canResume = false for FAILED → falls through to needs_attention path.
+    // FAILED → NEEDS_ATTENTION is not a legal edge, so the escalation branches
+    // are skipped entirely; only a legal merged/closed transition or a plain
+    // status refresh may come out of a failed task.
     const action = reconcileRepo(s);
-    expect(action.kind).toBe("transition");
-    if (action.kind === "transition") {
-      expect(action.to).toBe(TaskState.NEEDS_ATTENTION);
-    }
+    expect(action.kind).not.toBe("transition");
   });
 });

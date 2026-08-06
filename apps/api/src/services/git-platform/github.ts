@@ -10,6 +10,7 @@ import type {
   RepoMetadata,
   RepoContent,
 } from "@optio/shared";
+import { httpError } from "./http-error.js";
 
 export class GitHubPlatform implements GitPlatform {
   readonly type = "github" as const;
@@ -37,7 +38,7 @@ export class GitHubPlatform implements GitPlatform {
     const res = await fetch(url, init);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`GitHub API error ${res.status}: ${body}`);
+      throw httpError(`GitHub API error ${res.status}: ${body}`, res.status);
     }
     return (await res.json()) as T;
   }
@@ -196,7 +197,7 @@ export class GitHubPlatform implements GitPlatform {
     });
     if (!res.ok && res.status !== 422) {
       const body = await res.text().catch(() => "");
-      throw new Error(`GitHub API error ${res.status}: ${body}`);
+      throw httpError(`GitHub API error ${res.status}: ${body}`, res.status);
     }
   }
 

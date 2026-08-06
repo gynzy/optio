@@ -387,7 +387,16 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
   // PR closed without merge → fail (unless already failed).
   if (pr.state === "closed") {
     if (status.state === TaskState.FAILED) {
-      return { kind: "noop", reason: "pr_closed_already_failed" };
+      // Already failed, so there is nothing to transition — but record the
+      // closed PR state if we haven't yet, so the watcher stops polling it.
+      if (status.prState === "closed") {
+        return { kind: "noop", reason: "pr_closed_already_failed" };
+      }
+      return {
+        kind: "patchStatus",
+        statusPatch: { prState: "closed" },
+        reason: "pr_closed_already_failed",
+      };
     }
     return {
       kind: "transition",
@@ -395,14 +404,20 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
       statusPatch: {
         prState: "closed",
         prChecksStatus: effectiveChecksStatus(pr, status),
-        errorMessage: "PR was closed without merging",
+        errorMessage: pr.gone
+          ? "PR no longer exists on the remote — it was deleted, or the link was misdetected"
+          : "PR was closed without merging",
       },
       trigger: "pr_closed",
-      reason: "pr_closed",
+      reason: pr.gone ? "pr_gone" : "pr_closed",
     };
   }
 
-  const canResume = status.state !== TaskState.FAILED;
+  // FAILED is terminal for the reconciler apart from the merged/closed paths
+  // above: NEEDS_ATTENTION is not a legal edge out of FAILED, and resuming
+  // needs explicit user intent. Proposing either would be rejected on every
+  // pass, and each pass costs three GitHub API calls to rebuild the snapshot.
+  const isFailed = status.state === TaskState.FAILED;
   const prev = {
     checks: status.prChecksStatus,
     review: status.prReviewStatus,
@@ -410,11 +425,12 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
 
   const autoResumeAllowed =
     snapshot.settings.autoResume &&
-    canResume &&
+    !isFailed &&
     snapshot.settings.recentAutoResumeCount < snapshot.settings.maxAutoResumes;
 
-  // Merge conflicts (edge-triggered).
-  if (pr.mergeable === false && pr.state === "open" && prev.checks !== "conflicts") {
+  // Merge conflicts (edge-triggered). The patch must write the same sentinel
+  // this guard compares against, or the edge re-fires forever.
+  if (!isFailed && pr.mergeable === false && pr.state === "open" && prev.checks !== "conflicts") {
     if (autoResumeAllowed) {
       return {
         kind: "resumeAgent",
@@ -425,14 +441,19 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
     return {
       kind: "transition",
       to: TaskState.NEEDS_ATTENTION,
-      statusPatch: { prChecksStatus: "failing" },
+      statusPatch: { prChecksStatus: "conflicts" },
       trigger: "merge_conflicts",
       reason: "pr_conflicts_needs_attention",
     };
   }
 
   // CI just started failing.
-  if (pr.checksStatus === "failing" && prev.checks !== "failing" && pr.state === "open") {
+  if (
+    !isFailed &&
+    pr.checksStatus === "failing" &&
+    prev.checks !== "failing" &&
+    pr.state === "open"
+  ) {
     if (autoResumeAllowed) {
       return {
         kind: "resumeAgent",
@@ -485,7 +506,7 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
   }
 
   // Review requested changes (edge-triggered).
-  if (pr.reviewStatus === "changes_requested" && prev.review !== "changes_requested") {
+  if (!isFailed && pr.reviewStatus === "changes_requested" && prev.review !== "changes_requested") {
     if (autoResumeAllowed) {
       return {
         kind: "resumeAgent",
@@ -496,7 +517,12 @@ function decideFromPrStatus(snapshot: WorldSnapshot, allowFailComplete: boolean)
     return {
       kind: "transition",
       to: TaskState.NEEDS_ATTENTION,
-      statusPatch: { prReviewStatus: "changes_requested" },
+      // Persist the reviewer's remarks: a later manual resume builds its prompt
+      // from this column, and by then the observed PR status is long gone.
+      statusPatch: {
+        prReviewStatus: "changes_requested",
+        prReviewComments: pr.latestReviewComments,
+      },
       trigger: "review_changes_requested",
       reason: "review_changes_needs_attention",
     };

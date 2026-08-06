@@ -7,6 +7,7 @@ import type {
   Run,
   PrStatus,
   DependencyObservation,
+  Action,
 } from "./types.js";
 import { TaskState } from "../types/task.js";
 
@@ -861,7 +862,7 @@ describe("reconcileRepo — FAILED", () => {
     if (action.kind === "transition") expect(action.to).toBe(TaskState.COMPLETED);
   });
 
-  it("with closed PR already failed → noop (no double-fail)", () => {
+  it("with closed PR already failed → records prState so watching stops", () => {
     const s = snapshot(
       {},
       {
@@ -871,7 +872,147 @@ describe("reconcileRepo — FAILED", () => {
       },
       { pr: makePr({ state: "closed" }) },
     );
+    const action = reconcileRepo(s);
+    expect(action.kind).toBe("patchStatus");
+    if (action.kind === "patchStatus") expect(action.statusPatch.prState).toBe("closed");
+  });
+
+  it("with closed PR already recorded → noop (no double-fail)", () => {
+    const s = snapshot(
+      {},
+      {
+        state: TaskState.FAILED,
+        prUrl: "https://github.com/acme/repo/pull/1",
+        prNumber: 1,
+        prState: "closed",
+      },
+      { pr: makePr({ state: "closed" }) },
+    );
     expect(reconcileRepo(s).kind).toBe("noop");
+  });
+
+  it("a deleted PR fails the task with a distinct reason", () => {
+    const s = snapshot({}, openedPr(), {
+      pr: makePr({ state: "closed", gone: true }),
+    });
+    const action = reconcileRepo(s);
+    expect(action.reason).toBe("pr_gone");
+    if (action.kind === "transition") {
+      expect(action.to).toBe(TaskState.FAILED);
+      expect(action.statusPatch?.prState).toBe("closed");
+    }
+  });
+
+  // FAILED → NEEDS_ATTENTION is not a legal edge (see state-machine.ts). A
+  // decision that proposes it can never be applied, and the executor retries
+  // it forever — 3 GitHub API calls per pass — until the rate limit dies.
+  const failedWithPr = (o: Partial<RepoRunStatus> = {}): Partial<RepoRunStatus> => ({
+    state: TaskState.FAILED,
+    prUrl: "https://github.com/acme/repo/pull/1",
+    prNumber: 1,
+    ...o,
+  });
+
+  const openedPr = (): Partial<RepoRunStatus> => ({
+    state: TaskState.PR_OPENED,
+    prUrl: "https://github.com/acme/repo/pull/1",
+    prNumber: 1,
+  });
+
+  it("conflicted open PR never proposes NEEDS_ATTENTION", () => {
+    const s = snapshot({}, failedWithPr({ prChecksStatus: "passing" }), {
+      pr: makePr({ mergeable: false, checksStatus: "passing" }),
+    });
+    const action = reconcileRepo(s);
+    if (action.kind === "transition") expect(action.to).not.toBe(TaskState.NEEDS_ATTENTION);
+  });
+
+  it("failing CI never proposes NEEDS_ATTENTION", () => {
+    const s = snapshot({}, failedWithPr({ prChecksStatus: "passing" }), {
+      pr: makePr({ checksStatus: "failing" }),
+    });
+    const action = reconcileRepo(s);
+    if (action.kind === "transition") expect(action.to).not.toBe(TaskState.NEEDS_ATTENTION);
+  });
+
+  it("review requesting changes never proposes NEEDS_ATTENTION", () => {
+    const s = snapshot({}, failedWithPr({ prReviewStatus: "approved" }), {
+      pr: makePr({ reviewStatus: "changes_requested" }),
+    });
+    const action = reconcileRepo(s);
+    if (action.kind === "transition") expect(action.to).not.toBe(TaskState.NEEDS_ATTENTION);
+  });
+});
+
+// ── Edge-trigger convergence ────────────────────────────────────────────────
+
+// Every edge-triggered decision must de-duplicate itself: once its statusPatch
+// has been applied, deciding again on otherwise-unchanged truth must not
+// re-propose the same action. A guard that compares against a sentinel its own
+// patch never writes re-fires on every pass, and because each pass rebuilds the
+// snapshot from GitHub (3 API calls), it exhausts the installation rate limit.
+describe("reconcileRepo — edge triggers converge on the second pass", () => {
+  const opened = (o: Partial<RepoRunStatus> = {}): Partial<RepoRunStatus> => ({
+    state: TaskState.PR_OPENED,
+    prUrl: "https://github.com/acme/repo/pull/1",
+    prNumber: 1,
+    ...o,
+  });
+
+  /** Re-decide after applying the action's statusPatch, the way the executor does. */
+  function afterApplying(
+    action: Action,
+    status: Partial<RepoRunStatus>,
+    extras: Partial<WorldSnapshot>,
+  ): Action {
+    const patch = action.kind === "transition" ? (action.statusPatch ?? {}) : {};
+    return reconcileRepo(snapshot({}, { ...status, ...patch }, extras));
+  }
+
+  it("merge conflicts settle after one pass", () => {
+    const status = opened({ prChecksStatus: "passing" });
+    const extras = { pr: makePr({ mergeable: false, checksStatus: "passing" }) };
+
+    const first = reconcileRepo(snapshot({}, status, extras));
+    expect(first.reason).toBe("pr_conflicts_needs_attention");
+
+    expect(afterApplying(first, status, extras).reason).not.toBe("pr_conflicts_needs_attention");
+  });
+
+  it("failing CI settles after one pass", () => {
+    const status = opened({ prChecksStatus: "passing" });
+    const extras = { pr: makePr({ checksStatus: "failing" }) };
+
+    const first = reconcileRepo(snapshot({}, status, extras));
+    expect(first.reason).toBe("ci_failing_needs_attention");
+
+    expect(afterApplying(first, status, extras).reason).not.toBe("ci_failing_needs_attention");
+  });
+
+  it("review requesting changes persists the reviewer's remarks", () => {
+    const s = snapshot({}, opened({ prChecksStatus: "passing", prReviewStatus: "approved" }), {
+      pr: makePr({
+        checksStatus: "passing",
+        reviewStatus: "changes_requested",
+        latestReviewComments: "please rename this",
+      }),
+    });
+    const action = reconcileRepo(s);
+    // A later manual resume builds its prompt from this column, so the
+    // observed comments have to be written down now.
+    if (action.kind === "transition") {
+      expect(action.statusPatch?.prReviewComments).toBe("please rename this");
+    }
+  });
+
+  it("review requesting changes settles after one pass", () => {
+    const status = opened({ prChecksStatus: "passing", prReviewStatus: "approved" });
+    const extras = { pr: makePr({ checksStatus: "passing", reviewStatus: "changes_requested" }) };
+
+    const first = reconcileRepo(snapshot({}, status, extras));
+    expect(first.reason).toBe("review_changes_needs_attention");
+
+    expect(afterApplying(first, status, extras).reason).not.toBe("review_changes_needs_attention");
   });
 });
 

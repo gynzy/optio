@@ -116,6 +116,8 @@ export interface PrStatus {
   reviewStatus: "none" | "pending" | "approved" | "changes_requested";
   latestReviewComments: string | null;
   createdAt: string | null;
+  /** The PR no longer exists (404). Reported as closed, but never re-polled. */
+  gone?: boolean;
 }
 
 export interface DependencyObservation {
