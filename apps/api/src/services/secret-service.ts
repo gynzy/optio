@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, or, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { secrets } from "../db/schema.js";
 import type { SecretRef } from "@optio/shared";
@@ -182,7 +182,9 @@ export async function listSecrets(
 ): Promise<SecretRef[]> {
   const conditions = [];
   if (scope) conditions.push(eq(secrets.scope, scope));
-  if (workspaceId) conditions.push(eq(secrets.workspaceId, workspaceId));
+  // Global secrets (no workspace) apply to every workspace
+  if (workspaceId)
+    conditions.push(or(eq(secrets.workspaceId, workspaceId), isNull(secrets.workspaceId)));
 
   const query =
     conditions.length > 0
