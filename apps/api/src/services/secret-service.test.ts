@@ -47,34 +47,38 @@ interface MockSecretData {
   name: string;
   scope: string;
   value: string; // plaintext - will be encrypted when retrieved
+  workspaceId?: string;
 }
 
-// ── Drizzle Expression Parser ───────────────────────────────────────────────
+// ── Drizzle Expression Evaluator ────────────────────────────────────────────
 
-/** Extract {column: value} filters from a Drizzle SQL condition (eq/and expressions) */
-function parseWhereCondition(condition: any): Record<string, string> {
-  const filters: Record<string, string> = {};
-  if (!condition?.queryChunks) return filters;
+/** Join a StringChunk's value ("[' and ']") into plain text */
+function chunkText(chunk: any): string {
+  if (!chunk?.value) return "";
+  return Array.isArray(chunk.value) ? chunk.value.join("") : String(chunk.value);
+}
 
-  // Walk through queryChunks to find nested SQL objects (from and())
-  for (const chunk of condition.queryChunks) {
-    if (chunk?.queryChunks) {
-      Object.assign(filters, parseWhereCondition(chunk));
-    }
+/** Evaluate a Drizzle SQL condition (eq/and/or/isNull) against a mock row */
+function conditionMatches(condition: any, row: Record<string, string | null>): boolean {
+  const chunks = condition?.queryChunks;
+  if (!chunks) return true;
+
+  // Branch node (from and()/or()): recurse into nested SQL objects
+  const subConditions = chunks.filter((c: any) => c?.queryChunks);
+  if (subConditions.length > 0) {
+    const isOr = chunks.some((c: any) => chunkText(c).includes(" or "));
+    return isOr
+      ? subConditions.some((s: any) => conditionMatches(s, row))
+      : subConditions.every((s: any) => conditionMatches(s, row));
   }
 
-  // Handle eq() - queryChunks structure: [StringChunk, column, StringChunk, value, StringChunk]
-  const chunks = condition.queryChunks;
-  if (chunks.length >= 4) {
-    const col = typeof chunks[1] === "string" ? chunks[1] : null;
-    const val = typeof chunks[3] === "string" ? chunks[3] : null;
-    if (col && val) {
-      const colName = col.replace("secrets.", ""); // "secrets.scope" -> "scope"
-      filters[colName] = val;
-    }
-  }
-
-  return filters;
+  // Leaf node: eq() is [StringChunk, column, " = ", Param, StringChunk],
+  // isNull() is [StringChunk, column, " is null"]. Columns are plain strings
+  // because the schema module is mocked above.
+  const col = typeof chunks[1] === "string" ? chunks[1].replace("secrets.", "") : null;
+  if (!col) return true;
+  if (chunks.some((c: any) => chunkText(c).includes("is null"))) return row[col] == null;
+  return typeof chunks[3] === "string" ? row[col] === chunks[3] : true;
 }
 
 describe("secret-service", () => {
@@ -99,19 +103,18 @@ describe("secret-service", () => {
     (db.select as any) = vi.fn().mockImplementation(() => ({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockImplementation((condition) => {
-          const filters = parseWhereCondition(condition);
-
-          // Filter mock data based on extracted conditions
-          const matches = mockSecrets.filter((s) => {
-            if (filters.scope && s.scope !== filters.scope) return false;
-            if (filters.name && s.name !== filters.name) return false;
-            return true;
-          });
+          const matches = mockSecrets.filter((s) =>
+            conditionMatches(condition, {
+              name: s.name,
+              scope: s.scope,
+              workspace_id: s.workspaceId ?? null,
+            }),
+          );
 
           // Return encrypted rows (simulating DB storage)
           return Promise.resolve(
             matches.map((s) => {
-              const aad = buildSecretAAD(s.name, s.scope, null);
+              const aad = buildSecretAAD(s.name, s.scope, s.workspaceId ?? null);
               const blob = encrypt(s.value, aad);
               return {
                 id: `mock-${s.name}-${s.scope}`,
@@ -520,6 +523,25 @@ describe("secret-service", () => {
       expect(repoSecrets).toHaveLength(1);
       expect(repoSecrets[0].name).toBe("REPO_KEY");
     });
+
+    it("includes global (no-workspace) secrets when filtering by workspace", async () => {
+      setupSecretStoreMock([{ name: "SLACK_WEBHOOK_URL", scope: "global", value: "hook" }]);
+
+      const result = await listSecrets("global", "ws-1");
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("SLACK_WEBHOOK_URL");
+    });
+
+    it("returns both workspace-owned and global secrets for a workspace", async () => {
+      setupSecretStoreMock([
+        { name: "WS_KEY", scope: "global", value: "w", workspaceId: "ws-1" },
+        { name: "GLOBAL_KEY", scope: "global", value: "g" },
+        { name: "OTHER_WS_KEY", scope: "global", value: "o", workspaceId: "ws-2" },
+      ]);
+
+      const result = await listSecrets("global", "ws-1");
+      expect(result.map((s) => s.name).sort()).toEqual(["GLOBAL_KEY", "WS_KEY"]);
+    });
   });
 
   describe("deleteSecret", () => {
@@ -581,6 +603,13 @@ describe("secret-service", () => {
 
       const result = await resolveSecretsForSetup("https://github.com/owner/empty-repo");
       expect(result).toEqual({});
+    });
+
+    it("resolves global (no-workspace) secrets for a workspace-scoped task", async () => {
+      setupSecretStoreMock([{ name: "SLACK_WEBHOOK_URL", scope: "global", value: "hook-url" }]);
+
+      const result = await resolveSecretsForSetup("https://github.com/owner/repo", "ws-1");
+      expect(result.SLACK_WEBHOOK_URL).toBe("hook-url");
     });
   });
 });
