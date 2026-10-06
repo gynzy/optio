@@ -21,8 +21,8 @@ local pulumiSetupSteps(pulumiVersion) =
     }
   ) +
   base.action('setup-gcloud', uses=actions.gcp_setup_gcloud_action) +
-  base.action('pulumi-cli-setup', actions.pulumi_action, with={'pulumi-version': pulumiVersion}) +
-  base.action('jsonnet-setup', 'kobtea/setup-jsonnet-action@78f57bb20bd6cf4914c27dd44610a7d923455ecf') +  // v2
+  base.action('pulumi-cli-setup', actions.pulumi_action, with={ 'pulumi-version': pulumiVersion }) +
+  base.action('jsonnet-setup', 'kobtea/setup-jsonnet-action@70829363efe23716484497ae28a5a97c6e3c1443') +  // 2026-05-08
   misc.install1Password() +
   misc.getLockStep(lockName='lock-pulumi', lockTimeout='1200');
 
@@ -48,6 +48,24 @@ local pulumiDefaultEnvironment(stack) = {
   }
 );
 
+// Refreshing the stack is its own pulumi invocation rather than the action's
+// `refresh` input. That input maps to `--refresh` on the command, which holds the
+// refreshed state only for the duration of that command and runs the pulumi program
+// as part of the refresh. A standalone refresh commits the refreshed state to the
+// state file and leaves the program unevaluated, so drift that was picked up
+// survives a command that fails or turns out to be a no-op.
+local pulumiRefreshStep(stack, pulumiDir, stepName, environmentVariables, upsert=true) =
+  base.action(
+    name=stepName + '-refresh',
+    uses=actions.pulumi_action,
+    with={
+      command: 'refresh',
+      'stack-name': stack,
+      'work-dir': pulumiDir,
+    } + (if upsert then { upsert: true } else {}),
+    env=pulumiDefaultEnvironment(stack) + environmentVariables,
+  );
+
 {
   /**
    * Creates a GitHub Actions step to preview Pulumi infrastructure changes.
@@ -66,6 +84,7 @@ local pulumiDefaultEnvironment(stack) = {
     stepName='pulumi-preview-' + stack,
     environmentVariables={},
   )::
+    pulumiRefreshStep(stack, pulumiDir, stepName, environmentVariables) +
     base.action(
       name=stepName,
       uses=actions.pulumi_action,
@@ -76,7 +95,6 @@ local pulumiDefaultEnvironment(stack) = {
         'comment-on-pr': true,
         'github-token': '${{ secrets.GITHUB_TOKEN }}',
         upsert: true,
-        refresh: true,
       },
       env=pulumiDefaultEnvironment(stack) + environmentVariables,
     ),
@@ -96,6 +114,7 @@ local pulumiDefaultEnvironment(stack) = {
     stepName='pulumi-deploy-' + stack,
     environmentVariables={},
   )::
+    pulumiRefreshStep(stack, pulumiDir, stepName, environmentVariables) +
     base.action(
       name=stepName,
       uses=actions.pulumi_action,
@@ -104,7 +123,6 @@ local pulumiDefaultEnvironment(stack) = {
         'stack-name': stack,
         'work-dir': pulumiDir,
         upsert: true,
-        refresh: true,
       },
       env=pulumiDefaultEnvironment(stack) + environmentVariables,
     ),
@@ -129,6 +147,7 @@ local pulumiDefaultEnvironment(stack) = {
     // pulumi destroy is a destructive operation, so we only want to run it on stacks that contain pr-
     assert std.length(std.findSubstr('pr-', stack)) > 0;
 
+    pulumiRefreshStep(stack, pulumiDir, stepName, environmentVariables, upsert=false) +
     base.action(
       name=stepName,
       uses=actions.pulumi_action,
@@ -137,7 +156,6 @@ local pulumiDefaultEnvironment(stack) = {
         remove: true,
         'stack-name': stack,
         'work-dir': pulumiDir,
-        refresh: true,
       },
       env=pulumiDefaultEnvironment(stack) + environmentVariables,
     ),
@@ -163,6 +181,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {jobs} - Complete GitHub Actions job for Pulumi preview
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                             does not check minimalReleaseAge in ci (causes ci/cd failures)
    */
   pulumiPreviewJob(
     stack,
@@ -182,6 +202,7 @@ local pulumiDefaultEnvironment(stack) = {
     blobless=null,
     retryAttempts=null,
     cloneTimeout=null,
+    trustLockFile=null,
   )::
     base.ghJob(
       'pulumi-preview-' + stack,
@@ -191,7 +212,7 @@ local pulumiDefaultEnvironment(stack) = {
       steps=[
         (
           if packageManager == 'yarn' then yarn.checkoutAndYarn(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, ignoreEngines=ignoreEngines, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
-          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
+          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout, trustLockFile=trustLockFile)
         ),
         pulumiSetupSteps(pulumiVersion),
         additionalSetupSteps,
@@ -319,6 +340,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {jobs} - GitHub Actions job that previews both test and production stacks
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    */
   pulumiPreviewTestAndProdJob(
     pulumiDir=null,
@@ -339,6 +362,7 @@ local pulumiDefaultEnvironment(stack) = {
     retryAttempts=null,
     cloneTimeout=null,
     pulumiVersion=defaultPulumiVersion,
+    trustLockFile=null,
   )::
     base.ghJob(
       'pulumi-preview',
@@ -348,7 +372,7 @@ local pulumiDefaultEnvironment(stack) = {
       steps=[
         (
           if packageManager == 'yarn' then yarn.checkoutAndYarn(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, ignoreEngines=ignoreEngines, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
-          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
+          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout, trustLockFile=trustLockFile)
         ),
         pulumiSetupSteps(pulumiVersion),
         additionalSetupSteps,
@@ -381,6 +405,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {jobs} - GitHub Actions job for Pulumi deployment with failure notifications
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                             does not check minimalReleaseAge in ci (causes ci/cd failures)
    */
   pulumiDeployJob(
     stack,
@@ -403,6 +429,7 @@ local pulumiDefaultEnvironment(stack) = {
     retryAttempts=null,
     cloneTimeout=null,
     pulumiVersion=defaultPulumiVersion,
+    trustLockFile=null,
   )::
     base.ghJob(
       name=jobName,
@@ -413,7 +440,7 @@ local pulumiDefaultEnvironment(stack) = {
       steps=[
         (
           if packageManager == 'yarn' then yarn.checkoutAndYarn(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, ignoreEngines=ignoreEngines, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
-          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout)
+          else if packageManager == 'pnpm' then pnpm.checkoutAndPnpm(ref=gitCloneRef, cacheName=cacheName, fullClone=false, workingDirectory=yarnDir, source=yarnNpmSource, pnpmInstallArgs=pnpmInstallArgs, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout, trustLockFile=trustLockFile)
         ),
         pulumiSetupSteps(pulumiVersion),
         additionalSetupSteps,
@@ -443,6 +470,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {jobs} - GitHub Actions job for test environment deployment
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    */
   pulumiDeployTestJob(
     stack='test',
@@ -462,6 +491,7 @@ local pulumiDefaultEnvironment(stack) = {
     retryAttempts=null,
     cloneTimeout=null,
     pulumiVersion=defaultPulumiVersion,
+    trustLockFile=null,
   )::
     self.pulumiDeployJob(
       stack,
@@ -477,6 +507,7 @@ local pulumiDefaultEnvironment(stack) = {
       additionalSetupSteps=additionalSetupSteps,
       ignoreEngines=ignoreEngines,
       packageManager=packageManager,
+      trustLockFile=trustLockFile,
       blobless=blobless,
       retryAttempts=retryAttempts,
       cloneTimeout=cloneTimeout,
@@ -504,6 +535,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {jobs} - GitHub Actions job for production deployment
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    */
   pulumiDeployProdJob(
     stack='prod',
@@ -523,6 +556,7 @@ local pulumiDefaultEnvironment(stack) = {
     retryAttempts=null,
     cloneTimeout=null,
     pulumiVersion=defaultPulumiVersion,
+    trustLockFile=null,
   )::
     self.pulumiDeployJob(
       stack,
@@ -538,6 +572,7 @@ local pulumiDefaultEnvironment(stack) = {
       additionalSetupSteps=additionalSetupSteps,
       ignoreEngines=ignoreEngines,
       packageManager=packageManager,
+      trustLockFile=trustLockFile,
       blobless=blobless,
       retryAttempts=retryAttempts,
       cloneTimeout=cloneTimeout,
@@ -629,6 +664,8 @@ local pulumiDefaultEnvironment(stack) = {
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
    * @param {string} [pulumiVersion=defaultPulumiVersion] - Pulumi CLI version to install
    * @returns {workflows} - Complete set of Pulumi preview and deployment pipelines
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    */
   pulumiDefaultPipeline(
     pulumiDir='.',
@@ -648,6 +685,7 @@ local pulumiDefaultEnvironment(stack) = {
     retryAttempts=null,
     cloneTimeout=null,
     pulumiVersion=defaultPulumiVersion,
+    trustLockFile=null,
   )::
     base.pipeline(
       'pulumi-preview',
@@ -655,6 +693,7 @@ local pulumiDefaultEnvironment(stack) = {
         self.pulumiPreviewTestAndProdJob(
           pulumiDir=pulumiDir,
           packageManager=packageManager,
+          trustLockFile=trustLockFile,
           yarnDir=yarnDir,
           yarnNpmSource=yarnNpmSource,
           cacheName=cacheName,
@@ -678,6 +717,7 @@ local pulumiDefaultEnvironment(stack) = {
         self.pulumiDeployTestJob(
           pulumiDir=pulumiDir,
           packageManager=packageManager,
+          trustLockFile=trustLockFile,
           yarnDir=yarnDir,
           yarnNpmSource=yarnNpmSource,
           cacheName=cacheName,
@@ -695,6 +735,7 @@ local pulumiDefaultEnvironment(stack) = {
         self.pulumiDeployProdJob(
           pulumiDir=pulumiDir,
           packageManager=packageManager,
+          trustLockFile=trustLockFile,
           yarnDir=yarnDir,
           yarnNpmSource=yarnNpmSource,
           cacheName=cacheName,

@@ -1,4 +1,9 @@
 # GENERATED with jsonnet - DO NOT EDIT MANUALLY
+#
+# Update the workflow by modifying the jsonnet files in this repository
+# or in the lib-jsonnet repository.
+# The root jsonnet file is usually .github.jsonnet in the root of this repository.
+
 "jobs":
   "create-merge-deployment-default-branch-to-production":
     "container":
@@ -7,6 +12,7 @@
     "permissions":
       "contents": "read"
       "deployments": "write"
+      "pull-requests": "read"
     "runs-on":
     - "ubuntu-latest"
     "steps":
@@ -15,35 +21,156 @@
     - "env":
         "GITHUB_REPOSITORY": "${{ github.repository }}"
         "GITHUB_TOKEN": "${{ github.token }}"
-        "PR_MERGE_COMMIT_SHA": "${{ github.sha }}"
+        "MERGE_SHA": "${{ github.sha }}"
+        "PR_HEAD_REF": "${{ github.event.pull_request.head.ref }}"
+        "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}"
+        "PR_HTML_URL": "${{ github.event.pull_request.html_url }}"
+        "PR_NUMBER": "${{ github.event.number }}"
+        "PR_TITLE": "${{ github.event.pull_request.title }}"
+        "STACK_NUMBER": "${{ github.event.pull_request.stack.number }}"
         "TARGET_BRANCH": "${{ github.event.pull_request.base.repo.default_branch }}"
-      "id": "assert-merge-sha-is-latest-commit"
-      "name": "assert merge sha is latest commit"
+      "id": "resolve-deployment"
+      "name": "resolve deployment"
       "run": |
-        HEAD_SHA=$(curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/${GITHUB_REPOSITORY}/branches/${TARGET_BRANCH} | jq -r .commit.sha);
-        if [ ${HEAD_SHA} == ${PR_MERGE_COMMIT_SHA} ]; then
-          echo "Merge sha is latest commit on branch ${TARGET_BRANCH}! HEAD_SHA: ${HEAD_SHA} PR_MERGE_COMMIT_SHA: ${PR_MERGE_COMMIT_SHA}";
-          echo "CREATE_DEPLOY_EVENT=true" >> $GITHUB_OUTPUT
-        else
-          echo "Merge sha is not latest commit on branch ${TARGET_BRANCH}! HEAD_SHA: ${HEAD_SHA} PR_MERGE_COMMIT_SHA: ${PR_MERGE_COMMIT_SHA}";
+        set -o pipefail
+        
+        api() {
+          curl -sSfL --retry 3 --retry-all-errors \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}$1";
+        }
+        
+        mrkdwn() {
+          sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g';
+        }
+        
+        write_multiline_output() {
+          DELIMITER="GYNZY_EOF_$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')";
+          {
+            echo "$1<<${DELIMITER}";
+            cat "$2";
+            echo "${DELIMITER}";
+          } >> $GITHUB_OUTPUT
+        }
+        
+        HEAD_SHA=$(api "/branches/${TARGET_BRANCH}" | jq -r '.commit.sha');
+        if [ "${HEAD_SHA}" != "${MERGE_SHA}" ]; then
+          echo "Commit ${MERGE_SHA} is not the tip of ${TARGET_BRANCH} (that is ${HEAD_SHA}). No deployment.";
           echo "CREATE_DEPLOY_EVENT=false" >> $GITHUB_OUTPUT
+          exit 0
         fi
-    - "if": "${{ github.event.pull_request.base.ref == github.event.pull_request.base.repo.default_branch && steps.assert-merge-sha-is-latest-commit.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
+        
+        PARENTS=$(api "/commits/${MERGE_SHA}" | jq -r '.parents[].sha');
+        PARENT_COUNT=$(printf '%s\n' "${PARENTS}" | wc -l)
+        if [ "${PARENT_COUNT}" -eq 1 ]; then
+          echo "Commit ${MERGE_SHA} has a single parent, so PR ${PR_NUMBER} was squashed or rebased and its own commit is the tip of ${TARGET_BRANCH}.";
+        elif [ "${PARENT_COUNT}" -eq 2 ] && printf '%s\n' "${PARENTS}" | grep -qx "${PR_HEAD_SHA}"; then
+          echo "Merge commit ${MERGE_SHA} has PR ${PR_NUMBER}'s head ${PR_HEAD_SHA} as a parent.";
+        else
+          echo "Merge commit ${MERGE_SHA} does not have PR ${PR_NUMBER}'s head ${PR_HEAD_SHA} as a parent, so another PR carries this merge. No deployment.";
+          echo "CREATE_DEPLOY_EVENT=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "PR ${PR_NUMBER} carries the merged result and will be deployed.";
+        echo "CREATE_DEPLOY_EVENT=true" >> $GITHUB_OUTPUT
+        echo "RELEASE_PAYLOAD=$(jq -nc \
+          --arg pr "${PR_NUMBER}" --arg branch "${PR_HEAD_REF}" \
+          '{pr: ($pr | tonumber), branch: $branch}')" >> $GITHUB_OUTPUT
+        
+        if [ -z "${STACK_NUMBER}" ]; then
+          echo "DEPLOY_SUBJECT=<${PR_HTML_URL}|*PR ${PR_NUMBER}*>" >> $GITHUB_OUTPUT
+          printf 'Title: %s\nBranch: %s\n' \
+            "$(printf '%s' "${PR_TITLE}" | mrkdwn)" \
+            "$(printf '%s' "${PR_HEAD_REF}" | mrkdwn)" > /tmp/deploy-details
+        else
+          echo "DEPLOY_SUBJECT=Stack ${STACK_NUMBER}" >> $GITHUB_OUTPUT
+          printf 'PRs in this stack:\n• <%s|PR %s>: %s\n' "${PR_HTML_URL}" "${PR_NUMBER}" \
+            "$(printf '%s' "${PR_TITLE}" | mrkdwn)" > /tmp/deploy-details
+        fi
+        write_multiline_output DEPLOY_DETAILS /tmp/deploy-details
+    - "continue-on-error": true
+      "env":
+        "GITHUB_REPOSITORY": "${{ github.repository }}"
+        "GITHUB_TOKEN": "${{ github.token }}"
+        "PR_NUMBER": "${{ github.event.number }}"
+        "STACK_NUMBER": "${{ github.event.pull_request.stack.number }}"
+        "TARGET_BRANCH": "${{ github.event.pull_request.base.repo.default_branch }}"
+      "id": "describe-released-stack-members"
+      "if": "${{ steps.resolve-deployment.outputs.CREATE_DEPLOY_EVENT == 'true' && github.event.pull_request.stack.number }}"
+      "name": "describe released stack members"
+      "run": |
+        set -o pipefail
+        
+        api() {
+          curl -sSfL --retry 3 --retry-all-errors \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}$1";
+        }
+        
+        mrkdwn() {
+          sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g';
+        }
+        
+        write_multiline_output() {
+          DELIMITER="GYNZY_EOF_$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')";
+          {
+            echo "$1<<${DELIMITER}";
+            cat "$2";
+            echo "${DELIMITER}";
+          } >> $GITHUB_OUTPUT
+        }
+        
+        api "/stacks/${STACK_NUMBER}" \
+          | jq -r '.pull_requests | reverse[] | [.number, .base.ref, .html_url, .title] | @tsv' > /tmp/stack-members-top-down
+        
+        FOUND_START=false
+        : > /tmp/released-members-top-down
+        while IFS="$(printf '\t')" read -r MEMBER_PR MEMBER_BASE MEMBER_URL MEMBER_TITLE; do
+          if [ "${MEMBER_PR}" = "${PR_NUMBER}" ]; then
+            FOUND_START=true
+          fi
+          if [ "${FOUND_START}" != true ]; then
+            continue
+          fi
+          printf '• <%s|PR %s>: %s\n' "${MEMBER_URL}" "${MEMBER_PR}" \
+            "$(printf '%s' "${MEMBER_TITLE}" | mrkdwn)" >> /tmp/released-members-top-down
+          if [ "${MEMBER_BASE}" = "${TARGET_BRANCH}" ]; then
+            break
+          fi
+        done < /tmp/stack-members-top-down
+        
+        if [ "${FOUND_START}" != true ]; then
+          echo "PR ${PR_NUMBER} is not in stack ${STACK_NUMBER}.";
+          exit 1
+        fi
+        tac /tmp/released-members-top-down > /tmp/released-members
+        echo "Released by this merge:";
+        cat /tmp/released-members
+        
+        printf 'PRs in this stack:\n' > /tmp/deploy-details
+        cat /tmp/released-members >> /tmp/deploy-details
+        write_multiline_output DEPLOY_DETAILS /tmp/deploy-details
+    - "if": "${{ steps.resolve-deployment.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
       "name": "publish-deploy-production-event"
       "uses": "chrnorm/deployment-action@500aa6a23c81ffa1acf71072aee3cfa2cc2e556a"
       "with":
         "auto-merge": "false"
         "description": "Auto deploy production on PR merge. pr: ${{ github.event.number }} ref: ${{ github.event.pull_request.head.sha }}"
         "environment": "production"
-        "payload": "{ \"pr\" : ${{ github.event.number }}, \"branch\": \"${{ github.head_ref }}\", \"base_ref\": \"${{ github.event.pull_request.base.sha }}\", \"head_ref\": \"${{ github.event.pull_request.head.sha }}\" }"
+        "payload": "${{ steps.resolve-deployment.outputs.RELEASE_PAYLOAD }}"
         "ref": "${{ github.event.pull_request.head.sha }}"
         "token": "${{ secrets.VIRKO_GITHUB_TOKEN }}"
-    - "if": "${{ github.event.pull_request.base.ref == github.event.pull_request.base.repo.default_branch && steps.assert-merge-sha-is-latest-commit.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
+    - "if": "${{ steps.resolve-deployment.outputs.CREATE_DEPLOY_EVENT == 'true' }}"
       "name": "sendSlackMessage"
       "uses": "act10ns/slack@d96404edccc6d6467fc7f8134a420c851b1e9054"
       "with":
         "channel": "#dev-deployments"
-        "message": "Deploy to production of <https://github.com/${{ github.repository }}/pull/${{ github.event.number }}|*PR ${{ github.event.number }}*> started!\nTitle: ${{ github.event.pull_request.title }}\nBranch: ${{ github.head_ref }}"
+        "message": "Deploy to production of ${{ steps.resolve-deployment.outputs.DEPLOY_SUBJECT }} started!\n${{ steps.describe-released-stack-members.outputs.DEPLOY_DETAILS || steps.resolve-deployment.outputs.DEPLOY_DETAILS }}"
         "status": "starting"
         "webhook-url": "${{ secrets.SLACK_WEBHOOK_DEPLOY_NOTIFICATION }}"
     "timeout-minutes": 30

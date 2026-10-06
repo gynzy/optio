@@ -13,9 +13,9 @@ local misc = import 'misc.jsonnet';
    * @param {string} [version='8.4'] - MySQL version to use ('8.0' or '8.4')
    * @returns {object} - MySQL service configuration for GitHub Actions
    */
-  mysql8service(database=null, password=null, root_password=null, username=null, port='3306', version="8.4")::
+  mysql8service(database=null, password=null, root_password=null, username=null, port='3306', version='8.4')::
     {
-      image: (if version == "8.0" then images.default_mysql8_image else images.default_mysql84_image),
+      image: (if version == '8.0' then images.default_mysql8_image else images.default_mysql84_image),
       credentials: {
         username: '_json_key',
         password: misc.secret('docker_gcr_io'),

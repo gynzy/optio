@@ -227,7 +227,7 @@ local servicesImport = import 'services.jsonnet';
     base.pipeline(
       'close-pr',
       [
-        helm.helmDeletePRJob(serviceName, options, helmPath, deploymentName, mysqlDeleteOptionsWithDefaults),
+        helm.helmDeletePRJob(serviceName, options, helmPath, deploymentName, mysqlDeleteOptions=mysqlDeleteOptionsWithDefaults),
       ],
       event={
         pull_request: {

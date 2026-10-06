@@ -79,29 +79,29 @@ local images = import 'images.jsonnet';
     // below only fetches the delta. Skipped at runtime when the mirror secret is empty.
     // Any failure leaves a clean workspace and continues normally.
     local seedSteps = (if skipSeed then [] else base.step(
-      'fetch git-mirror archive',
-      |||
-        seed() {
-          if ! command -v zstd >/dev/null 2>&1; then
-            if command -v apk >/dev/null 2>&1; then apk add --no-cache zstd tar wget || return 1;
-            elif command -v apt >/dev/null 2>&1; then apt update && apt install -y zstd tar wget || return 1;
-            else return 1; fi
-          fi
-          wget -q -O - "$GIT_HTTPS_ARCHIVE_MIRROR" | tar -C "$GITHUB_WORKSPACE" --extract --zstd -f - || return 1
-        }
-        if ! seed; then
-          echo "git-mirror seed failed; continuing with a clean checkout"
-          find "$GITHUB_WORKSPACE" -mindepth 1 -delete 2>/dev/null || true
-          exit 1
-        fi
-        echo "git-mirror seed succeeded"
-        exit 0
-      |||,
-      env={ GIT_HTTPS_ARCHIVE_MIRROR: secret('GIT_HTTPS_ARCHIVE_MIRROR') },
-      ifClause="${{ env.GIT_HTTPS_ARCHIVE_MIRROR != '' }}",
-      shell='bash',
-      continueOnError=true,
-    ));
+                         'fetch git-mirror archive',
+                         |||
+                           seed() {
+                             if ! command -v zstd >/dev/null 2>&1; then
+                               if command -v apk >/dev/null 2>&1; then apk add --no-cache zstd tar wget || return 1;
+                               elif command -v apt >/dev/null 2>&1; then apt update && apt install -y zstd tar wget || return 1;
+                               else return 1; fi
+                             fi
+                             wget -q -O - "$GIT_HTTPS_ARCHIVE_MIRROR" | tar -C "$GITHUB_WORKSPACE" --extract --zstd -f - || return 1
+                           }
+                           if ! seed; then
+                             echo "git-mirror seed failed; continuing with a clean checkout"
+                             find "$GITHUB_WORKSPACE" -mindepth 1 -delete 2>/dev/null || true
+                             exit 1
+                           fi
+                           echo "git-mirror seed succeeded"
+                           exit 0
+                         |||,
+                         env={ GIT_HTTPS_ARCHIVE_MIRROR: secret('GIT_HTTPS_ARCHIVE_MIRROR') },
+                         ifClause="${{ env.GIT_HTTPS_ARCHIVE_MIRROR != '' }}",
+                         shell='bash',
+                         continueOnError=true,
+                       ));
 
     // strip the ${{ }} from the IfClause so we can inject and add our own if clause
     local localIfClause = (if ifClause == null then null else std.strReplace(std.strReplace(ifClause, '${{ ', ''), ' }}', ''));
@@ -113,7 +113,7 @@ local images = import 'images.jsonnet';
     local retrySteps(name, withParams, baseIf, idPrefix) = std.flatMap(
       function(i)
         local isLast = (i == actualRetryAttempts);
-        local previousFailed = if i == 0 then '' else " && steps." + idPrefix + (i - 1) + ".outcome == 'failure'";
+        local previousFailed = if i == 0 then '' else ' && steps.' + idPrefix + (i - 1) + ".outcome == 'failure'";
         base.action(
           name + (if i == 0 then '' else ' (retry ' + i + ')'),
           actions.checkout_action,
@@ -131,7 +131,7 @@ local images = import 'images.jsonnet';
       sshSteps +
       retrySteps(
         'Check out repository code via ssh',
-        with + { 'ssh-key': '${{ secrets.VIRKO_GITHUB_SSH_KEY }}' },
+        with { 'ssh-key': '${{ secrets.VIRKO_GITHUB_SSH_KEY }}' },
         "steps.check-binaries.outputs.sshBinaryExists == 'true' && steps.check-binaries.outputs.gitBinaryExists == 'true'",
         'checkout-ssh-',
       ) +
@@ -144,29 +144,13 @@ local images = import 'images.jsonnet';
       base.step('git safe directory', "command -v git && git config --global --add safe.directory '*' || true")
     else
       seedSteps +
-      self.checkoutWithoutSshMagic(ifClause, fullClone, ref),
-
-  /**
-   * Creates a simple repository checkout without SSH fallback logic.
-   *
-   * @param {string} [ifClause=null] - Conditional expression for step execution
-   * @param {boolean} [fullClone=false] - Whether to perform full git clone (fetch-depth: 0)
-   * @param {string} [ref=null] - Specific git ref/branch/tag to checkout
-   * @param {boolean} [includeSubmodules=true] - Whether to checkout git submodules
-   * @returns {steps} - GitHub Actions steps for basic repository checkout
-   */
-  checkoutWithoutSshMagic(ifClause=null, fullClone=false, ref=null, includeSubmodules=true)::
-    local with =
-      (if fullClone then { 'fetch-depth': 0 } else {}) +
-      (if ref != null then { ref: ref } else {}) +
-      (if includeSubmodules then { submodules: 'recursive' } else {});
-    base.action(
-      'Check out repository code',
-      actions.checkout_action,
-      with=with,
-      ifClause=ifClause
-    ) +
-    base.step('git safe directory', "command -v git && git config --global --add safe.directory '*' || true"),
+      base.action(
+        'Check out repository code',
+        actions.checkout_action,
+        with=with,
+        ifClause=ifClause,
+      ) +
+      base.step('git safe directory', "command -v git && git config --global --add safe.directory '*' || true"),
 
   /**
    * Creates a linting step for a specific service using ESLint.
@@ -221,15 +205,32 @@ local images = import 'images.jsonnet';
    *
    * @param {boolean} [fetch_upstream=false] - Whether to fetch the latest lib-jsonnet from upstream (deprecated)
    * @param {string} [runsOn=null] - Runner type to use for the job
+   * @param {array} [formatPaths=null] - Files and directories to check with jsonnetfmt; null skips the check.
+                                         Point this at your own jsonnet only. A consumer's .github/jsonnet/ is a
+                                         vendored copy of this library, so including it checks this library's
+                                         formatting rather than your own.
    * @returns {jobs} - GitHub Actions job that validates jsonnet workflow generation
    */
-  verifyJsonnet(fetch_upstream=false, runsOn=null)::
+  verifyJsonnet(fetch_upstream=false, runsOn=null, formatPaths=null)::
     base.ghJob(
       'verify-jsonnet-gh-actions',
       runsOn=runsOn,
       image=images.jsonnet_bin_image,
       steps=[
               self.checkout(ref='${{ github.event.pull_request.head.sha }}'),
+            ] +
+            (
+              if formatPaths != null then [base.step(
+                'check-jsonnet-format',
+                'if ! unformatted=$(find ' + std.join(' ', std.map(function(path) "'" + path + "'", formatPaths)) + " -name '*.jsonnet' -exec jsonnetfmt --test {} +); then\n" +
+                '  echo "Error: these jsonnet files are not formatted:";\n' +
+                "  echo \"$unformatted\" | sed 's/^/  /';\n" +
+                '  echo "To fix, run: jsonnetfmt -i <file>";\n' +
+                '  exit 1;\n' +
+                'fi\n'
+              )] else []
+            ) +
+            [
               base.step('remove-workflows', 'rm -f .github/workflows/*'),
             ] +
             (
@@ -442,15 +443,30 @@ local images = import 'images.jsonnet';
    *
    * Useful for verifying that deployments are healthy and serving correct content.
    *
+   * When debugCluster and debugRelease are set, a second step is added that dumps pod status,
+   * events and logs of the release when the verification (or any earlier step) failed.
+   * See dumpPodLogsOnFailure() for details.
+   *
    * @param {string} url - URL to poll for content verification
    * @param {string} expectedContent - Content expected to be found in the response
    * @param {string} [name='verify-deploy'] - Name of the verification step
    * @param {string} [attempts='100'] - Maximum number of polling attempts
    * @param {string} [interval='2000'] - Interval between attempts in milliseconds
-   * @param {string} [ifClause=null] - Conditional expression for step execution
-   * @returns {steps} - GitHub Actions step that polls URL until content matches
+   * @param {string} [ifClause=null] - Conditional expression for step execution; the debug step inherits it as failure() && (<expression>)
+   * @param {object} [debugCluster=null] - Cluster of the deployed release (see clusters.jsonnet); must be set together with debugRelease
+   * @param {string} [debugRelease=null] - Helm release name to dump pod debug info for; must be set together with debugCluster
+   * @param {string} [debugNamespace='default'] - Kubernetes namespace of the release
+   * @returns {steps} - GitHub Actions step(s): the poll step, plus a pod debug step when debugCluster/debugRelease are set
    */
-  pollUrlForContent(url, expectedContent, name='verify-deploy', attempts='100', interval='2000', ifClause=null)::
+  pollUrlForContent(url, expectedContent, name='verify-deploy', attempts='100', interval='2000', ifClause=null, debugCluster=null, debugRelease=null, debugNamespace='default')::
+    assert (debugCluster == null) == (debugRelease == null) : 'pollUrlForContent: debugCluster and debugRelease must both be set, or both be null';
+    assert debugCluster == null || ifClause == null || (std.startsWith(ifClause, '${{') && std.endsWith(ifClause, '}}')) : 'pollUrlForContent: when combined with debugCluster/debugRelease, ifClause must be a ${{ ... }} expression';
+    // The debug step must only run when its poll step could have failed, so it inherits the
+    // ifClause of the poll step, combined with failure(). failure() in the expression also
+    // suppresses the implicit success() check that would otherwise prevent it from running at all.
+    local debugIfClause =
+      if ifClause == null then '${{ failure() }}'
+      else '${{ failure() && (' + std.stripChars(std.substr(ifClause, 3, std.length(ifClause) - 5), ' ') + ') }}';
     base.action(
       name,
       'gynzy/wait-for-http-content@v1',
@@ -459,8 +475,53 @@ local images = import 'images.jsonnet';
         expectedContent: expectedContent,
         attempts: attempts,
         interval: interval,
+      } + (if debugCluster == null then {} else {
+             failureMessage: 'Deploy verification failed; pod logs and events are in the ' + name + '-debug step below.',
+           }),
+      ifClause=ifClause,
+    ) +
+    (if debugCluster == null then [] else
+       self.dumpPodLogsOnFailure(debugCluster, debugRelease, namespace=debugNamespace, name=name + '-debug', ifClause=debugIfClause)),
+
+  /**
+   * Creates a step that dumps pod status, events and logs of a helm release when a previous step failed.
+   *
+   * Intended to be placed directly after a verify-deploy step, so a failed deploy can be debugged
+   * without cluster access. Reuses the helm-action image (which ships gcloud, kubectl and the
+   * gke-gcloud-auth-plugin) with an entrypoint override, and authenticates with the same service
+   * account the helm deploy already uses. Pods are selected via the app=<release> label, which all
+   * charts set on their pods.
+   *
+   * The step runs jsonnet/scripts/verify-deploy-debug.sh, which ships with the lib tarball and is
+   * therefore present in consuming repos at .github/jsonnet/scripts/. It deliberately lives in a
+   * file rather than inline in the generated yml: repeating it per job pushed large workflow files
+   * over GitHub's 512 KB workflow file size limit, which makes the workflow silently not run.
+   *
+   * @param {object} cluster - Target Kubernetes cluster configuration (see clusters.jsonnet)
+   * @param {string} release - Helm release name; pods are selected via the app=<release> label
+   * @param {string} [namespace='default'] - Kubernetes namespace of the release
+   * @param {string} [name='debug-failed-deploy'] - Name of the step
+   * @param {string} [ifClause='${{ failure() }}'] - Condition; defaults to running only when a previous step failed
+   * @returns {steps} - GitHub Actions step that dumps pod debug info on failure
+   */
+  dumpPodLogsOnFailure(cluster, release, namespace='default', name='debug-failed-deploy', ifClause='${{ failure() }}')::
+    base.action(
+      name,
+      images.helm_action_image,
+      with={
+        entrypoint: 'bash',
+        args: '.github/jsonnet/scripts/verify-deploy-debug.sh',
+      },
+      env={
+        CLUSTER_PROJECT: cluster.project,
+        CLUSTER_ZONE: cluster.zone,
+        CLUSTER_NAME: cluster.name,
+        CLUSTER_SA_JSON: cluster.secret,
+        RELEASE: release,
+        NAMESPACE: namespace,
       },
       ifClause=ifClause,
+      continueOnError=true,
     ),
 
   /**
@@ -484,7 +545,7 @@ local images = import 'images.jsonnet';
             base.action('checkout', actions.checkout_action),
             base.action(
               'Run delete-old-branches-action',
-              'beatlabs/delete-old-branches-action@4eeeb8740ff8b3cb310296ddd6b43c3387734588',
+              'beatlabs/delete-old-branches-action@4eeeb8740ff8b3cb310296ddd6b43c3387734588',  // v0.0.11
               with={
                 repo_token: '${{ github.token }}',
                 date: '3 months ago',
@@ -548,6 +609,92 @@ local images = import 'images.jsonnet';
              (if baseRef != null then { base: baseRef } else {}),
       ),
     ],
+
+  /**
+   * Creates a step that fails unless the PR bumps the version in package.json.
+   *
+   * The version in the checked-out package.json must be valid semver and greater than the
+   * version in package.json at the PR's base commit, which is fetched through the GitHub
+   * API so a shallow clone suffices. Outside pull_request events the step does nothing.
+   * The job image has to provide node 18 or newer.
+   *
+   * @param {string} [ifClause=null] - Conditional expression to determine if step should run
+   * @returns {steps} - GitHub Actions step that checks the version bump
+   */
+  checkVersionBumped(ifClause=null)::
+    base.step(
+      'check-version-bump',
+      |||
+        node --input-type=module - <<'EOF'
+        import { readFileSync } from 'node:fs';
+
+        const SEMVER = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/;
+
+        function parse(version) {
+          const match = typeof version === 'string' && SEMVER.exec(version.trim());
+          return match ? { core: match.slice(1, 4).map(Number), pre: match[4] ? match[4].split('.') : [] } : null;
+        }
+
+        function compareIdentifiers(a, b) {
+          const aNumeric = /^\d+$/.test(a);
+          const bNumeric = /^\d+$/.test(b);
+          if (aNumeric && bNumeric) return Number(a) - Number(b);
+          if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+          return a < b ? -1 : a > b ? 1 : 0;
+        }
+
+        // Precedence as defined by https://semver.org/#spec-item-11.
+        function compare(a, b) {
+          for (let i = 0; i < 3; i++) {
+            if (a.core[i] !== b.core[i]) return a.core[i] - b.core[i];
+          }
+          if (a.pre.length === 0 || b.pre.length === 0) return b.pre.length - a.pre.length;
+          for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+            const result = compareIdentifiers(a.pre[i], b.pre[i]);
+            if (result !== 0) return result;
+          }
+          return a.pre.length - b.pre.length;
+        }
+
+        function fail(message) {
+          console.log(`::error::${message}`);
+          process.exit(1);
+        }
+
+        if (process.env.GITHUB_EVENT_NAME !== 'pull_request') {
+          console.log('Not a pull request, skipping the version bump check.');
+          process.exit(0);
+        }
+
+        const response = await fetch(
+          `${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/contents/package.json?ref=${process.env.BASE_SHA}`,
+          {
+            headers: {
+              Accept: 'application/vnd.github.raw+json',
+              Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+              'X-GitHub-Api-Version': '2026-03-10',
+            },
+          },
+        );
+        if (!response.ok) fail(`Could not fetch package.json at base commit ${process.env.BASE_SHA}: ${response.status} ${response.statusText}`);
+
+        const baseVersion = (await response.json()).version;
+        const headVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+        console.log(`Comparing version '${headVersion}' to '${baseVersion}' at base commit ${process.env.BASE_SHA}.`);
+
+        const head = parse(headVersion);
+        const baseline = parse(baseVersion);
+        if (head === null) fail(`Current version '${headVersion}' is not valid semver.`);
+        if (baseline === null) fail(`Base version '${baseVersion}' is not valid semver.`);
+        if (compare(head, baseline) <= 0) fail(`Version '${headVersion}' is not greater than '${baseVersion}'.`);
+        EOF
+      |||,
+      env={
+        GITHUB_TOKEN: '${{ github.token }}',
+        BASE_SHA: '${{ github.event.pull_request.base.sha }}',
+      },
+      ifClause=ifClause,
+    ),
 
   /**
    * Creates a job that waits for given jobs to finish.
@@ -644,9 +791,23 @@ local images = import 'images.jsonnet';
           'auto-approve',
           runsOn=runsOn,
           steps=[
-            base.action(
+            base.step('install curl', 'apk add --no-cache curl'),
+            base.step(
               'auto-approve-prs',
-              'hmarr/auto-approve-action@8f929096a962e83ccdfa8afcf855f39f12d4dac7',  // v4
+              |||
+                curl -sSL --fail-with-body --retry 3 -w '\n' \
+                  -X POST \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2026-03-10" \
+                  -d '{"event": "APPROVE"}' \
+                  "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews"
+                echo "Approved pull request #${PR_NUMBER}"
+              |||,
+              env={
+                GITHUB_TOKEN: '${{ github.token }}',
+                PR_NUMBER: '${{ github.event.pull_request.number }}',
+              },
             ),
           ],
           useCredentials=false,
@@ -748,12 +909,12 @@ local images = import 'images.jsonnet';
     exemptDraftPr=false,
     staleLabel='stale',
     stalePrMessage='This pull request has been automatically marked as stale due to 60 days of inactivity. It will be closed in 7 days if no further activity occurs. If this PR is still relevant, ' +
-      if (std.length(exemptLabels) == 0) then
-        'please push a new commit or leave a comment to keep it open.'
-      else if (std.length(exemptLabels) == 1) then
-        'please push a new commit, leave a comment or add the `' + exemptLabels[0] + '` label to keep it open.'
-      else
-        'please push a new commit, leave a comment or add one of these labels to keep it open: `' + std.join('`, `', exemptLabels) + '`.',
+                   if (std.length(exemptLabels) == 0) then
+                     'please push a new commit or leave a comment to keep it open.'
+                   else if (std.length(exemptLabels) == 1) then
+                     'please push a new commit, leave a comment or add the `' + exemptLabels[0] + '` label to keep it open.'
+                   else
+                     'please push a new commit, leave a comment or add one of these labels to keep it open: `' + std.join('`, `', exemptLabels) + '`.',
     closePrMessage='This pull request has been automatically closed due to continued inactivity. Feel free to reopen it if work resumes.',
   )::
     base.pipeline(

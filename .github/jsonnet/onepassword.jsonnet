@@ -97,7 +97,7 @@ local misc = import 'misc.jsonnet';
    */
   env(stepName, secrets=[])::
     std.foldl(
-      function(acc, secretName) acc + { [secretName]: '${{ steps.' + stepName + '.outputs.' + secretName + ' }}' },
+      function(acc, secretName) acc { [secretName]: '${{ steps.' + stepName + '.outputs.' + secretName + ' }}' },
       secrets,
       {}
     ),

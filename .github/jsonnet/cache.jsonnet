@@ -37,7 +37,7 @@ local misc = import 'misc.jsonnet';
   )::
     assert std.length(folders) > 0 || std.length(additionalCleanupCommands) > 0;
 
-    local downloadCommand(cacheName, version, nextSteps, indent = '') =
+    local downloadCommand(cacheName, version, nextSteps, indent='') =
       indent + 'wget -q -O - "https://storage.googleapis.com/files-gynzy-com-test/ci-cache/' + cacheName + '-' + version + '.tar.zst" | tar --extract --zstd \n' +
       indent + 'if [ $? -ne 0 ]; then\n' +
       indent + '  echo "Cache download failed, cleanup up partial downloads"\n' +
@@ -47,7 +47,7 @@ local misc = import 'misc.jsonnet';
       nextSteps +
       indent + 'fi\n';
 
-    local downloadCommandWithRetry(cacheName, version, nextSteps, indent = '') =
+    local downloadCommandWithRetry(cacheName, version, nextSteps, indent='') =
       downloadCommand(
         cacheName,
         version,
@@ -144,14 +144,14 @@ local misc = import 'misc.jsonnet';
       ifClause=ifClause,
     ),
 
-/**
-   * Daily (weekday) backup of the full repository (working tree + .git) to GCS as a zstd tar archive,
-   * then refreshes a 7-day signed HTTPS URL into the GIT_HTTPS_ARCHIVE_MIRROR repo secret.
-   *
-   * @param {string} [cron='0 1 * * 1-5'] - Schedule (UTC). Default 01:00 on weekdays.
-   * @param {string} [bucketPath='gs://gynzy-internal-files/git-mirror'] - Destination prefix.
-   * @returns {workflows} - GitHub Actions pipeline that mirrors the repository to GCS.
-   */
+  /**
+     * Daily (weekday) backup of the full repository (working tree + .git) to GCS as a zstd tar archive,
+     * then refreshes a 7-day signed HTTPS URL into the GIT_HTTPS_ARCHIVE_MIRROR repo secret.
+     *
+     * @param {string} [cron='0 1 * * 1-5'] - Schedule (UTC). Default 01:00 on weekdays.
+     * @param {string} [bucketPath='gs://gynzy-internal-files/git-mirror'] - Destination prefix.
+     * @returns {workflows} - GitHub Actions pipeline that mirrors the repository to GCS.
+     */
   updateGitCacheCron(
     cron='0 1 * * 1-5',
   )::

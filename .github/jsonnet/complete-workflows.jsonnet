@@ -34,14 +34,14 @@ local yarn = import 'yarn.jsonnet';
   )::
     local runsOn = (if isPublicFork then 'ubuntu-latest' else null);
     local defaultBuildSteps = if packageManager == 'pnpm' then [base.step('build', 'pnpm run build')]
-                              else [base.step('build', 'yarn build')];
+    else [base.step('build', 'yarn build')];
     local effectiveBuildSteps = if buildSteps != null then buildSteps else defaultBuildSteps;
     local publishJob = if packageManager == 'pnpm'
-                   then pnpm.pnpmPublishJob(repositories=repositories, runsOn=runsOn, image=image, buildSteps=effectiveBuildSteps, publishBranch=branch)
-                   else yarn.yarnPublishJob(repositories=repositories, runsOn=runsOn, image=image, buildSteps=effectiveBuildSteps, publishBranch=branch);
+    then pnpm.pnpmPublishJob(repositories=repositories, runsOn=runsOn, image=image, buildSteps=effectiveBuildSteps, publishBranch=branch)
+    else yarn.yarnPublishJob(repositories=repositories, runsOn=runsOn, image=image, buildSteps=effectiveBuildSteps, publishBranch=branch);
     local previewJob = if packageManager == 'pnpm'
-                    then pnpm.pnpmPublishPreviewJob(repositories=repositories, runsOn=runsOn, checkVersionBump=checkVersionBump, image=image, buildSteps=effectiveBuildSteps)
-                    else yarn.yarnPublishPreviewJob(repositories=repositories, runsOn=runsOn, checkVersionBump=checkVersionBump, image=image, buildSteps=effectiveBuildSteps);
+    then pnpm.pnpmPublishPreviewJob(repositories=repositories, runsOn=runsOn, checkVersionBump=checkVersionBump, image=image, buildSteps=effectiveBuildSteps)
+    else yarn.yarnPublishPreviewJob(repositories=repositories, runsOn=runsOn, checkVersionBump=checkVersionBump, image=image, buildSteps=effectiveBuildSteps);
 
     base.pipeline(
       'misc',

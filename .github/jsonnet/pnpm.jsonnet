@@ -15,14 +15,16 @@ local yarn = import 'yarn.jsonnet';
    * @param {string} [storeDir=null] - Directory for pnpm store
    * @param {string} [ifClause=null] - Conditional expression to determine if step should run
    * @param {string} [workingDirectory=null] - Directory to run pnpm in
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                             does not check minimalReleaseAge in ci (causes ci/cd failures)
    * @returns {steps} - Array containing a single step object
    */
-  install(args=[], with={}, prod=false, storeDir=null, ifClause=null, workingDirectory=null)::
+  install(args=[], with={}, prod=false, storeDir=null, ifClause=null, workingDirectory=null, trustLockFile=null)::
     base.action(
       'Install pnpm tool',
       'pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271',  // v6.0.9
       with=with + if workingDirectory != null then {
-        package_json_file: workingDirectory + '/package.json'
+        package_json_file: workingDirectory + '/package.json',
       } else {},
       ifClause=ifClause,
     ) +
@@ -32,6 +34,7 @@ local yarn = import 'yarn.jsonnet';
       ifClause=ifClause,
       workingDirectory=workingDirectory,
       storeDir=storeDir,
+      trustLockFile=trustLockFile,
     ),
 
   /**
@@ -42,14 +45,16 @@ local yarn = import 'yarn.jsonnet';
    * @param {string} [storeDir=null] - Directory for pnpm store
    * @param {string} [ifClause=null] - Conditional expression to determine if step should run
    * @param {string} [workingDirectory=null] - Directory to run pnpm in
+   * @param {boolean} [trustLockFile=false] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    * @returns {array} - Array containing a single step object
    */
-  installPackages(args=[], prod=false, storeDir=null, ifClause=null, workingDirectory=null)::
-    local installArgs = (if prod then args + ['--prod'] else args);
+  installPackages(args=[], prod=false, storeDir=null, ifClause=null, workingDirectory=null, trustLockFile=false)::
+    local installArgs = args + (if prod then ['--prod'] else []) + (if trustLockFile == true then ['--trust-lockfile'] else []);
     base.step(
       'Run pnpm install',
       (if storeDir != null then 'pnpm config set store-dir ' + storeDir + ' && ' else '') +
-      'pnpm install' + (if (std.length(installArgs) > 0) then ' ' + (std.join(' ', installArgs)) else ''),
+      'pnpm ci' + (if (std.length(installArgs) > 0) then ' ' + (std.join(' ', installArgs)) else ''),
       ifClause=ifClause,
       workingDirectory=workingDirectory
     ),
@@ -69,6 +74,8 @@ local yarn = import 'yarn.jsonnet';
    * @param {boolean} [blobless=null] - Whether to perform a blobless clone (--filter=blob:none); null uses checkout default
    * @param {number} [retryAttempts=null] - Number of additional checkout attempts on failure; null uses checkout default
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    * @returns {steps} - Array of step objects for the complete workflow
    */
   checkoutAndPnpm(
@@ -84,6 +91,7 @@ local yarn = import 'yarn.jsonnet';
     blobless=null,
     retryAttempts=null,
     cloneTimeout=null,
+    trustLockFile=null,
   )::
     misc.checkout(ifClause=ifClause, fullClone=fullClone, ref=ref, blobless=blobless, retryAttempts=retryAttempts, cloneTimeout=cloneTimeout) +
     (if source == 'gynzy' then yarn.setGynzyNpmToken(ifClause=ifClause, workingDirectory=workingDirectory) else []) +
@@ -95,6 +103,7 @@ local yarn = import 'yarn.jsonnet';
        args=pnpmInstallArgs,
        workingDirectory=workingDirectory,
        storeDir='.pnpm-store',
+       trustLockFile=trustLockFile,
      ) else
        self.installPackages(
          ifClause=ifClause,
@@ -102,6 +111,7 @@ local yarn = import 'yarn.jsonnet';
          args=pnpmInstallArgs,
          workingDirectory=workingDirectory,
          storeDir='.pnpm-store',
+         trustLockFile=trustLockFile,
        )),
 
   /**
@@ -134,9 +144,11 @@ local yarn = import 'yarn.jsonnet';
    * @param {boolean} [blobless=null] - Whether to perform a blobless clone (--filter=blob:none); null uses checkout default
    * @param {number} [retryAttempts=null] - Number of additional checkout attempts on failure; null uses checkout default
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
+   * @param {boolean} [trustLockFile=false] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    * @returns {workflows} - Complete GitHub Actions pipeline configuration
    */
-  updatePnpmCachePipeline(cacheName, appsDir='packages', image=null, useCredentials=null, setupPnpm=true, source=null, runsOn=null, blobless=null, retryAttempts=null, cloneTimeout=null)::
+  updatePnpmCachePipeline(cacheName, appsDir='packages', image=null, useCredentials=null, setupPnpm=true, source=null, runsOn=null, blobless=null, retryAttempts=null, cloneTimeout=null, trustLockFile=false)::
     base.pipeline(
       'update-pnpm-cache',
       [
@@ -154,6 +166,7 @@ local yarn = import 'yarn.jsonnet';
               blobless=blobless,
               retryAttempts=retryAttempts,
               cloneTimeout=cloneTimeout,
+              trustLockFile=trustLockFile,
             ),
             base.action(
               'setup auth',
@@ -187,9 +200,11 @@ local yarn = import 'yarn.jsonnet';
    * @param {boolean} [blobless=null] - Whether to perform a blobless clone (--filter=blob:none); null uses checkout default
    * @param {number} [retryAttempts=null] - Number of additional checkout attempts on failure; null uses checkout default
    * @param {number} [cloneTimeout=null] - Timeout for git clone operation in minutes; null uses checkout default
+   * @param {boolean} [trustLockFile=null] - Whether to pass --trust-lockfile to pnpm ci.
+                                              does not check minimalReleaseAge in ci (causes ci/cd failures)
    * @returns {workflows} - Complete GitHub Actions pipeline configuration
    */
-  pnpmAuditPipeline(cacheName=null, image=null, setupPnpm=true, pnpmInstallArgs=[], auditLevel='moderate', runsOn=null, source=null, blobless=null, retryAttempts=null, cloneTimeout=null)::
+  pnpmAuditPipeline(cacheName=null, image=null, setupPnpm=true, pnpmInstallArgs=[], auditLevel='moderate', runsOn=null, source=null, blobless=null, retryAttempts=null, cloneTimeout=null, trustLockFile=null)::
     base.pipeline(
       'pnpm-audit',
       [
@@ -207,6 +222,7 @@ local yarn = import 'yarn.jsonnet';
               blobless=blobless,
               retryAttempts=retryAttempts,
               cloneTimeout=cloneTimeout,
+              trustLockFile=trustLockFile,
             ),
             base.step('pnpm-audit', 'pnpm audit --audit-level=' + auditLevel),
           ],
@@ -320,11 +336,7 @@ local yarn = import 'yarn.jsonnet';
       steps=
       [self.checkoutAndPnpm(ref=gitCloneRef, fullClone=false, source=repositories[0], pnpmInstallArgs=['--frozen-lockfile'])] +
       (if onChangedFiles != false then misc.testForChangedFiles({ package: onChangedFiles }, headRef=changedFilesHeadRef, baseRef=changedFilesBaseRef) else []) +
-      (if checkVersionBump then [
-         base.action('check-version-bump', uses='del-systems/check-if-version-bumped@d5d13ffd75dc8aa9c2e1dca10d9bb27be10307b2', with={  // check-if-version-bumped@d5d13 == v2
-           token: '${{ github.token }}',
-         }, ifClause=ifClause),
-       ] else []) +
+      (if checkVersionBump then [misc.checkVersionBumped(ifClause=ifClause)] else []) +
       (if onChangedFiles != false then std.map(function(step) std.map(function(s) s { 'if': ifClause }, step), effectiveBuildSteps) else effectiveBuildSteps) +
       self.pnpmPublishToRepositories(isPr=true, repositories=repositories, ifClause=ifClause),
       permissions={ packages: 'write', contents: 'read', 'pull-requests': 'read' },
