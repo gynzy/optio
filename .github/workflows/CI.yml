@@ -1,4 +1,9 @@
 # GENERATED with jsonnet - DO NOT EDIT MANUALLY
+#
+# Update the workflow by modifying the jsonnet files in this repository
+# or in the lib-jsonnet repository.
+# The root jsonnet file is usually .github.jsonnet in the root of this repository.
+
 "jobs":
   "build-agent-base":
     "container":

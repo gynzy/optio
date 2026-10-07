@@ -24,6 +24,7 @@ local services = import 'services.jsonnet';
    * @param {string} [ifClause=null] - Conditional expression for step execution
    * @param {string} [ttl=null] - Time-to-live for the release (e.g., '7 days'), the release is deleted after this period
    * @param {string} [namespace='default'] - Kubernetes namespace for the release
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {string} [version='${{ github.event.pull_request.head.sha }}'] - Version/tag for the deployment
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies before deployment
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
@@ -41,6 +42,7 @@ local services = import 'services.jsonnet';
     ifClause=null,
     ttl=null,
     namespace='default',
+    createNamespace=false,
     version='${{ github.event.pull_request.head.sha }}',
     fetchDependencies=false,
     wait=false,
@@ -66,7 +68,8 @@ local services = import 'services.jsonnet';
            } + (if delete then { task: 'remove' } else {})
            + (if useHelm3 then { helm: 'helm3' } else { helm: 'helm' })
            + (if ttl != null then { ttl: ttl } else {})
-           + (if timeout != null then { timeout: timeout } else {}),
+           + (if timeout != null then { timeout: timeout } else {})
+           + (if createNamespace then { 'create-namespace': 'true' } else {}),
       ifClause=ifClause,
     ),
 
@@ -80,6 +83,7 @@ local services = import 'services.jsonnet';
    * @param {string} [ifClause=null] - Conditional expression for step execution
    * @param {object} [cluster=clusters.prod] - Target cluster (defaults to production)
    * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {string} [version='${{ github.event.pull_request.head.sha }}'] - Deployment version
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
@@ -94,6 +98,7 @@ local services = import 'services.jsonnet';
     ifClause=null,
     cluster=clusters.prod,
     namespace='default',
+    createNamespace=false,
     version='${{ github.event.pull_request.head.sha }}',
     fetchDependencies=false,
     wait=false,
@@ -114,6 +119,7 @@ local services = import 'services.jsonnet';
       title='deploy-prod',
       ifClause=ifClause,
       namespace=namespace,
+      createNamespace=createNamespace,
       version=version,
       fetchDependencies=fetchDependencies,
       wait=wait,
@@ -127,6 +133,9 @@ local services = import 'services.jsonnet';
    * @param {object} [options={}] - Additional Helm values to merge with defaults
    * @param {string} [helmPath='./helm/' + serviceName] - Path to the Helm chart
    * @param {string} [deploymentName=serviceName + '-prod'] - Helm release name
+   * @param {object} [cluster=clusters.prod] - Target cluster (defaults to production)
+   * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {string} [image=images.default_job_image] - Container image for the job
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {string} [environment='production'] - GitHub environment for deployment
@@ -141,6 +150,9 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName,
     deploymentName=serviceName + '-prod',
+    cluster=clusters.prod,
+    namespace='default',
+    createNamespace=false,
     image=images.default_job_image,
     useCredentials=false,
     environment='production',
@@ -157,7 +169,7 @@ local services = import 'services.jsonnet';
       useCredentials=useCredentials,
       steps=[
         misc.checkout(),
-        self.helmDeployProd(serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
+        self.helmDeployProd(serviceName, options, helmPath, deploymentName, cluster=cluster, namespace=namespace, createNamespace=createNamespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
       ],
     ),
 
@@ -170,6 +182,7 @@ local services = import 'services.jsonnet';
    * @param {string} [deploymentName=serviceName + '-master'] - Helm release name
    * @param {object} [cluster=clusters.test] - Target cluster (defaults to test)
    * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
@@ -182,6 +195,7 @@ local services = import 'services.jsonnet';
     deploymentName=serviceName + '-master',
     cluster=clusters.test,
     namespace='default',
+    createNamespace=false,
     fetchDependencies=false,
     wait=false,
     timeout=null,
@@ -200,6 +214,7 @@ local services = import 'services.jsonnet';
       useHelm3=true,
       title='deploy-test',
       namespace=namespace,
+      createNamespace=createNamespace,
       fetchDependencies=fetchDependencies,
       wait=wait,
       timeout=timeout
@@ -212,6 +227,9 @@ local services = import 'services.jsonnet';
    * @param {object} [options={}] - Additional Helm values to merge with defaults
    * @param {string} [helmPath='./helm/' + serviceName] - Path to the Helm chart
    * @param {string} [deploymentName=serviceName + '-master'] - Helm release name
+   * @param {object} [cluster=clusters.test] - Target cluster (defaults to test)
+   * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {string} [image=images.default_job_image] - Container image for the job
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
@@ -225,6 +243,9 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName,
     deploymentName=serviceName + '-master',
+    cluster=clusters.test,
+    namespace='default',
+    createNamespace=false,
     image=images.default_job_image,
     useCredentials=false,
     fetchDependencies=false,
@@ -240,7 +261,7 @@ local services = import 'services.jsonnet';
       useCredentials=useCredentials,
       steps=[
         misc.checkout(),
-        self.helmDeployTest(serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
+        self.helmDeployTest(serviceName, options, helmPath, deploymentName, cluster=cluster, namespace=namespace, createNamespace=createNamespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
       ],
     ),
 
@@ -255,6 +276,7 @@ local services = import 'services.jsonnet';
    * @param {string} [deploymentName=serviceName + '-pr-${{ github.event.number }}'] - PR-specific release name
    * @param {object} [cluster=clusters.test] - Target cluster (defaults to test)
    * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
@@ -267,6 +289,7 @@ local services = import 'services.jsonnet';
     deploymentName=serviceName + '-pr-${{ github.event.number }}',
     cluster=clusters.test,
     namespace='default',
+    createNamespace=false,
     fetchDependencies=false,
     wait=false,
     timeout=null,
@@ -286,6 +309,7 @@ local services = import 'services.jsonnet';
       title='deploy-pr',
       ttl='7 days',
       namespace=namespace,
+      createNamespace=createNamespace,
       fetchDependencies=fetchDependencies,
       wait=wait,
       timeout=timeout
@@ -298,6 +322,9 @@ local services = import 'services.jsonnet';
    * @param {object} [options={}] - Additional Helm values to merge with defaults
    * @param {string} [helmPath='./helm/' + serviceName] - Path to the Helm chart
    * @param {string} [deploymentName=serviceName + '-pr-${{ github.event.number }}'] - PR-specific release name
+   * @param {object} [cluster=clusters.test] - Target cluster (defaults to test)
+   * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {string} [image=images.default_job_image] - Container image for the job
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
@@ -311,6 +338,9 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName,
     deploymentName=serviceName + '-pr-${{ github.event.number }}',
+    cluster=clusters.test,
+    namespace='default',
+    createNamespace=false,
     image=images.default_job_image,
     useCredentials=false,
     fetchDependencies=false,
@@ -325,7 +355,7 @@ local services = import 'services.jsonnet';
       useCredentials=useCredentials,
       steps=[
         misc.checkout(),
-        self.helmDeployPR(serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
+        self.helmDeployPR(serviceName, options, helmPath, deploymentName, cluster=cluster, namespace=namespace, createNamespace=createNamespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
       ],
     ),
 
@@ -376,7 +406,9 @@ local services = import 'services.jsonnet';
    * @param {string} [deploymentName=serviceName + '-pr-${{ github.event.number }}'] - PR-specific release name to delete
    * @param {object} [mysqlDeleteOptions={ enabled: false }] - MySQL database cleanup options
    * @param {boolean} mysqlDeleteOptions.enabled - Whether to delete associated PR database
-   * @param {boolean} [fetchDependencies=fetchDependencies] - Whether to fetch Helm dependencies
+   * @param {object} [cluster=clusters.test] - Target Kubernetes cluster configuration
+   * @param {string} [namespace='default'] - Kubernetes namespace of the release
+   * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
    * @param {string} [runsOn=null] - GitHub Actions runner to use for the job
@@ -387,8 +419,10 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName,
     deploymentName=serviceName + '-pr-${{ github.event.number }}',
+    cluster=clusters.test,
+    namespace='default',
     mysqlDeleteOptions={ enabled: false },
-    fetchDependencies=fetchDependencies,
+    fetchDependencies=false,
     wait=false,
     timeout=null,
     runsOn=null,
@@ -400,7 +434,7 @@ local services = import 'services.jsonnet';
       useCredentials=false,
       steps=[
               misc.checkout(),
-              self.helmDeletePr(serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
+              self.helmDeletePr(serviceName, options, helmPath, deploymentName, cluster, namespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
             ] +
             (if mysqlDeleteOptions.enabled then [databases.deleteDatabase(mysqlDeleteOptions)] else []),
       services=(if mysqlDeleteOptions.enabled then { 'cloudsql-proxy': services.cloudsql_proxy_service(mysqlDeleteOptions.database) } else null),
@@ -413,6 +447,8 @@ local services = import 'services.jsonnet';
    * @param {object} [options={}] - Helm values (usually not needed for deletion)
    * @param {string} [helmPath='./helm/' + serviceName] - Path to the Helm chart
    * @param {string} [deploymentName=serviceName + '-pr-${{ github.event.number }}'] - PR-specific release name to delete
+   * @param {object} [cluster=clusters.test] - Target Kubernetes cluster configuration
+   * @param {string} [namespace='default'] - Kubernetes namespace of the release
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
@@ -423,6 +459,8 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName,
     deploymentName=serviceName + '-pr-${{ github.event.number }}',
+    cluster=clusters.test,
+    namespace='default',
     fetchDependencies=false,
     wait=false,
     timeout=null,
@@ -430,7 +468,7 @@ local services = import 'services.jsonnet';
     base.pipeline(
       'close-pr',
       [
-        self.helmDeletePRJob(serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
+        self.helmDeletePRJob(serviceName, options, helmPath, deploymentName, cluster, namespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
       ],
       event={
         pull_request: {
@@ -449,6 +487,9 @@ local services = import 'services.jsonnet';
    * @param {string} [helmPath='./helm/' + serviceName + '-canary'] - Path to the canary Helm chart
    * @param {string} [deploymentName=serviceName + '-canary'] - Canary release name
    * @param {string} [ifClause=null] - Conditional expression for step execution
+   * @param {object} [cluster=clusters.prod] - Target cluster (defaults to production)
+   * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
@@ -460,12 +501,15 @@ local services = import 'services.jsonnet';
     helmPath='./helm/' + serviceName + '-canary',
     deploymentName=serviceName + '-canary',
     ifClause=null,
+    cluster=clusters.prod,
+    namespace='default',
+    createNamespace=false,
     fetchDependencies=false,
     wait=false,
     timeout=null,
   )::
     self.deployHelm(
-      clusters.prod,
+      cluster,
       deploymentName,
       {
         identifier: 'prod',
@@ -479,6 +523,8 @@ local services = import 'services.jsonnet';
       useHelm3=true,
       title='deploy-canary',
       ifClause=ifClause,
+      namespace=namespace,
+      createNamespace=createNamespace,
       fetchDependencies=fetchDependencies,
       wait=wait,
       timeout=timeout
@@ -491,6 +537,9 @@ local services = import 'services.jsonnet';
    * @param {object} [options={}] - Additional Helm values to merge with defaults
    * @param {string} [helmPath='./helm/' + serviceName + '-canary'] - Path to the canary Helm chart
    * @param {string} [deploymentName=serviceName + '-canary'] - Canary release name
+   * @param {object} [cluster=clusters.prod] - Target cluster (defaults to production)
+   * @param {string} [namespace='default'] - Kubernetes namespace
+   * @param {boolean} [createNamespace=false] - Whether to create the namespace if it does not exist yet
    * @param {string} [image=images.default_job_image] - Container image for the job
    * @param {boolean} [useCredentials=false] - Whether to use Docker registry credentials
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
@@ -504,6 +553,9 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName + '-canary',
     deploymentName=serviceName + '-canary',
+    cluster=clusters.prod,
+    namespace='default',
+    createNamespace=false,
     image=images.default_job_image,
     useCredentials=false,
     fetchDependencies=false,
@@ -520,7 +572,7 @@ local services = import 'services.jsonnet';
       steps=[
         misc.checkout(),
         self.helmDeployCanary(
-          serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout,
+          serviceName, options, helmPath, deploymentName, cluster=cluster, namespace=namespace, createNamespace=createNamespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout,
         ),
       ],
     ),
@@ -535,6 +587,8 @@ local services = import 'services.jsonnet';
    * @param {string} [helmPath='./helm/' + serviceName + '-canary'] - Path to the canary Helm chart
    * @param {string} [deploymentName=serviceName + '-canary'] - Canary release name
    * @param {string} [ifClause=null] - Conditional expression for step execution
+   * @param {object} [cluster=clusters.prod] - Target cluster (defaults to production)
+   * @param {string} [namespace='default'] - Kubernetes namespace of the release
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
@@ -546,12 +600,14 @@ local services = import 'services.jsonnet';
     helmPath='./helm/' + serviceName + '-canary',
     deploymentName=serviceName + '-canary',
     ifClause=null,
+    cluster=clusters.prod,
+    namespace='default',
     fetchDependencies=false,
     wait=false,
     timeout=null,
   )::
     self.deployHelm(
-      clusters.prod,
+      cluster,
       deploymentName,
       {
         identifier: 'prod',
@@ -565,6 +621,7 @@ local services = import 'services.jsonnet';
       useHelm3=true,
       title='kill-canary',
       ifClause=ifClause,
+      namespace=namespace,
       fetchDependencies=fetchDependencies,
       wait=wait,
       timeout=timeout
@@ -579,6 +636,8 @@ local services = import 'services.jsonnet';
    * @param {object} [options={}] - Additional Helm values to merge with defaults
    * @param {string} [helmPath='./helm/' + serviceName + '-canary'] - Path to the canary Helm chart
    * @param {string} [deploymentName=serviceName + '-canary'] - Canary release name
+   * @param {object} [cluster=clusters.prod] - Target cluster (defaults to production)
+   * @param {string} [namespace='default'] - Kubernetes namespace of the release
    * @param {boolean} [fetchDependencies=false] - Whether to fetch Helm dependencies
    * @param {boolean} [wait=false] - Whether to wait for resources to be ready before marking the release as successful
    * @param {string} [timeout=null] - Time to wait for resources (pods) to become ready (e.g., '5m')
@@ -590,6 +649,8 @@ local services = import 'services.jsonnet';
     options={},
     helmPath='./helm/' + serviceName + '-canary',
     deploymentName=serviceName + '-canary',
+    cluster=clusters.prod,
+    namespace='default',
     fetchDependencies=false,
     wait=false,
     timeout=null,
@@ -603,7 +664,7 @@ local services = import 'services.jsonnet';
       useCredentials=false,
       steps=[
         misc.checkout(),
-        self.helmKillCanary(serviceName, options, helmPath, deploymentName, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
+        self.helmKillCanary(serviceName, options, helmPath, deploymentName, cluster=cluster, namespace=namespace, fetchDependencies=fetchDependencies, wait=wait, timeout=timeout),
       ],
     ),
 }

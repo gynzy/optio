@@ -15,6 +15,11 @@ local misc = import 'misc.jsonnet';
   pipeline(name, jobs, event=['pull_request'], permissions=null, concurrency=null):: {
     [name + '.yml']:
       '# GENERATED with jsonnet - DO NOT EDIT MANUALLY\n' +
+      '#\n' +
+      '# Update the workflow by modifying the jsonnet files in this repository\n' +
+      '# or in the lib-jsonnet repository.\n' +
+      '# The root jsonnet file is usually .github.jsonnet in the root of this repository.\n' +
+      '\n' +
       std.manifestYamlDoc(
         {
           name: name,
@@ -132,14 +137,17 @@ local misc = import 'misc.jsonnet';
     *   workingDirectory='backend',
     * )
     *
+    * // Multi-line shell via a jsonnet text block
     * base.step(
-    *   name='Set up Python',
+    *   name='Report disk usage',
     *   run=|||
-    *     python -m venv venv
-    *     source venv/bin/activate
-    *     pip install -r requirements.txt
+    *     df -h
+    *     du -sh ./node_modules || true
     *   |||,
     * )
+    *
+    * // For a Python toolchain, prefer the python module over hand-rolling a venv:
+    * // util.python.setup()  -- see python.jsonnet
    */
   step(name, run, env=null, workingDirectory=null, ifClause=null, id=null, continueOnError=null, shell=null)::
     [
@@ -151,7 +159,7 @@ local misc = import 'misc.jsonnet';
       + (if ifClause != null then { 'if': ifClause } else {})
       + (if id != null then { id: id } else {})
       + (if continueOnError == null then {} else { 'continue-on-error': continueOnError })
-      + (if shell == null then {} else { 'shell': shell }),
+      + (if shell == null then {} else { shell: shell }),
     ],
 
   /**
@@ -181,6 +189,6 @@ local misc = import 'misc.jsonnet';
       + (if id != null then { id: id } else {})
       + (if ifClause != null then { 'if': ifClause } else {})
       + (if continueOnError == null then {} else { 'continue-on-error': continueOnError })
-      + (if timeoutMinutes == null then {} else { 'timeout-minutes': timeoutMinutes })
+      + (if timeoutMinutes == null then {} else { 'timeout-minutes': timeoutMinutes }),
     ],
 }

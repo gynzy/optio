@@ -29,7 +29,7 @@ local prodProjectSettings = {
 {
   /**
    * List of available MongoDB clusters.
-   * 
+   *
    * Each cluster contains configuration for connecting to MongoDB Atlas instances
    * across different environments (test, production) and services.
    */
@@ -118,10 +118,10 @@ local prodProjectSettings = {
         MONGO_HOST: mongoCluster.connectionString,
         MONGO_USER: mongoCluster.CIUsername,
         MONGO_PASS: mongoCluster.CIPassword,
-        JOB_REQUEST_CPU: "500m",
-        JOB_REQUEST_CPU_LIMIT: "1",
-        JOB_REQUEST_MEM: "512Mi",
-        JOB_REQUEST_MEM_LIMIT: "1Gi",
+        JOB_REQUEST_CPU: '500m',
+        JOB_REQUEST_CPU_LIMIT: '1',
+        JOB_REQUEST_MEM: '512Mi',
+        JOB_REQUEST_MEM_LIMIT: '1Gi',
       },
       memory='1Gi',
       memoryLimit='1Gi',

@@ -270,11 +270,7 @@ local misc = import 'misc.jsonnet';
       steps=
       [self.checkoutAndYarn(ref=gitCloneRef, fullClone=false)] +
       (if onChangedFiles != false then misc.testForChangedFiles({ package: onChangedFiles }, headRef=changedFilesHeadRef, baseRef=changedFilesBaseRef) else []) +
-      (if checkVersionBump then [
-         base.action('check-version-bump', uses='del-systems/check-if-version-bumped@d5d13ffd75dc8aa9c2e1dca10d9bb27be10307b2', with={  // check-if-version-bumped@d5d13 == v2
-           token: '${{ github.token }}',
-         }, ifClause=ifClause),
-       ] else []) +
+      (if checkVersionBump then [misc.checkVersionBumped(ifClause=ifClause)] else []) +
       (if onChangedFiles != false then std.map(function(step) std.map(function(s) s { 'if': ifClause }, step), buildSteps) else buildSteps) +
       self.yarnPublishToRepositories(isPr=true, repositories=repositories, ifClause=ifClause),
       permissions={ packages: 'write', contents: 'read', 'pull-requests': 'read' },

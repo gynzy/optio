@@ -19,4 +19,5 @@
 { pnpm: import 'pnpm.jsonnet' } +
 { cache: import 'cache.jsonnet' } +
 { buckets: import 'buckets.jsonnet' } +
-{ onePassword: import 'onepassword.jsonnet' }
+{ onePassword: import 'onepassword.jsonnet' } +
+{ python: import 'python.jsonnet' }
