@@ -129,6 +129,14 @@ describe("ClaudeCodeAdapter", () => {
       expect(settings.hasCompletedOnboarding).toBe(true);
     });
 
+    it("merges Claude settings into the existing file so setup-installed plugins stay enabled", () => {
+      const config = adapter.buildContainerConfig(baseInput);
+      const settingsFile = config.setupFiles!.find(
+        (f) => f.path === "/home/agent/.claude/settings.json",
+      );
+      expect(settingsFile!.merge).toBe("json");
+    });
+
     it("sets hasCompletedOnboarding in Claude settings", () => {
       const config = adapter.buildContainerConfig(baseInput);
       const settingsFile = config.setupFiles!.find(

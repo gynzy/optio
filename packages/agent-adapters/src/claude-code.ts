@@ -75,9 +75,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (input.claudeEffort) {
       claudeSettings.effortLevel = input.claudeEffort;
     }
+    // Merge so keys written by repo setup commands (e.g. enabledPlugins from
+    // `claude plugin install`) survive.
     setupFiles.push({
       path: "/home/agent/.claude/settings.json",
       content: JSON.stringify(claudeSettings),
+      merge: "json",
     });
 
     return {
