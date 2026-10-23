@@ -48,7 +48,15 @@ export interface AgentContainerConfig {
   requiredSecrets: string[];
   image?: string;
   /** Files to create inside the container before running the agent */
-  setupFiles?: Array<{ path: string; content: string; executable?: boolean }>;
+  setupFiles?: Array<SetupFile>;
+}
+
+export interface SetupFile {
+  path: string;
+  content: string;
+  executable?: boolean;
+  /** Shallow-merge this JSON object into an existing JSON file instead of overwriting it */
+  merge?: "json";
 }
 
 export interface AgentResult {

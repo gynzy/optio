@@ -38,8 +38,18 @@ import json, sys, os
 files = json.load(sys.stdin)
 for f in files:
     os.makedirs(os.path.dirname(f['path']), exist_ok=True)
+    content = f['content']
+    if f.get('merge') == 'json' and os.path.exists(f['path']):
+        try:
+            with open(f['path']) as fh:
+                existing = json.load(fh)
+            if isinstance(existing, dict):
+                existing.update(json.loads(content))
+                content = json.dumps(existing)
+        except ValueError:
+            pass
     with open(f['path'], 'w') as fh:
-        fh.write(f['content'])
+        fh.write(content)
     if f.get('executable'):
         os.chmod(f['path'], 0o755)
     print(f'  wrote {f[\"path\"]}')
